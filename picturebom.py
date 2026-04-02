@@ -73,19 +73,77 @@ def get_component_base_name(component_name):
     return re.sub(r"-\d+$", "", component_name)
 
 
-def get_custom_property(cpm, prop_name):
-    """Read a custom property value. Returns empty string if not found."""
+def get_custom_property(cpm, prop_name, debug=False):
+    """Read a custom property value. Returns empty string if not found.
+
+    Uses Get6 with all parameters wrapped in explicit VARIANT objects,
+    which is required for late-binding COM (no type library).
+    Falls back to GetAll3 (bulk read) if Get6 fails.
+    """
+    # --- Approach 1: Get6 with fully typed VARIANTs ---
     try:
-        val = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BSTR, "")
-        resolved = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BSTR, "")
-        was_resolved = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BOOL, False)
-        cpm.Get6(prop_name, False, val, resolved, was_resolved, False)
-        return resolved.value or ""
+        in_field_name = win32com.client.VARIANT(pythoncom.VT_BSTR, prop_name)
+        in_use_cached = win32com.client.VARIANT(pythoncom.VT_I4, 0)  # False as int
+
+        out_val = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BSTR, None)
+        out_resolved = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BSTR, None)
+        out_was_resolved = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BOOL, None)
+        out_link = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BOOL, None)
+
+        result = cpm.Get6(
+            in_field_name,
+            in_use_cached,
+            out_val,
+            out_resolved,
+            out_was_resolved,
+            out_link,
+        )
+        if debug:
+            print(f"      Get6('{prop_name}'): result={result}, "
+                  f"val='{out_val.value}', resolved='{out_resolved.value}'")
+        return str(out_resolved.value or out_val.value or "")
+    except Exception as e:
+        if debug:
+            print(f"      Get6('{prop_name}') FAILED: {e}, trying GetAll3 fallback...")
+
+    # --- Approach 2: GetAll3 bulk read fallback ---
+    try:
+        out_names = win32com.client.VARIANT(pythoncom.VT_VARIANT | pythoncom.VT_BYREF, [])
+        out_types = win32com.client.VARIANT(pythoncom.VT_VARIANT | pythoncom.VT_BYREF, [])
+        out_values = win32com.client.VARIANT(pythoncom.VT_VARIANT | pythoncom.VT_BYREF, [])
+        out_resolved = win32com.client.VARIANT(pythoncom.VT_VARIANT | pythoncom.VT_BYREF, [])
+        out_link = win32com.client.VARIANT(pythoncom.VT_VARIANT | pythoncom.VT_BYREF, [])
+
+        cpm.GetAll3(out_names, out_types, out_values, out_resolved, out_link)
+
+        names = out_names.value if out_names.value else ()
+        values = out_values.value if out_values.value else ()
+        for i, name in enumerate(names):
+            if str(name).lower() == prop_name.lower():
+                val = str(values[i]) if i < len(values) else ""
+                if debug:
+                    print(f"      GetAll3 match '{prop_name}': '{val}'")
+                return val
+    except Exception as e2:
+        if debug:
+            print(f"      GetAll3 fallback FAILED: {e2}")
+
+    return ""
+
+
+def get_all_property_names(comp_doc):
+    """Get all custom property names from a component. Returns a list of strings."""
+    try:
+        cpm = comp_doc.Extension.CustomPropertyManager("")
+        names = cpm.GetNames
+        if names is None:
+            return []
+        return list(names)
     except Exception:
-        return ""
+        return []
 
 
-def get_part_properties(comp_doc):
+def get_part_properties(comp_doc, debug=False):
     """Extract Description, Vendor, and Vendor Part No from a component's custom properties."""
     props = {"description": "", "vendor": "", "vendor_part_no": ""}
     if comp_doc is None:
@@ -93,16 +151,27 @@ def get_part_properties(comp_doc):
 
     try:
         cpm = comp_doc.Extension.CustomPropertyManager("")
-        props["description"] = get_custom_property(cpm, "Description")
-        props["vendor"] = get_custom_property(cpm, "Vendor")
-        props["vendor_part_no"] = get_custom_property(cpm, "Vendor Part No")
+
+        if debug:
+            names = get_all_property_names(comp_doc)
+            print(f"    Properties found: {names}")
+
+        # Build a case-insensitive lookup of actual property names
+        all_names = get_all_property_names(comp_doc)
+        name_map = {n.lower(): n for n in all_names}
+
+        # Match our target properties case-insensitively
+        for target, key in [("description", "description"), ("vendor", "vendor"), ("vendor part no", "vendor_part_no")]:
+            actual_name = name_map.get(target)
+            if actual_name:
+                props[key] = get_custom_property(cpm, actual_name, debug=debug)
     except Exception:
         pass
 
     return props
 
 
-def traverse_assembly(assembly_doc, include_subassemblies=False):
+def traverse_assembly(assembly_doc, include_subassemblies=False, debug=False):
     """
     Walk the assembly component tree and return a dict of unique components
     with quantities and custom properties.
@@ -135,11 +204,12 @@ def traverse_assembly(assembly_doc, include_subassemblies=False):
             continue
 
         doc_type = SW_DOC_ASSEMBLY if is_assembly else SW_DOC_PART
-        base_name = get_component_base_name(comp.Name2)
+        # Use the actual filename (without extension) as the part name
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
 
         # Read custom properties from the component's model doc
         comp_doc = comp.GetModelDoc2
-        props = get_part_properties(comp_doc)
+        props = get_part_properties(comp_doc, debug=debug)
 
         unique[normalized] = {
             "name": base_name,
@@ -223,7 +293,7 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
             safe_name = sanitize_filename(part_number)
             img_path = _find_image(images_dir, safe_name)
 
-            ws.row_dimensions[row_idx].height = 60
+            ws.row_dimensions[row_idx].height = 45
 
             if img_path:
                 _insert_image(ws, img_path, f"A{row_idx}")
@@ -247,7 +317,7 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
             safe_name = sanitize_filename(row_data["name"])
             img_path = _find_image(images_dir, safe_name)
 
-            ws.row_dimensions[row_idx].height = 60
+            ws.row_dimensions[row_idx].height = 45
 
             if img_path:
                 _insert_image(ws, img_path, f"A{row_idx}")
@@ -279,8 +349,8 @@ def _find_image(images_dir, safe_name):
 def _insert_image(ws, img_path, cell_ref):
     """Insert and size an image into a worksheet cell."""
     img = XlImage(img_path)
-    # Scale to ~75px tall thumbnail (fits nicely in a ~60pt row)
-    thumb_height = 75
+    # Scale to fit within ~55px tall (row height 45pt ≈ 60px)
+    thumb_height = 55
     aspect = img.width / img.height if img.height else 1.78
     img.height = thumb_height
     img.width = int(thumb_height * aspect)
@@ -309,6 +379,7 @@ def main():
     )
     parser.add_argument("--width", type=int, default=1920, help="Image width (default: 1920)")
     parser.add_argument("--height", type=int, default=1080, help="Image height (default: 1080)")
+    parser.add_argument("--debug", action="store_true", help="Print property names found on each part")
     parser.add_argument(
         "--csv",
         default=None,
@@ -372,7 +443,7 @@ def main():
         sys.exit(1)
 
     print("Traversing assembly components...")
-    components = traverse_assembly(assy_doc, args.include_subassemblies)
+    components = traverse_assembly(assy_doc, args.include_subassemblies, debug=args.debug)
     total = len(components)
     print(f"Found {total} unique component(s)")
 
