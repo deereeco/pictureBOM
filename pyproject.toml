@@ -18,5 +18,3 @@ dependencies = [
 picturebom = "cli:main"
 picturebom-gui = "app:main"
 
-[project.optional-dependencies]
-build = ["pyinstaller>=6.0"]

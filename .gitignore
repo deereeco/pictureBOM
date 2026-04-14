@@ -2,6 +2,4 @@
 venv*
 .ohMyClaude/
 uv.lock
-build/
-dist/
-*.spec
+__pycache__/

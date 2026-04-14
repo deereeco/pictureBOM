@@ -15,13 +15,13 @@ The output Excel file is named after the assembly with a timestamp (e.g. `MainFr
 
 - **Windows** (SolidWorks is Windows-only)
 - **SolidWorks** installed and running before you click Run
-- **Python 3.10+** (if running from source)
+- **Python 3.10+** installed on Windows
 
 > **Important:** Pack and Go your assembly before running. Files locked in PDM will not open correctly.
 
 ## Installation (Windows)
 
-### Option A: Run from source
+### Option A: Using pip
 
 1. Install Python 3.10+ from [python.org](https://www.python.org/downloads/). During install, check **"Add Python to PATH"**.
 
@@ -40,34 +40,30 @@ The output Excel file is named after the assembly with a timestamp (e.g. `MainFr
    ```
    python app.py
    ```
-   A browser tab will open automatically at `http://127.0.0.1:5000`.
 
-### Option B: Build a standalone .exe
+### Option B: Using uv (faster)
 
-If you want to distribute pictureBOM to other engineers who don't have Python installed:
+1. Install uv: https://docs.astral.sh/uv/getting-started/installation/
 
-1. Follow Option A first (you need the source and dependencies to build).
-
-2. Install PyInstaller:
+2. Clone the repo:
    ```
-   pip install pyinstaller
+   git clone https://github.com/deereeco/pictureBOM.git
+   cd pictureBOM
    ```
 
-3. Build the executable:
+3. Run directly (uv handles the virtual environment and dependencies automatically):
    ```
-   python build.py
+   uv run python app.py
    ```
 
-4. The output is at `dist\pictureBOM\`. **Copy this entire folder** to a location on a local Windows drive (e.g. `C:\pictureBOM\`). The `.exe` will not work if you only copy the exe — it needs the `_internal\` folder next to it.
+---
 
-5. Distribute the copied folder to other engineers. They double-click `pictureBOM.exe` to launch.
-
-> **Note:** The .exe must be built on Windows (not WSL/Linux). It must also be run from a local Windows path (e.g. `C:\`), not a network or WSL path (`\\wsl.localhost\...`).
+A browser tab will open automatically at `http://127.0.0.1:5000`.
 
 ## Usage
 
 1. Open SolidWorks with your assembly (or have it accessible on disk).
-2. Launch pictureBOM (either `python app.py` or the `.exe`).
+2. Launch pictureBOM (`python app.py` or `uv run python app.py`).
 3. Set the **Assembly File** path to your `.sldasm` file.
 4. Set the **Output Directory** where images and the Excel BOM will be saved.
 5. Choose your **Image Quality** and **Assembly Mode**:
@@ -99,7 +95,6 @@ pictureBOM/
   app.py          -- Flask web GUI (entry point for browser interface)
   cli.py          -- Command-line interface
   picturebom.py   -- Core library (SolidWorks COM, image capture, Excel generation)
-  build.py        -- PyInstaller build script
   templates/      -- HTML template
   static/         -- JavaScript, CSS
 ```
