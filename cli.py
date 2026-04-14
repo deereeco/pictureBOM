@@ -65,14 +65,6 @@ def main():
     output_dir = os.path.abspath(args.output_dir)
     overwrite = False
 
-    excel_path = os.path.join(output_dir, "bom.xlsx")
-    if os.path.isfile(excel_path):
-        answer = input(f"File already exists: {excel_path}\nOverwrite? (y/n): ").strip().lower()
-        if answer != "y":
-            print("Aborted.")
-            return
-        overwrite = True
-
     if args.images is None and os.path.isdir(output_dir):
         existing = [f for f in os.listdir(output_dir)
                     if f.lower().endswith((".jpg", ".jpeg", ".bmp", ".png"))]

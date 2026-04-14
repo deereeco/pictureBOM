@@ -8,6 +8,7 @@ Use cli.py for the command-line interface or app.py for the web GUI.
 """
 
 import csv
+from datetime import datetime
 import logging
 import os
 import re
@@ -838,11 +839,12 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     # Where images live
     img_dir = os.path.abspath(images_dir) if has_images else output_dir
 
-    # Check for existing files
-    excel_path = os.path.join(output_dir, "bom.xlsx")
+    # Build Excel filename from assembly name + timestamp
+    root_name = os.path.splitext(os.path.basename(assembly_path))[0]
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    excel_name = f"{root_name}_{timestamp}.xlsx"
+    excel_path = os.path.join(output_dir, excel_name)
     if not overwrite:
-        if os.path.isfile(excel_path):
-            raise PictureBOMError(f"File already exists: {excel_path}")
         if not has_images:
             existing = [f for f in os.listdir(output_dir)
                         if f.lower().endswith((".jpg", ".jpeg", ".bmp", ".png"))] if os.path.isdir(output_dir) else []
@@ -909,7 +911,6 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     # Generate Excel BOM
     status("Generating Excel BOM...")
-    root_name = os.path.splitext(os.path.basename(assembly_path))[0]
     excel_start = time.time()
 
     if csv_columns:

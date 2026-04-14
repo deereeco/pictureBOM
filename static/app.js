@@ -399,8 +399,9 @@
 
                 if (openFolderBtn) openFolderBtn.classList.remove("hidden");
                 if (r.excel_path) {
+                    var excelName = r.excel_path.split(/[/\\]/).pop();
                     downloadLink.classList.remove("hidden");
-                    downloadLink.href = "/api/download/bom.xlsx";
+                    downloadLink.href = "/api/download/" + encodeURIComponent(excelName);
                     appendLog("\nDone! BOM generated successfully.");
                 } else {
                     appendLog("\nDone! No BOM data to write.");
