@@ -12,9 +12,9 @@ body {
 }
 
 .container {
-    max-width: 720px;
+    max-width: 1200px;
     margin: 40px auto;
-    padding: 0 20px;
+    padding: 0 40px;
 }
 
 h1 {

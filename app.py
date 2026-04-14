@@ -211,7 +211,7 @@ def main():
     # Open browser after a short delay so the server is ready
     threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     print(f"Starting pictureBOM GUI at http://127.0.0.1:{port}")
-    app.run(host="127.0.0.1", port=port, debug=False, threaded=False)
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":

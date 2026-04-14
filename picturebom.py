@@ -336,10 +336,6 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
         headers = ["Picture"] + list(csv_columns)
         ws.append(headers)
 
-        for col_idx in range(1, len(headers) + 1):
-            ws.column_dimensions[get_column_letter(col_idx)].width = 20
-        ws.column_dimensions["A"].width = 18  # Picture column
-
         for row_idx, row_data in enumerate(bom_rows, start=2):
             part_number = row_data.get("Part Number", row_data.get("part_number", ""))
             safe_name = sanitize_filename(part_number)
@@ -357,14 +353,6 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
         headers = ["Picture", "Part Number", "Description", "Qty", "Vendor", "Vendor Part No"]
         ws.append(headers)
 
-        # Column widths
-        ws.column_dimensions["A"].width = 18   # Picture
-        ws.column_dimensions["B"].width = 25   # Part Number
-        ws.column_dimensions["C"].width = 40   # Description
-        ws.column_dimensions["D"].width = 8    # Qty
-        ws.column_dimensions["E"].width = 20   # Vendor
-        ws.column_dimensions["F"].width = 22   # Vendor Part No
-
         for row_idx, row_data in enumerate(bom_rows, start=2):
             safe_name = sanitize_filename(row_data["name"])
             img_path = _find_image(images_dir, safe_name)
@@ -379,6 +367,21 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
             ws.cell(row=row_idx, column=4, value=row_data.get("quantity", 1))
             ws.cell(row=row_idx, column=5, value=row_data.get("vendor", ""))
             ws.cell(row=row_idx, column=6, value=row_data.get("vendor_part_no", ""))
+
+    # --- Auto-fit column widths based on content ---
+    for col_idx in range(1, len(headers) + 1):
+        col_letter = get_column_letter(col_idx)
+        max_len = len(str(headers[col_idx - 1]))  # start with header length
+        for row_idx in range(2, len(bom_rows) + 2):
+            val = ws.cell(row=row_idx, column=col_idx).value
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        # Add padding, cap at 60 so descriptions don't stretch forever
+        width = min(max_len + 4, 60)
+        # Picture column: fixed width for the thumbnail
+        if col_idx == 1:
+            width = 18
+        ws.column_dimensions[col_letter].width = width
 
     # --- Format header row ---
     ws.row_dimensions[1].height = 30
