@@ -732,13 +732,14 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
         ws2.cell(row=row_idx, column=6, value=row_data.get("quantity", 1))
 
         if row_data.get("type") == "Part":
-            # XLOOKUP formulas: look up Part Number (col D) in Sheet 1
+            # INDEX/MATCH formulas: look up Part Number (col D) in Sheet 1
+            B = f"'{S1}'!$B$2:$B${last_row}"  # lookup range (Part Number)
             ws2.cell(row=row_idx, column=5).value = (
-                f"=XLOOKUP(D{row_idx},'{S1}'!$B$2:$B${last_row},'{S1}'!$C$2:$C${last_row},\"\")")
+                f"=IFERROR(INDEX('{S1}'!$C$2:$C${last_row},MATCH(D{row_idx},{B},0)),\"\")")
             ws2.cell(row=row_idx, column=7).value = (
-                f"=XLOOKUP(D{row_idx},'{S1}'!$B$2:$B${last_row},'{S1}'!$E$2:$E${last_row},\"\")")
+                f"=IFERROR(INDEX('{S1}'!$E$2:$E${last_row},MATCH(D{row_idx},{B},0)),\"\")")
             ws2.cell(row=row_idx, column=8).value = (
-                f"=XLOOKUP(D{row_idx},'{S1}'!$B$2:$B${last_row},'{S1}'!$F$2:$F${last_row},\"\")")
+                f"=IFERROR(INDEX('{S1}'!$F$2:$F${last_row},MATCH(D{row_idx},{B},0)),\"\")")
         else:
             # Assembly rows: static values (assemblies aren't on the flat sheet)
             ws2.cell(row=row_idx, column=5, value=row_data.get("description", ""))
