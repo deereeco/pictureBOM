@@ -58,9 +58,11 @@ If you want to distribute pictureBOM to other engineers who don't have Python in
    python build.py
    ```
 
-4. The output is at `dist/pictureBOM/`. Distribute this entire folder. Users double-click `pictureBOM.exe` to launch.
+4. The output is at `dist\pictureBOM\`. **Copy this entire folder** to a location on a local Windows drive (e.g. `C:\pictureBOM\`). The `.exe` will not work if you only copy the exe — it needs the `_internal\` folder next to it.
 
-> **Note:** The .exe must be built on Windows. Building from WSL/Linux will not produce a working Windows executable.
+5. Distribute the copied folder to other engineers. They double-click `pictureBOM.exe` to launch.
+
+> **Note:** The .exe must be built on Windows (not WSL/Linux). It must also be run from a local Windows path (e.g. `C:\`), not a network or WSL path (`\\wsl.localhost\...`).
 
 ## Usage
 
