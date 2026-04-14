@@ -1,0 +1,10 @@
+[project]
+name = "picturebom"
+version = "0.1.0"
+description = "Export isometric JPG images of every part in a SolidWorks assembly and generate an Excel visual BOM with embedded thumbnails."
+requires-python = ">=3.10"
+dependencies = [
+    "pywin32>=306",
+    "openpyxl>=3.1",
+    "Pillow>=10.0",
+]
