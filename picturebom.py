@@ -716,6 +716,7 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
     ws2.append(headers2)
 
     S1 = "Parts Only (Editable)"  # sheet name for formula references
+    last_row = len(flat_parts) + 201  # bounded range + 200 row buffer for user additions
 
     for row_idx, row_data in enumerate(hierarchical_rows, start=2):
         safe_name = sanitize_filename(row_data["name"])
@@ -734,11 +735,11 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
         if row_data.get("type") == "Part":
             # XLOOKUP formulas: look up Part Number (col D) in Sheet 1
             ws2.cell(row=row_idx, column=5).value = (
-                f"=XLOOKUP(D{row_idx},'{S1}'!$B:$B,'{S1}'!$C:$C,\"\")")
+                f"=XLOOKUP(D{row_idx},'{S1}'!$B$2:$B${last_row},'{S1}'!$C$2:$C${last_row},\"\")")
             ws2.cell(row=row_idx, column=7).value = (
-                f"=XLOOKUP(D{row_idx},'{S1}'!$B:$B,'{S1}'!$E:$E,\"\")")
+                f"=XLOOKUP(D{row_idx},'{S1}'!$B$2:$B${last_row},'{S1}'!$E$2:$E${last_row},\"\")")
             ws2.cell(row=row_idx, column=8).value = (
-                f"=XLOOKUP(D{row_idx},'{S1}'!$B:$B,'{S1}'!$F:$F,\"\")")
+                f"=XLOOKUP(D{row_idx},'{S1}'!$B$2:$B${last_row},'{S1}'!$F$2:$F${last_row},\"\")")
         else:
             # Assembly rows: static values (assemblies aren't on the flat sheet)
             ws2.cell(row=row_idx, column=5, value=row_data.get("description", ""))
