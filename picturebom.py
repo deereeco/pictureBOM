@@ -382,7 +382,8 @@ def _build_flat_from_hierarchical(rows, root_assembly_name="Assembly"):
     result = []
     for norm_path in part_order:
         data = parts[norm_path]
-        data["where_used"] = ", ".join(data["where_used_map"].keys())
+        wu_parts = [f"{name} ({qty})" for name, qty in data["where_used_map"].items()]
+        data["where_used"] = ", ".join(wu_parts)
         del data["where_used_map"]
         result.append(data)
 
@@ -494,7 +495,7 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
     assembly_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
 
     # Columns where text should be left-aligned (description-like)
-    left_align_names = {"description", "where used"}
+    left_align_names = {"description", "where used (sub-asm qty)"}
 
     if csv_columns:
         # CSV mode: Picture + all original CSV columns
@@ -540,7 +541,7 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
     else:
         # Flat BOM (parts only)
         headers = ["Picture", "Part Number", "Description", "Total Qty",
-                    "Vendor", "Vendor Part No", "Where Used"]
+                    "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)"]
         ws.append(headers)
 
         for row_idx, row_data in enumerate(bom_rows, start=2):
@@ -626,7 +627,7 @@ def _format_sheet(ws, headers, num_data_rows, bom_rows, hierarchical=False):
     center_align = Alignment(horizontal="center", vertical="center")
     left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
     assembly_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
-    left_align_names = {"description", "where used"}
+    left_align_names = {"description", "where used (sub-asm qty)"}
 
     # Auto-fit column widths
     for col_idx in range(1, len(headers) + 1):
@@ -686,7 +687,7 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
     ws1.title = "Parts Only (Editable)"
 
     headers1 = ["Picture", "Part Number", "Description", "Total Qty",
-                 "Vendor", "Vendor Part No", "Where Used"]
+                 "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)"]
     ws1.append(headers1)
 
     for row_idx, part in enumerate(flat_parts, start=2):
