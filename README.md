@@ -21,37 +21,45 @@ The output Excel file is named after the assembly with a timestamp (e.g. `MainFr
 
 ## Installation (Windows)
 
-### Option A: Using pip
+### Step 1: Install Python
 
-1. Install Python 3.10+ from [python.org](https://www.python.org/downloads/). During install, check **"Add Python to PATH"**.
+If you don't already have Python installed:
 
-2. Open **Command Prompt** or **PowerShell** and clone the repo:
+1. Download Python 3.10+ from [python.org/downloads](https://www.python.org/downloads/).
+2. Run the installer. **Check "Add Python to PATH"** at the bottom of the first screen -- this is required.
+3. Click "Install Now".
+4. To verify it worked, open **Command Prompt** or **PowerShell** and run:
    ```
-   git clone https://github.com/deereeco/pictureBOM.git
-   cd pictureBOM
+   python --version
    ```
+   You should see something like `Python 3.13.3`. If you get an error, restart your terminal and try again.
 
-3. Install dependencies:
-   ```
-   pip install -e .
-   ```
+> **Note:** pip comes bundled with Python, so you don't need to install it separately.
 
-4. Launch the GUI:
-   ```
-   python app.py
-   ```
+### Step 2: Download pictureBOM
 
-### Option B: Using uv (faster)
+If you have git installed:
+```
+git clone https://github.com/deereeco/pictureBOM.git
+cd pictureBOM
+```
 
-1. Install uv: https://docs.astral.sh/uv/getting-started/installation/
+If you don't have git, download the repo as a ZIP from GitHub and extract it, then open a terminal in that folder.
 
-2. Clone the repo:
+### Step 3: Install dependencies and run
+
+**Using pip** (comes with Python):
+```
+pip install -e .
+python app.py
+```
+
+**Or using uv** (faster alternative, handles virtual environments automatically):
+1. Install uv by running this in PowerShell:
    ```
-   git clone https://github.com/deereeco/pictureBOM.git
-   cd pictureBOM
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
-
-3. Run directly (uv handles the virtual environment and dependencies automatically):
+2. Then run:
    ```
    uv run python app.py
    ```
