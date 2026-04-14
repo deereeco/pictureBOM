@@ -17,9 +17,31 @@ body {
     padding: 0 40px;
 }
 
+.header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
 h1 {
     font-size: 1.8rem;
     margin-bottom: 4px;
+}
+
+.btn-quit {
+    padding: 6px 16px;
+    background: #e0e0e0;
+    color: #555;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-quit:hover {
+    background: #d32f2f;
+    color: #fff;
 }
 
 .subtitle {

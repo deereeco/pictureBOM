@@ -438,6 +438,39 @@
     }
 
     // -----------------------------------------------------------------------
+    // Quit button
+    // -----------------------------------------------------------------------
+
+    const quitBtn = document.getElementById("quitBtn");
+    if (quitBtn) {
+        quitBtn.addEventListener("click", () => {
+            if (!confirm("Shut down pictureBOM? This will stop the server.")) return;
+            fetch("/api/quit", { method: "POST" }).catch(() => {});
+            document.body.innerHTML = '<div style="text-align:center;margin-top:80px;font-family:sans-serif;">' +
+                '<h2>pictureBOM has been shut down.</h2>' +
+                '<p style="color:#666;">You can close this tab.</p></div>';
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Heartbeat — keeps server alive while browser tab is open
+    // -----------------------------------------------------------------------
+
+    setInterval(function () {
+        fetch("/api/heartbeat", { method: "POST" }).catch(function () {});
+    }, 10000);
+    // Send an initial heartbeat immediately
+    fetch("/api/heartbeat", { method: "POST" }).catch(function () {});
+
+    // -----------------------------------------------------------------------
+    // Warn on tab close
+    // -----------------------------------------------------------------------
+
+    window.addEventListener("beforeunload", function (e) {
+        e.preventDefault();
+    });
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
