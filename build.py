@@ -27,8 +27,10 @@ def main():
         "--hidden-import", "win32com.client",
         "--hidden-import", "pythoncom",
         "--hidden-import", "pywintypes",
-        # Flask hidden imports
-        "--hidden-import", "flask",
+        # Collect all submodules and data for packages that need it
+        "--collect-all", "flask",
+        "--collect-all", "openpyxl",
+        "--collect-all", "PIL",
         # Single directory (faster startup, less antivirus trouble than --onefile)
         "--onedir",
         # No console window — the GUI runs in a browser
