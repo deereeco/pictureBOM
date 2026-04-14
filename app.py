@@ -68,7 +68,7 @@ def _save_settings(data):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html"), 200, {"Cache-Control": "no-cache"}
 
 
 @app.route("/api/settings", methods=["GET"])

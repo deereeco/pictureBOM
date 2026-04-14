@@ -176,6 +176,7 @@
     }
 
     function showEstimate(settings) {
+        if (!estimateInfo) return;
         var history = settings.timing_history;
         if (!history || !history.runs || history.runs.length === 0) {
             estimateInfo.textContent = "Run once to calibrate time estimates.";
@@ -198,7 +199,7 @@
     }
 
     function updateElapsedTime() {
-        if (!runStartTime) return;
+        if (!runStartTime || !elapsedTimeEl) return;
         var elapsed = (Date.now() - runStartTime) / 1000;
         elapsedTimeEl.textContent = "Elapsed: " + formatDuration(elapsed);
     }
@@ -259,12 +260,12 @@
         resultInfo.innerHTML = "";
 
         // Start timing
-        estimateInfo.textContent = "";
+        if (estimateInfo) estimateInfo.textContent = "";
         componentTimes = [];
         runStartTime = Date.now();
-        timingInfo.classList.remove("hidden");
-        elapsedTimeEl.textContent = "Elapsed: 0s";
-        remainingTimeEl.textContent = "";
+        if (timingInfo) timingInfo.classList.remove("hidden");
+        if (elapsedTimeEl) elapsedTimeEl.textContent = "Elapsed: 0s";
+        if (remainingTimeEl) remainingTimeEl.textContent = "";
         elapsedInterval = setInterval(updateElapsedTime, 1000);
 
         const wh = getWidthHeight();
@@ -314,7 +315,7 @@
 
             if (event.type === "status") {
                 appendLog(event.message);
-                if (event.message.indexOf("Generating Excel") === 0) {
+                if (remainingTimeEl && event.message.indexOf("Generating Excel") === 0) {
                     remainingTimeEl.textContent = "Generating Excel...";
                 }
             }
@@ -331,7 +332,7 @@
                 if (event.elapsed_seconds > 0) {
                     componentTimes.push(event.elapsed_seconds);
                 }
-                if (componentTimes.length >= 2) {
+                if (remainingTimeEl && componentTimes.length >= 2) {
                     var avg = componentTimes.reduce(function (a, b) { return a + b; }, 0) / componentTimes.length;
                     var remaining = event.total - event.current;
                     var remainingSec = remaining * avg;
@@ -365,8 +366,8 @@
                     if (preRunEstimate) {
                         completedMsg += " (estimated " + formatDuration(preRunEstimate) + ")";
                     }
-                    elapsedTimeEl.textContent = completedMsg;
-                    remainingTimeEl.textContent = "";
+                    if (elapsedTimeEl) elapsedTimeEl.textContent = completedMsg;
+                    if (remainingTimeEl) remainingTimeEl.textContent = "";
                     runStartTime = null;
                 }
 
@@ -397,8 +398,8 @@
                 elapsedInterval = null;
                 if (runStartTime) {
                     var errorElapsed = (Date.now() - runStartTime) / 1000;
-                    elapsedTimeEl.textContent = "Failed after " + formatDuration(errorElapsed);
-                    remainingTimeEl.textContent = "";
+                    if (elapsedTimeEl) elapsedTimeEl.textContent = "Failed after " + formatDuration(errorElapsed);
+                    if (remainingTimeEl) remainingTimeEl.textContent = "";
                     runStartTime = null;
                 }
 
