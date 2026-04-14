@@ -29,9 +29,17 @@ def main():
         help="Output directory for images and BOM (default: ./output)",
     )
     parser.add_argument(
+        "--bom-mode",
+        choices=["flat", "nested", "linked"],
+        default=None,
+        help="BOM layout: flat (parts only), nested (hierarchical with "
+             "sub-assemblies), or linked (two-sheet workbook with formulas). "
+             "Default: flat",
+    )
+    parser.add_argument(
         "--include-subassemblies",
         action="store_true",
-        help="Also capture images of sub-assemblies (default: parts only)",
+        help="Deprecated: use --bom-mode nested instead.",
     )
     parser.add_argument("--width", type=int, default=1920, help="Image width (default: 1920)")
     parser.add_argument("--height", type=int, default=1080, help="Image height (default: 1080)")
@@ -82,13 +90,18 @@ def main():
         status = "" if success else "  WARNING: Failed"
         print(f"[{current}/{total}] Capturing {part_name}...{status}")
 
+    # Resolve bom_mode: explicit flag wins, else fall back to legacy flag
+    bom_mode = args.bom_mode
+    if bom_mode is None:
+        bom_mode = "nested" if args.include_subassemblies else "flat"
+
     try:
         result = run_pipeline(
             assembly_path=args.assembly,
             output_dir=args.output_dir,
             width=args.width,
             height=args.height,
-            include_subassemblies=args.include_subassemblies,
+            bom_mode=bom_mode,
             csv_path=args.csv,
             images_dir=args.images,
             debug=args.debug,

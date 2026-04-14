@@ -104,8 +104,13 @@
                 </label>
                 <label class="radio-option">
                     <input type="radio" name="assembly_mode" value="nested">
-                    <span class="radio-label">Include sub-assemblies</span>
+                    <span class="radio-label">Include sub-assemblies (nested list)</span>
                     <span class="radio-hint">Sub-assemblies are also captured as separate line items</span>
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="assembly_mode" value="linked">
+                    <span class="radio-label">Linked (two-sheet workbook)</span>
+                    <span class="radio-hint">Sheet 1: editable parts list &mdash; Sheet 2: hierarchical view linked by formulas (Excel 365/2021+)</span>
                 </label>
             </div>
 

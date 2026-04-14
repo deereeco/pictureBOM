@@ -320,6 +320,76 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
                 _traverse_level(children, child_prefix, rows, unique, debug)
 
 
+def _level_depth(level_str):
+    """Return nesting depth from a level string.
+    '1.0' -> 1 (top-level), '1.1' -> 2, '1.1.3' -> 3
+    """
+    parts = level_str.split(".")
+    if len(parts) == 2 and parts[1] == "0":
+        return 1
+    return len(parts)
+
+
+def _build_flat_from_hierarchical(rows, root_assembly_name="Assembly"):
+    """Build a flat parts list from hierarchical rows, computing true total
+    quantities (multiplied through the assembly hierarchy) and Where Used strings.
+
+    Returns a list of dicts with keys: name, file_path, doc_type,
+    total_quantity, description, vendor, vendor_part_no, where_used
+    """
+    parts = {}       # normalized_path -> accumulator dict
+    part_order = []  # preserve first-seen order
+    assy_stack = []  # list of (depth, assy_name, cumulative_multiplier)
+
+    for row in rows:
+        depth = _level_depth(row["level"])
+        per_parent_qty = row["quantity"]
+
+        # Pop ancestors at same depth or deeper (no longer parents)
+        while assy_stack and assy_stack[-1][0] >= depth:
+            assy_stack.pop()
+
+        if row["type"] == "Assembly":
+            parent_mult = assy_stack[-1][2] if assy_stack else 1
+            cumulative = parent_mult * per_parent_qty
+            assy_stack.append((depth, row["name"], cumulative))
+        else:
+            # Part — compute total contribution and record parent
+            parent_mult = assy_stack[-1][2] if assy_stack else 1
+            total_contribution = per_parent_qty * parent_mult
+            parent_name = assy_stack[-1][1] if assy_stack else root_assembly_name
+
+            normalized = row["file_path"].lower().strip()
+            if normalized not in parts:
+                parts[normalized] = {
+                    "name": row["name"],
+                    "file_path": row["file_path"],
+                    "doc_type": row.get("doc_type", SW_DOC_PART),
+                    "total_quantity": 0,
+                    "description": row["description"],
+                    "vendor": row["vendor"],
+                    "vendor_part_no": row["vendor_part_no"],
+                    "where_used_map": {},
+                }
+                part_order.append(normalized)
+
+            parts[normalized]["total_quantity"] += total_contribution
+            wu = parts[normalized]["where_used_map"]
+            if parent_name not in wu:
+                wu[parent_name] = per_parent_qty
+
+    # Build final list with where_used string
+    result = []
+    for norm_path in part_order:
+        data = parts[norm_path]
+        wu_parts = [f"{name} ({qty})" for name, qty in data["where_used_map"].items()]
+        data["where_used"] = ", ".join(wu_parts)
+        del data["where_used_map"]
+        result.append(data)
+
+    return result
+
+
 def capture_component(sw_app, file_path, doc_type, output_path, width, height):
     """Open a component, set isometric view, and export a JPG image."""
     model_doc = open_document(sw_app, file_path, doc_type)
@@ -425,7 +495,7 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
     assembly_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
 
     # Columns where text should be left-aligned (description-like)
-    left_align_names = {"description"}
+    left_align_names = {"description", "where used"}
 
     if csv_columns:
         # CSV mode: Picture + all original CSV columns
@@ -470,7 +540,8 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
 
     else:
         # Flat BOM (parts only)
-        headers = ["Picture", "Part Number", "Description", "Qty", "Vendor", "Vendor Part No"]
+        headers = ["Picture", "Part Number", "Description", "Total Qty",
+                    "Vendor", "Vendor Part No", "Where Used"]
         ws.append(headers)
 
         for row_idx, row_data in enumerate(bom_rows, start=2):
@@ -484,9 +555,11 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
 
             ws.cell(row=row_idx, column=2, value=row_data["name"])
             ws.cell(row=row_idx, column=3, value=row_data.get("description", ""))
-            ws.cell(row=row_idx, column=4, value=row_data.get("quantity", 1))
+            ws.cell(row=row_idx, column=4, value=row_data.get("total_quantity",
+                                                               row_data.get("quantity", 1)))
             ws.cell(row=row_idx, column=5, value=row_data.get("vendor", ""))
             ws.cell(row=row_idx, column=6, value=row_data.get("vendor_part_no", ""))
+            ws.cell(row=row_idx, column=7, value=row_data.get("where_used", ""))
 
     # --- Auto-fit column widths based on content ---
     for col_idx in range(1, len(headers) + 1):
@@ -539,6 +612,153 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
     return output_path
 
 
+def _format_sheet(ws, headers, num_data_rows, bom_rows, hierarchical=False):
+    """Apply shared formatting to a BOM worksheet: header styles, borders,
+    column widths, assembly highlighting, and freeze panes."""
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="1F3864", end_color="1F3864", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin", color="BFBFBF"),
+        right=Side(style="thin", color="BFBFBF"),
+        top=Side(style="thin", color="BFBFBF"),
+        bottom=Side(style="thin", color="BFBFBF"),
+    )
+    center_align = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    assembly_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
+    left_align_names = {"description", "where used"}
+
+    # Auto-fit column widths
+    for col_idx in range(1, len(headers) + 1):
+        col_letter = get_column_letter(col_idx)
+        max_len = len(str(headers[col_idx - 1]))
+        for row_idx in range(2, num_data_rows + 2):
+            val = ws.cell(row=row_idx, column=col_idx).value
+            if val is not None and not str(val).startswith("="):
+                max_len = max(max_len, len(str(val)))
+        width = min(max_len + 4, 60)
+        if col_idx == 1:
+            width = 18
+        ws.column_dimensions[col_letter].width = width
+
+    # Format header row
+    ws.row_dimensions[1].height = 30
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    # Format data rows
+    num_cols = len(headers)
+    for row_idx in range(2, num_data_rows + 2):
+        row_data = bom_rows[row_idx - 2] if bom_rows else {}
+        is_assembly_row = hierarchical and row_data.get("type") == "Assembly"
+
+        for col_idx in range(1, num_cols + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.border = thin_border
+            col_name = headers[col_idx - 1] if col_idx <= len(headers) else ""
+            if col_name.lower() in left_align_names:
+                cell.alignment = left_align
+            else:
+                cell.alignment = center_align
+
+            if is_assembly_row:
+                cell.fill = assembly_fill
+                if col_idx > 1:
+                    cell.font = Font(bold=True)
+
+    ws.freeze_panes = "A2"
+
+
+def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output_path):
+    """Generate a two-sheet Excel BOM with XLOOKUP formulas linking the
+    Assemblies sheet back to the Parts sheet.
+
+    flat_parts: list of dicts from _build_flat_from_hierarchical()
+    hierarchical_rows: list of dicts from traverse_assembly_hierarchical()
+    """
+    wb = Workbook()
+
+    # ---- Sheet 1: Parts Only (Editable) ----
+    ws1 = wb.active
+    ws1.title = "Parts Only (Editable)"
+
+    headers1 = ["Picture", "Part Number", "Description", "Total Qty",
+                 "Vendor", "Vendor Part No", "Where Used"]
+    ws1.append(headers1)
+
+    for row_idx, part in enumerate(flat_parts, start=2):
+        safe_name = sanitize_filename(part["name"])
+        img_path = _find_image(images_dir, safe_name)
+
+        ws1.row_dimensions[row_idx].height = 45
+
+        if img_path:
+            _insert_image(ws1, img_path, f"A{row_idx}")
+
+        ws1.cell(row=row_idx, column=2, value=part["name"])
+        ws1.cell(row=row_idx, column=3, value=part.get("description", ""))
+        ws1.cell(row=row_idx, column=4, value=part.get("total_quantity", 1))
+        ws1.cell(row=row_idx, column=5, value=part.get("vendor", ""))
+        ws1.cell(row=row_idx, column=6, value=part.get("vendor_part_no", ""))
+        ws1.cell(row=row_idx, column=7, value=part.get("where_used", ""))
+
+    _format_sheet(ws1, headers1, len(flat_parts), flat_parts)
+
+    # ---- Sheet 2: Assemblies (Read-Only) ----
+    ws2 = wb.create_sheet("Assemblies (Read-Only)")
+
+    headers2 = ["Picture", "Level", "Type", "Part Number", "Description",
+                 "Qty", "Vendor", "Vendor Part No"]
+    ws2.append(headers2)
+
+    S1 = "Parts Only (Editable)"  # sheet name for formula references
+
+    for row_idx, row_data in enumerate(hierarchical_rows, start=2):
+        safe_name = sanitize_filename(row_data["name"])
+        img_path = _find_image(images_dir, safe_name)
+
+        ws2.row_dimensions[row_idx].height = 45
+
+        if img_path:
+            _insert_image(ws2, img_path, f"A{row_idx}")
+
+        ws2.cell(row=row_idx, column=2, value=row_data.get("level", ""))
+        ws2.cell(row=row_idx, column=3, value=row_data.get("type", ""))
+        ws2.cell(row=row_idx, column=4, value=row_data["name"])
+        ws2.cell(row=row_idx, column=6, value=row_data.get("quantity", 1))
+
+        if row_data.get("type") == "Part":
+            # XLOOKUP formulas: look up Part Number (col D) in Sheet 1
+            ws2.cell(row=row_idx, column=5).value = (
+                f"=XLOOKUP(D{row_idx},'{S1}'!$B:$B,'{S1}'!$C:$C,\"\")")
+            ws2.cell(row=row_idx, column=7).value = (
+                f"=XLOOKUP(D{row_idx},'{S1}'!$B:$B,'{S1}'!$E:$E,\"\")")
+            ws2.cell(row=row_idx, column=8).value = (
+                f"=XLOOKUP(D{row_idx},'{S1}'!$B:$B,'{S1}'!$F:$F,\"\")")
+        else:
+            # Assembly rows: static values (assemblies aren't on the flat sheet)
+            ws2.cell(row=row_idx, column=5, value=row_data.get("description", ""))
+            ws2.cell(row=row_idx, column=7, value=row_data.get("vendor", ""))
+            ws2.cell(row=row_idx, column=8, value=row_data.get("vendor_part_no", ""))
+
+    # For formula columns on Sheet 2, estimate widths from Sheet 1 data
+    _format_sheet(ws2, headers2, len(hierarchical_rows), hierarchical_rows,
+                  hierarchical=True)
+
+    # Widen formula columns using Sheet 1 data as estimate
+    for s2_col, s1_col in [(5, 3), (7, 5), (8, 6)]:
+        letter = get_column_letter(s2_col)
+        s1_letter = get_column_letter(s1_col)
+        ws2.column_dimensions[letter].width = ws1.column_dimensions[s1_letter].width
+
+    wb.save(output_path)
+    return output_path
+
+
 def _find_image(images_dir, safe_name):
     """Find an image file matching the part name (try .jpg then .bmp)."""
     for ext in (".jpg", ".jpeg", ".bmp", ".png"):
@@ -561,8 +781,8 @@ def _insert_image(ws, img_path, cell_ref):
 
 
 def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
-                 include_subassemblies=False, csv_path=None, images_dir=None,
-                 debug=False, on_progress=None, overwrite=False):
+                 include_subassemblies=False, bom_mode=None, csv_path=None,
+                 images_dir=None, debug=False, on_progress=None, overwrite=False):
     """
     Run the full pictureBOM pipeline.
 
@@ -571,7 +791,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         output_dir: Directory for images and BOM output.
         width: Image export width in pixels.
         height: Image export height in pixels.
-        include_subassemblies: Also capture sub-assembly images.
+        include_subassemblies: Legacy flag; use bom_mode instead.
+        bom_mode: "flat", "nested", or "linked". If None, derived from
+                  include_subassemblies for backward compatibility.
         csv_path: Optional CSV file for BOM data instead of SolidWorks properties.
         images_dir: Optional folder of existing images (skips capture).
         debug: Enable verbose property logging.
@@ -584,6 +806,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     Raises:
         PictureBOMError: On fatal errors (file not found, SolidWorks not running, etc.)
     """
+    # Resolve bom_mode from new or legacy parameter
+    if bom_mode is None:
+        bom_mode = "nested" if include_subassemblies else "flat"
     has_csv = csv_path is not None
     has_images = images_dir is not None
 
@@ -621,28 +846,22 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         raise PictureBOMError("Failed to open assembly file.")
 
     log.info("Traversing assembly components...")
-    hierarchical = False
-    if include_subassemblies:
-        bom_rows, components = traverse_assembly_hierarchical(assy_doc, debug=debug)
-        hierarchical = True
-    else:
-        components = traverse_assembly(assy_doc, include_subassemblies=False, debug=debug)
-        bom_rows = None  # set below
+    # All modes use hierarchical traversal (flat/linked need it for Where Used)
+    hierarchical_rows, components = traverse_assembly_hierarchical(assy_doc, debug=debug)
     total = len(components)
     log.info("Found %d unique component(s)", total)
 
     # BOM data comes from CSV if provided, otherwise from SolidWorks traversal
     csv_columns = None
+    bom_rows = None
     if has_csv:
         csv_path = os.path.abspath(csv_path)
         if not os.path.isfile(csv_path):
             raise PictureBOMError(f"CSV file not found: {csv_path}")
         log.info("Loading CSV: %s", csv_path)
         bom_rows, csv_columns = load_csv_bom(csv_path)
-        hierarchical = False  # CSV overrides hierarchical layout
+        bom_mode = "flat"  # CSV overrides mode
         log.info("Loaded %d rows from CSV", len(bom_rows))
-    elif not hierarchical:
-        bom_rows = list(components.values())
 
     # Capture images (skip if user provided existing images)
     captured_count = 0
@@ -656,7 +875,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     close_document(sw_app, assy_doc)
 
-    if not bom_rows:
+    if not hierarchical_rows and not bom_rows:
         log.warning("No BOM data to write.")
         return {
             "excel_path": None,
@@ -667,8 +886,21 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     # Generate Excel BOM
     log.info("Generating Excel BOM...")
-    generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns,
-                       hierarchical=hierarchical)
+    root_name = os.path.splitext(os.path.basename(assembly_path))[0]
+
+    if csv_columns:
+        # CSV mode — flat sheet with CSV data
+        generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns=csv_columns)
+    elif bom_mode == "linked":
+        flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
+        _generate_linked_excel_bom(flat_parts, hierarchical_rows, img_dir, excel_path)
+    elif bom_mode == "nested":
+        generate_excel_bom(hierarchical_rows, img_dir, excel_path, hierarchical=True)
+    else:
+        # Flat mode — build flat parts from hierarchical data for Where Used
+        flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
+        generate_excel_bom(flat_parts, img_dir, excel_path)
+
     log.info("Done! BOM saved to: %s", excel_path)
 
     return {

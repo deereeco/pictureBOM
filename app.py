@@ -145,7 +145,7 @@ def run_job():
                 output_dir=output_dir,
                 width=int(params.get("width", 1920)),
                 height=int(params.get("height", 1080)),
-                include_subassemblies=bool(params.get("include_subassemblies", False)),
+                bom_mode=params.get("bom_mode", "flat"),
                 csv_path=params.get("csv_path") or None,
                 images_dir=params.get("images_dir") or None,
                 debug=False,

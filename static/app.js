@@ -203,7 +203,7 @@
             images_dir: document.getElementById("images_dir").value.trim(),
             width: wh.w,
             height: wh.h,
-            include_subassemblies: modeRadio ? modeRadio.value === "nested" : false,
+            bom_mode: modeRadio ? modeRadio.value : "flat",
         };
 
         fetch("/api/run", {
