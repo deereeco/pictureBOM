@@ -16,6 +16,16 @@
     const previewBox = document.getElementById("previewBox");
     const previewLabel = document.getElementById("previewLabel");
     const customSizeEl = document.getElementById("customSize");
+    const estimateInfo = document.getElementById("estimateInfo");
+    const timingInfo = document.getElementById("timingInfo");
+    const elapsedTimeEl = document.getElementById("elapsedTime");
+    const remainingTimeEl = document.getElementById("remainingTime");
+
+    // Timing state
+    let runStartTime = null;
+    let elapsedInterval = null;
+    let componentTimes = [];
+    let preRunEstimate = null;
 
     // -----------------------------------------------------------------------
     // Quality presets + preview box
@@ -119,6 +129,9 @@
                 // Update preview with loaded settings
                 const wh = getWidthHeight();
                 updatePreview(wh.w, wh.h);
+
+                // Show time estimate from history
+                showEstimate(data);
             })
             .catch(() => {});
     }
@@ -146,6 +159,56 @@
     }
 
     loadSettings();
+
+    // -----------------------------------------------------------------------
+    // Time estimation
+    // -----------------------------------------------------------------------
+
+    function formatDuration(totalSeconds) {
+        totalSeconds = Math.round(totalSeconds);
+        if (totalSeconds < 60) return totalSeconds + "s";
+        var m = Math.floor(totalSeconds / 60);
+        var s = totalSeconds % 60;
+        if (m < 60) return m + "m " + (s > 0 ? s + "s" : "");
+        var h = Math.floor(m / 60);
+        var rm = m % 60;
+        return h + "h " + (rm > 0 ? rm + "m" : "");
+    }
+
+    function showEstimate(settings) {
+        var history = settings.timing_history;
+        if (!history || !history.runs || history.runs.length === 0) {
+            estimateInfo.textContent = "Run once to calibrate time estimates.";
+            preRunEstimate = null;
+            return;
+        }
+        var runs = history.runs;
+        var n = runs.length;
+        var avgPerComp = runs.reduce(function (sum, r) { return sum + r.per_component_avg; }, 0) / n;
+        var avgExcel = runs.reduce(function (sum, r) { return sum + r.excel_seconds; }, 0) / n;
+        var lastComponents = runs[n - 1].components;
+        var estimatedSec = 15 + (avgPerComp * lastComponents) + avgExcel;
+        preRunEstimate = estimatedSec;
+
+        var msg = "Estimated time: ~" + formatDuration(estimatedSec);
+        msg += " (based on " + n + " previous run" + (n > 1 ? "s" : "");
+        if (n < 3) msg += " \u2014 accuracy improves with each run";
+        msg += ")";
+        estimateInfo.textContent = msg;
+    }
+
+    function updateElapsedTime() {
+        if (!runStartTime) return;
+        var elapsed = (Date.now() - runStartTime) / 1000;
+        elapsedTimeEl.textContent = "Elapsed: " + formatDuration(elapsed);
+    }
+
+    function refreshEstimate() {
+        fetch("/api/settings")
+            .then(function (r) { return r.json(); })
+            .then(function (data) { showEstimate(data); })
+            .catch(function () {});
+    }
 
     // -----------------------------------------------------------------------
     // Browse buttons — open native file dialogs
@@ -195,6 +258,15 @@
         gallery.innerHTML = "";
         resultInfo.innerHTML = "";
 
+        // Start timing
+        estimateInfo.textContent = "";
+        componentTimes = [];
+        runStartTime = Date.now();
+        timingInfo.classList.remove("hidden");
+        elapsedTimeEl.textContent = "Elapsed: 0s";
+        remainingTimeEl.textContent = "";
+        elapsedInterval = setInterval(updateElapsedTime, 1000);
+
         const wh = getWidthHeight();
         const modeRadio = document.querySelector('input[name="assembly_mode"]:checked');
 
@@ -242,6 +314,9 @@
 
             if (event.type === "status") {
                 appendLog(event.message);
+                if (event.message.indexOf("Generating Excel") === 0) {
+                    remainingTimeEl.textContent = "Generating Excel...";
+                }
             }
 
             if (event.type === "progress") {
@@ -251,6 +326,17 @@
 
                 const status = event.success ? "" : "  WARNING: Failed";
                 appendLog(`[${event.current}/${event.total}] Capturing ${event.part_name}...${status}`);
+
+                // Track per-component timing for ETA
+                if (event.elapsed_seconds > 0) {
+                    componentTimes.push(event.elapsed_seconds);
+                }
+                if (componentTimes.length >= 2) {
+                    var avg = componentTimes.reduce(function (a, b) { return a + b; }, 0) / componentTimes.length;
+                    var remaining = event.total - event.current;
+                    var remainingSec = remaining * avg;
+                    remainingTimeEl.textContent = "Remaining: ~" + formatDuration(remainingSec);
+                }
 
                 // Add thumbnail to gallery (newest first)
                 if (event.success && event.image) {
@@ -270,6 +356,20 @@
                 settingsPanel.setAttribute("open", "");
                 saveSettings();
 
+                // Stop timing and show final elapsed
+                clearInterval(elapsedInterval);
+                elapsedInterval = null;
+                if (runStartTime) {
+                    var totalElapsed = (Date.now() - runStartTime) / 1000;
+                    var completedMsg = "Completed in " + formatDuration(totalElapsed);
+                    if (preRunEstimate) {
+                        completedMsg += " (estimated " + formatDuration(preRunEstimate) + ")";
+                    }
+                    elapsedTimeEl.textContent = completedMsg;
+                    remainingTimeEl.textContent = "";
+                    runStartTime = null;
+                }
+
                 const r = event.result;
                 resultsSection.classList.remove("hidden");
                 resultInfo.innerHTML =
@@ -282,12 +382,26 @@
                 } else {
                     appendLog("\nDone! No BOM data to write.");
                 }
+
+                // Refresh estimate for next run with updated history
+                refreshEstimate();
             }
 
             if (event.type === "error") {
                 source.close();
                 resetBtn();
                 settingsPanel.setAttribute("open", "");
+
+                // Stop timing
+                clearInterval(elapsedInterval);
+                elapsedInterval = null;
+                if (runStartTime) {
+                    var errorElapsed = (Date.now() - runStartTime) / 1000;
+                    elapsedTimeEl.textContent = "Failed after " + formatDuration(errorElapsed);
+                    remainingTimeEl.textContent = "";
+                    runStartTime = null;
+                }
+
                 appendLog("\nERROR: " + event.message);
                 resultInfo.innerHTML = `<span class="error">${escapeHtml(event.message)}</span>`;
                 resultsSection.classList.remove("hidden");

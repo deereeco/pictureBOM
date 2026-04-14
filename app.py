@@ -128,7 +128,8 @@ def run_job():
         import pythoncom
         pythoncom.CoInitialize()
         try:
-            def on_progress(current, total, part_name, success, image_path):
+            def on_progress(current, total, part_name, success, image_path,
+                            elapsed_seconds=0):
                 _job["events"].put({
                     "type": "progress",
                     "current": current,
@@ -136,6 +137,7 @@ def run_job():
                     "part_name": part_name,
                     "success": success,
                     "image": os.path.basename(image_path) if image_path else None,
+                    "elapsed_seconds": round(elapsed_seconds, 2),
                 })
 
             def on_status(message):
@@ -154,6 +156,19 @@ def run_job():
                 on_status=on_status,
                 overwrite=True,
             )
+            # Persist timing history for future estimates (skip if no capture data)
+            timing = result.get("timing", {})
+            if timing.get("per_component_avg") and result.get("total_components"):
+                settings = _load_settings()
+                runs = settings.get("timing_history", {}).get("runs", [])
+                runs.append({
+                    "per_component_avg": timing["per_component_avg"],
+                    "excel_seconds": timing["excel_seconds"],
+                    "components": result["total_components"],
+                })
+                settings["timing_history"] = {"runs": runs[-20:]}
+                _save_settings(settings)
+
             _job["events"].put({"type": "done", "result": result})
         except Exception as e:
             _job["events"].put({"type": "error", "message": str(e)})

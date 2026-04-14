@@ -11,6 +11,7 @@ import csv
 import logging
 import os
 import re
+import time
 
 import pythoncom
 import win32com.client
@@ -434,6 +435,7 @@ def capture_all_components(sw_app, components, output_dir, width, height, on_pro
         img_output = os.path.join(output_dir, f"{safe_name}.jpg")
 
         log.info("[%d/%d] Capturing %s...", i, total, comp["name"])
+        t0 = time.time()
         try:
             ok = capture_component(
                 sw_app, comp["file_path"], comp["doc_type"],
@@ -447,8 +449,10 @@ def capture_all_components(sw_app, components, output_dir, width, height, on_pro
             ok = False
             log.warning("Error capturing %s: %s", comp["name"], e)
 
+        component_elapsed = time.time() - t0
         if on_progress:
-            on_progress(i, total, comp["name"], ok, img_output)
+            on_progress(i, total, comp["name"], ok, img_output,
+                        elapsed_seconds=component_elapsed)
 
     return success_count, total
 
@@ -876,6 +880,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     # Capture images (skip if user provided existing images)
     captured_count = 0
+    capture_start = time.time()
     if not has_images and total > 0:
         status(f"Capturing images ({total} components)...")
         captured_count, _ = capture_all_components(
@@ -884,6 +889,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         status(f"{captured_count}/{total} images captured.")
     elif has_images:
         status(f"Using existing images from: {img_dir}")
+    capture_elapsed = time.time() - capture_start
 
     close_document(sw_app, assy_doc)
 
@@ -894,11 +900,17 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             "images_dir": img_dir,
             "total_components": total,
             "captured_count": captured_count,
+            "timing": {
+                "capture_seconds": round(capture_elapsed, 2),
+                "excel_seconds": 0,
+                "per_component_avg": round(capture_elapsed / total, 2) if total > 0 else 0,
+            },
         }
 
     # Generate Excel BOM
     status("Generating Excel BOM...")
     root_name = os.path.splitext(os.path.basename(assembly_path))[0]
+    excel_start = time.time()
 
     if csv_columns:
         # CSV mode — flat sheet with CSV data
@@ -913,6 +925,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
         generate_excel_bom(flat_parts, img_dir, excel_path)
 
+    excel_elapsed = time.time() - excel_start
     status(f"Done! BOM saved to: {excel_path}")
 
     return {
@@ -920,4 +933,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         "images_dir": img_dir,
         "total_components": total,
         "captured_count": captured_count,
+        "timing": {
+            "capture_seconds": round(capture_elapsed, 2),
+            "excel_seconds": round(excel_elapsed, 2),
+            "per_component_avg": round(capture_elapsed / total, 2) if total > 0 else 0,
+        },
     }

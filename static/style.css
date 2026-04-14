@@ -241,6 +241,13 @@ input[type="number"]:focus {
     background: #ddd;
 }
 
+.estimate-info {
+    font-size: 0.85rem;
+    color: #666;
+    padding: 6px 0 2px;
+    font-style: italic;
+}
+
 .btn-run {
     display: block;
     width: 100%;
@@ -303,6 +310,15 @@ input[type="number"]:focus {
     color: #fff;
     font-size: 0.8rem;
     font-weight: 600;
+}
+
+.timing-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: #555;
+    margin-bottom: 8px;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
 }
 
 .log {

@@ -86,7 +86,7 @@ def main():
                 return
             overwrite = True
 
-    def on_progress(current, total, part_name, success, image_path):
+    def on_progress(current, total, part_name, success, image_path, **_):
         status = "" if success else "  WARNING: Failed"
         print(f"[{current}/{total}] Capturing {part_name}...{status}")
 
