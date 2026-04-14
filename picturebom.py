@@ -783,7 +783,8 @@ def _insert_image(ws, img_path, cell_ref):
 
 def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  include_subassemblies=False, bom_mode=None, csv_path=None,
-                 images_dir=None, debug=False, on_progress=None, overwrite=False):
+                 images_dir=None, debug=False, on_progress=None,
+                 on_status=None, overwrite=False):
     """
     Run the full pictureBOM pipeline.
 
@@ -799,6 +800,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         images_dir: Optional folder of existing images (skips capture).
         debug: Enable verbose property logging.
         on_progress: Optional callable(current, total, part_name, success, image_path).
+        on_status: Optional callable(message) for stage updates.
         overwrite: If True, overwrite existing files without checking.
 
     Returns:
@@ -810,6 +812,12 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     # Resolve bom_mode from new or legacy parameter
     if bom_mode is None:
         bom_mode = "nested" if include_subassemblies else "flat"
+
+    def status(msg):
+        log.info(msg)
+        if on_status:
+            on_status(msg)
+
     has_csv = csv_path is not None
     has_images = images_dir is not None
 
@@ -838,19 +846,20 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     f"Output folder already contains {len(existing)} image(s): {output_dir}"
                 )
 
-    log.info("Connecting to SolidWorks...")
+    status("Connecting to SolidWorks...")
     sw_app = connect_to_solidworks()
 
-    log.info("Opening assembly: %s", assembly_path)
+    assy_name = os.path.basename(assembly_path)
+    status(f"Opening assembly: {assy_name}")
     assy_doc = open_document(sw_app, assembly_path, SW_DOC_ASSEMBLY)
     if assy_doc is None:
         raise PictureBOMError("Failed to open assembly file.")
 
-    log.info("Traversing assembly components...")
+    status("Traversing assembly components...")
     # All modes use hierarchical traversal (flat/linked need it for Where Used)
     hierarchical_rows, components = traverse_assembly_hierarchical(assy_doc, debug=debug)
     total = len(components)
-    log.info("Found %d unique component(s)", total)
+    status(f"Found {total} unique component(s)")
 
     # BOM data comes from CSV if provided, otherwise from SolidWorks traversal
     csv_columns = None
@@ -859,20 +868,21 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         csv_path = os.path.abspath(csv_path)
         if not os.path.isfile(csv_path):
             raise PictureBOMError(f"CSV file not found: {csv_path}")
-        log.info("Loading CSV: %s", csv_path)
+        status(f"Loading CSV: {os.path.basename(csv_path)}")
         bom_rows, csv_columns = load_csv_bom(csv_path)
         bom_mode = "flat"  # CSV overrides mode
-        log.info("Loaded %d rows from CSV", len(bom_rows))
+        status(f"Loaded {len(bom_rows)} rows from CSV")
 
     # Capture images (skip if user provided existing images)
     captured_count = 0
     if not has_images and total > 0:
+        status(f"Capturing images ({total} components)...")
         captured_count, _ = capture_all_components(
             sw_app, components, output_dir, width, height, on_progress=on_progress,
         )
-        log.info("%d/%d images captured.", captured_count, total)
+        status(f"{captured_count}/{total} images captured.")
     elif has_images:
-        log.info("Using existing images from: %s", img_dir)
+        status(f"Using existing images from: {img_dir}")
 
     close_document(sw_app, assy_doc)
 
@@ -886,7 +896,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         }
 
     # Generate Excel BOM
-    log.info("Generating Excel BOM...")
+    status("Generating Excel BOM...")
     root_name = os.path.splitext(os.path.basename(assembly_path))[0]
 
     if csv_columns:
@@ -902,7 +912,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
         generate_excel_bom(flat_parts, img_dir, excel_path)
 
-    log.info("Done! BOM saved to: %s", excel_path)
+    status(f"Done! BOM saved to: {excel_path}")
 
     return {
         "excel_path": excel_path,

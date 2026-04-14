@@ -138,7 +138,8 @@ def run_job():
                     "image": os.path.basename(image_path) if image_path else None,
                 })
 
-            _job["events"].put({"type": "status", "message": "Starting pipeline..."})
+            def on_status(message):
+                _job["events"].put({"type": "status", "message": message})
 
             result = picturebom.run_pipeline(
                 assembly_path=params["assembly_path"],
@@ -150,6 +151,7 @@ def run_job():
                 images_dir=params.get("images_dir") or None,
                 debug=False,
                 on_progress=on_progress,
+                on_status=on_status,
                 overwrite=True,
             )
             _job["events"].put({"type": "done", "result": result})

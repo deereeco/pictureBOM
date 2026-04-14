@@ -47,6 +47,28 @@ h1 {
     font-style: italic;
 }
 
+/* Collapsible settings panel */
+#settingsPanel {
+    margin-bottom: 0;
+}
+
+#settingsPanel > summary {
+    cursor: pointer;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #333;
+    padding: 8px 0;
+    user-select: none;
+}
+
+#settingsPanel > summary:hover {
+    color: #4a90d9;
+}
+
+#settingsPanel[open] > summary {
+    margin-bottom: 8px;
+}
+
 h2 {
     font-size: 1.1rem;
     margin-bottom: 12px;

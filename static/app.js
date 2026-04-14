@@ -12,6 +12,7 @@
     const downloadLink = document.getElementById("downloadLink");
     const gallerySection = document.getElementById("gallerySection");
     const gallery = document.getElementById("gallery");
+    const settingsPanel = document.getElementById("settingsPanel");
     const previewBox = document.getElementById("previewBox");
     const previewLabel = document.getElementById("previewLabel");
     const customSizeEl = document.getElementById("customSize");
@@ -183,6 +184,7 @@
         // Reset UI
         runBtn.disabled = true;
         runBtn.textContent = "Running...";
+        settingsPanel.removeAttribute("open");
         progressSection.classList.remove("hidden");
         resultsSection.classList.add("hidden");
         gallerySection.classList.add("hidden");
@@ -247,8 +249,8 @@
                 progressBar.style.width = pct + "%";
                 progressText.textContent = pct + "%";
 
-                const status = event.success ? "" : " [FAILED]";
-                appendLog(`[${event.current}/${event.total}] ${event.part_name}${status}`);
+                const status = event.success ? "" : "  WARNING: Failed";
+                appendLog(`[${event.current}/${event.total}] Capturing ${event.part_name}...${status}`);
 
                 // Add thumbnail to gallery (newest first)
                 if (event.success && event.image) {
@@ -265,6 +267,7 @@
             if (event.type === "done") {
                 source.close();
                 resetBtn();
+                settingsPanel.setAttribute("open", "");
                 saveSettings();
 
                 const r = event.result;
@@ -284,6 +287,7 @@
             if (event.type === "error") {
                 source.close();
                 resetBtn();
+                settingsPanel.setAttribute("open", "");
                 appendLog("\nERROR: " + event.message);
                 resultInfo.innerHTML = `<span class="error">${escapeHtml(event.message)}</span>`;
                 resultsSection.classList.remove("hidden");

@@ -9,6 +9,9 @@
 <body>
     <div class="container">
         <h1>pictureBOM</h1>
+
+        <details id="settingsPanel" open>
+        <summary>Settings</summary>
         <p class="subtitle">Automatically capture isometric images of every part in a SolidWorks assembly and generate an Excel Bill of Materials with embedded thumbnails.</p>
         <div class="how-it-works">
             <p><strong>How it works:</strong> Point this tool at a SolidWorks assembly file (.sldasm). It will open each part, take an isometric screenshot, and build an Excel spreadsheet with a picture of every component alongside its part number, description, vendor, and quantity.</p>
@@ -116,6 +119,7 @@
 
             <button type="submit" id="runBtn" class="btn-run">Run pictureBOM</button>
         </form>
+        </details>
 
         <!-- Progress Section -->
         <div id="progressSection" class="hidden">
