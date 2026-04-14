@@ -422,3 +422,105 @@ input[type="number"]:focus {
     color: #e74c3c;
     font-weight: 600;
 }
+
+/* Compare BOMs panel */
+#comparePanel {
+    margin-bottom: 0;
+}
+
+#comparePanel > summary {
+    cursor: pointer;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #333;
+    padding: 8px 0;
+    user-select: none;
+}
+
+#comparePanel > summary:hover {
+    color: #4a90d9;
+}
+
+#comparePanel[open] > summary {
+    margin-bottom: 8px;
+}
+
+.compare-form {
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.field-hint {
+    font-size: 0.82rem;
+    color: #888;
+    margin-bottom: 6px;
+}
+
+.bom-dropdown {
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    min-width: 180px;
+    background: #fff;
+}
+
+.bom-dropdown:focus {
+    outline: none;
+    border-color: #4a90d9;
+    box-shadow: 0 0 0 2px rgba(74,144,217,0.2);
+}
+
+/* Compare results */
+.compare-summary {
+    font-size: 0.95rem;
+    color: #333;
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+
+.compare-table-wrap {
+    overflow-x: auto;
+    margin-top: 12px;
+}
+
+.compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.compare-table th {
+    background: #1F3864;
+    color: #fff;
+    padding: 8px 12px;
+    text-align: center;
+    font-weight: 600;
+}
+
+.compare-table td {
+    padding: 6px 12px;
+    border: 1px solid #ddd;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.compare-table td.text-left {
+    text-align: left;
+}
+
+.compare-table img {
+    height: 45px;
+    object-fit: contain;
+}
+
+.compare-missing {
+    background: #fde8e8;
+}
+
+.compare-shortage {
+    background: #fff3cd;
+}

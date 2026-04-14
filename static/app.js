@@ -409,6 +409,9 @@
 
                 // Refresh estimate for next run with updated history
                 refreshEstimate();
+
+                // Refresh recent BOMs dropdown (new BOM was generated)
+                loadRecentBoms();
             }
 
             if (event.type === "error") {
@@ -489,5 +492,153 @@
         const div = document.createElement("div");
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    // -----------------------------------------------------------------------
+    // Compare BOMs
+    // -----------------------------------------------------------------------
+
+    const compareBtn = document.getElementById("compareBtn");
+    const compareResults = document.getElementById("compareResults");
+    const compareSummary = document.getElementById("compareSummary");
+    const compareBody = document.getElementById("compareBody");
+    const compareDownload = document.getElementById("compareDownload");
+
+    function loadRecentBoms() {
+        fetch("/api/recent-boms")
+            .then(function (r) { return r.json(); })
+            .then(function (boms) {
+                ["bom_a_recent", "bom_b_recent"].forEach(function (id) {
+                    var sel = document.getElementById(id);
+                    sel.innerHTML = '<option value="">Recent BOMs...</option>';
+                    boms.forEach(function (b) {
+                        var opt = document.createElement("option");
+                        opt.value = b.path;
+                        opt.textContent = b.name;
+                        sel.appendChild(opt);
+                    });
+                });
+            })
+            .catch(function () {});
+    }
+
+    loadRecentBoms();
+
+    // Sync dropdown selection to text input
+    document.getElementById("bom_a_recent").addEventListener("change", function () {
+        document.getElementById("bom_a").value = this.value;
+    });
+    document.getElementById("bom_b_recent").addEventListener("change", function () {
+        document.getElementById("bom_b").value = this.value;
+    });
+
+    // Compare button
+    if (compareBtn) {
+        compareBtn.addEventListener("click", function () {
+            var bomA = document.getElementById("bom_a").value.trim();
+            var bomB = document.getElementById("bom_b").value.trim();
+            if (!bomA || !bomB) {
+                alert("Please select both BOM files.");
+                return;
+            }
+
+            compareBtn.disabled = true;
+            compareBtn.textContent = "Comparing...";
+            compareResults.classList.add("hidden");
+
+            fetch("/api/compare", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bom_a: bomA, bom_b: bomB }),
+            })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.error) {
+                        alert("Error: " + data.error);
+                        return;
+                    }
+                    showCompareResults(data);
+                })
+                .catch(function (err) {
+                    alert("Compare failed: " + err.message);
+                })
+                .finally(function () {
+                    compareBtn.disabled = false;
+                    compareBtn.textContent = "Show What I Need to Order";
+                });
+        });
+    }
+
+    function showCompareResults(data) {
+        compareResults.classList.remove("hidden");
+
+        var s = data.summary;
+        if (s.shortage_count === 0) {
+            compareSummary.innerHTML =
+                "All <strong>" + s.total_in_b + "</strong> part(s) in " +
+                "<strong>" + escapeHtml(data.bom_b) + "</strong> are already covered " +
+                "by what you have. Nothing to order!";
+        } else {
+            compareSummary.innerHTML =
+                "You need to order <strong>" + s.shortage_count + "</strong> part(s). " +
+                "<strong>" + s.fully_covered + "</strong> of <strong>" + s.total_in_b +
+                "</strong> part(s) are already covered by what you have.";
+        }
+
+        // Build table rows
+        compareBody.innerHTML = "";
+        data.rows.forEach(function (row) {
+            var tr = document.createElement("tr");
+
+            // Image cell
+            var tdImg = document.createElement("td");
+            if (row.image) {
+                var img = document.createElement("img");
+                img.src = "/api/compare/images/" + encodeURIComponent(row.image);
+                img.alt = row.part_number;
+                tdImg.appendChild(img);
+            }
+            tr.appendChild(tdImg);
+
+            // Part number
+            var tdPN = document.createElement("td");
+            tdPN.textContent = row.part_number;
+            tr.appendChild(tdPN);
+
+            // Description
+            var tdDesc = document.createElement("td");
+            tdDesc.textContent = row.description;
+            tdDesc.className = "text-left";
+            tr.appendChild(tdDesc);
+
+            // Already Have
+            var tdA = document.createElement("td");
+            tdA.textContent = row.qty_a;
+            tr.appendChild(tdA);
+
+            // Need
+            var tdB = document.createElement("td");
+            tdB.textContent = row.qty_b;
+            tr.appendChild(tdB);
+
+            // To Order
+            var tdShortage = document.createElement("td");
+            tdShortage.textContent = row.shortage;
+            tdShortage.style.fontWeight = "bold";
+            tr.appendChild(tdShortage);
+
+            // Color code row
+            tr.className = row.qty_a === 0 ? "compare-missing" : "compare-shortage";
+            compareBody.appendChild(tr);
+        });
+
+        // Download link
+        if (data.excel_filename) {
+            compareDownload.href = "/api/compare/download/" + encodeURIComponent(data.excel_filename);
+            compareDownload.classList.remove("hidden");
+        }
+
+        // Refresh recent BOMs list (new comparison file was created)
+        loadRecentBoms();
     }
 })();

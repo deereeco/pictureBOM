@@ -16,7 +16,7 @@ import time
 
 import pythoncom
 import win32com.client
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -785,6 +785,287 @@ def _insert_image(ws, img_path, cell_ref):
     img.width = int(thumb_height * aspect)
     img.anchor = cell_ref
     ws.add_image(img)
+
+
+# ---------------------------------------------------------------------------
+# BOM Comparison
+# ---------------------------------------------------------------------------
+
+
+def parse_bom_excel(excel_path):
+    """Read a pictureBOM-generated .xlsx and return part data.
+
+    Handles flat, hierarchical, linked (two-sheet), and CSV-mode workbooks
+    by reading headers dynamically.
+
+    Returns:
+        dict with keys:
+            parts: {part_number: {"qty": int, "description": str}}
+            images_dir: directory containing the Excel file (where images live)
+    """
+    wb = load_workbook(excel_path, data_only=True)
+
+    # Pick the best sheet: prefer "Parts Only" (linked mode has total qty)
+    ws = wb.active
+    for name in wb.sheetnames:
+        if name.lower().startswith("parts only"):
+            ws = wb[name]
+            break
+
+    # Read headers from row 1
+    headers = {}  # col_index -> lowercase header name
+    for col_idx, cell in enumerate(ws[1], start=1):
+        if cell.value:
+            headers[col_idx] = str(cell.value).strip().lower()
+
+    # Find key columns
+    pn_col = None
+    qty_col = None
+    desc_col = None
+    level_col = None
+    type_col = None
+
+    for col_idx, name in headers.items():
+        if name == "part number":
+            pn_col = col_idx
+        elif name == "total qty":
+            qty_col = col_idx
+        elif name == "qty" and qty_col is None:
+            qty_col = col_idx
+        elif name == "description":
+            desc_col = col_idx
+        elif name == "level":
+            level_col = col_idx
+        elif name == "type":
+            type_col = col_idx
+
+    if pn_col is None:
+        raise PictureBOMError(f"No 'Part Number' column found in {excel_path}")
+
+    is_hierarchical = (level_col is not None and type_col is not None
+                       and "total qty" not in headers.values())
+
+    if is_hierarchical:
+        return _parse_hierarchical_bom(ws, pn_col, qty_col, desc_col,
+                                       level_col, type_col, excel_path)
+
+    # Flat / linked / CSV — read part number and qty directly
+    parts = {}
+    for row in ws.iter_rows(min_row=2):
+        pn_val = row[pn_col - 1].value
+        if not pn_val:
+            continue
+        part_number = str(pn_val).strip()
+        qty = row[qty_col - 1].value if qty_col else 1
+        qty = int(qty) if qty else 1
+        desc = str(row[desc_col - 1].value or "") if desc_col else ""
+
+        if part_number in parts:
+            parts[part_number]["qty"] += qty
+        else:
+            parts[part_number] = {"qty": qty, "description": desc}
+
+    wb.close()
+    return {"parts": parts, "images_dir": os.path.dirname(os.path.abspath(excel_path))}
+
+
+def _parse_hierarchical_bom(ws, pn_col, qty_col, desc_col, level_col, type_col,
+                            excel_path):
+    """Parse a hierarchical BOM sheet, multiplying quantities through the
+    assembly tree to compute true totals (same logic as _build_flat_from_hierarchical)."""
+    parts = {}
+    assy_stack = []  # list of (depth, cumulative_multiplier)
+
+    for row in ws.iter_rows(min_row=2):
+        level_val = row[level_col - 1].value
+        type_val = row[type_col - 1].value
+        pn_val = row[pn_col - 1].value
+        if not pn_val or not level_val:
+            continue
+
+        part_number = str(pn_val).strip()
+        row_type = str(type_val or "").strip()
+        per_parent_qty = int(row[qty_col - 1].value or 1) if qty_col else 1
+        desc = str(row[desc_col - 1].value or "") if desc_col else ""
+        depth = _level_depth(str(level_val))
+
+        # Pop ancestors at same depth or deeper
+        while assy_stack and assy_stack[-1][0] >= depth:
+            assy_stack.pop()
+
+        if row_type == "Assembly":
+            parent_mult = assy_stack[-1][1] if assy_stack else 1
+            cumulative = parent_mult * per_parent_qty
+            assy_stack.append((depth, cumulative))
+        else:
+            # Part — compute total contribution
+            parent_mult = assy_stack[-1][1] if assy_stack else 1
+            total_contribution = per_parent_qty * parent_mult
+
+            if part_number in parts:
+                parts[part_number]["qty"] += total_contribution
+            else:
+                parts[part_number] = {"qty": total_contribution, "description": desc}
+
+    return {"parts": parts, "images_dir": os.path.dirname(os.path.abspath(excel_path))}
+
+
+def compare_boms(bom_a_path, bom_b_path):
+    """Compare two BOM files: find parts in B not fully covered by A.
+
+    Args:
+        bom_a_path: Excel file for parts the user already has.
+        bom_b_path: Excel file for the assembly the user wants to build.
+
+    Returns:
+        dict with keys:
+            rows: list of dicts (part_number, description, qty_a, qty_b,
+                  shortage, image_path)
+            summary: {total_in_b, shortage_count, fully_covered}
+            bom_a: basename of file A
+            bom_b: basename of file B
+    """
+    parsed_a = parse_bom_excel(bom_a_path)
+    parsed_b = parse_bom_excel(bom_b_path)
+    parts_a = parsed_a["parts"]
+    parts_b = parsed_b["parts"]
+
+    rows = []
+    for part_number in sorted(parts_b.keys()):
+        info_b = parts_b[part_number]
+        qty_b = info_b["qty"]
+        qty_a = parts_a[part_number]["qty"] if part_number in parts_a else 0
+
+        if qty_a >= qty_b:
+            continue  # fully covered
+
+        shortage = qty_b - qty_a
+
+        # Find image: prefer B's directory, fall back to A's
+        safe_name = sanitize_filename(part_number)
+        image_path = _find_image(parsed_b["images_dir"], safe_name)
+        if not image_path:
+            image_path = _find_image(parsed_a["images_dir"], safe_name)
+
+        rows.append({
+            "part_number": part_number,
+            "description": info_b["description"],
+            "qty_a": qty_a,
+            "qty_b": qty_b,
+            "shortage": shortage,
+            "image_path": image_path,
+        })
+
+    total_in_b = len(parts_b)
+    shortage_count = len(rows)
+
+    return {
+        "rows": rows,
+        "summary": {
+            "total_in_b": total_in_b,
+            "shortage_count": shortage_count,
+            "fully_covered": total_in_b - shortage_count,
+        },
+        "bom_a": os.path.basename(bom_a_path),
+        "bom_b": os.path.basename(bom_b_path),
+    }
+
+
+def generate_comparison_excel(comparison, output_path):
+    """Write a comparison result to a formatted Excel file with images.
+
+    Args:
+        comparison: dict returned by compare_boms()
+        output_path: path to write the .xlsx file
+
+    Returns:
+        output_path
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Parts to Order"
+
+    rows = comparison["rows"]
+    summary = comparison["summary"]
+
+    # Summary row (merged across all columns)
+    summary_text = (
+        f"Comparing \"{comparison['bom_b']}\" against \"{comparison['bom_a']}\": "
+        f"{summary['shortage_count']} part(s) to order, "
+        f"{summary['fully_covered']} already covered"
+    )
+    ws.merge_cells("A1:F1")
+    summary_cell = ws.cell(row=1, column=1, value=summary_text)
+    summary_cell.font = Font(bold=True, size=11)
+    summary_cell.alignment = Alignment(horizontal="left", vertical="center",
+                                       wrap_text=True)
+    ws.row_dimensions[1].height = 30
+
+    # Headers in row 2
+    headers = ["Picture", "Part Number", "Description", "Already Have",
+               "Need", "To Order"]
+    for col_idx, header in enumerate(headers, start=1):
+        ws.cell(row=2, column=col_idx, value=header)
+
+    # Styles
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="1F3864", end_color="1F3864",
+                              fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center",
+                                 wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin", color="BFBFBF"),
+        right=Side(style="thin", color="BFBFBF"),
+        top=Side(style="thin", color="BFBFBF"),
+        bottom=Side(style="thin", color="BFBFBF"),
+    )
+    center_align = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    missing_fill = PatternFill(start_color="FDDEDE", end_color="FDDEDE",
+                               fill_type="solid")
+    shortage_fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD",
+                                fill_type="solid")
+
+    # Format header row
+    ws.row_dimensions[2].height = 30
+    for cell in ws[2]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    # Data rows starting at row 3
+    for row_idx, row_data in enumerate(rows, start=3):
+        ws.row_dimensions[row_idx].height = 45
+
+        if row_data["image_path"]:
+            _insert_image(ws, row_data["image_path"], f"A{row_idx}")
+
+        ws.cell(row=row_idx, column=2, value=row_data["part_number"])
+        ws.cell(row=row_idx, column=3, value=row_data["description"])
+        ws.cell(row=row_idx, column=4, value=row_data["qty_a"])
+        ws.cell(row=row_idx, column=5, value=row_data["qty_b"])
+        ws.cell(row=row_idx, column=6, value=row_data["shortage"])
+
+        # Color code: red if completely missing, yellow if partial shortage
+        fill = missing_fill if row_data["qty_a"] == 0 else shortage_fill
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.border = thin_border
+            cell.fill = fill
+            if col_idx == 3:  # Description
+                cell.alignment = left_align
+            else:
+                cell.alignment = center_align
+
+    # Column widths
+    col_widths = [18, 25, 40, 14, 10, 12]
+    for col_idx, width in enumerate(col_widths, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    ws.freeze_panes = "A3"
+    wb.save(output_path)
+    return output_path
 
 
 def run_pipeline(assembly_path, output_dir, width=1920, height=1080,

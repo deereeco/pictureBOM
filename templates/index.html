@@ -126,6 +126,60 @@
         </form>
         </details>
 
+        <details id="comparePanel">
+        <summary>Compare BOMs</summary>
+        <p class="subtitle">Find out which parts you still need to order. Pick the BOM for parts you already have, and the BOM for the assembly you want to build.</p>
+        <div class="compare-form">
+            <div class="field">
+                <label for="bom_a">Parts I Already Have</label>
+                <p class="field-hint">Select the BOM for the assembly whose parts you already have on hand</p>
+                <div class="input-row">
+                    <select id="bom_a_recent" class="bom-dropdown">
+                        <option value="">Recent BOMs...</option>
+                    </select>
+                    <input type="text" id="bom_a" placeholder="Path to BOM (.xlsx)">
+                    <button type="button" class="btn-browse" data-target="bom_a" data-mode="excel">Browse</button>
+                </div>
+            </div>
+            <div class="field">
+                <label for="bom_b">Assembly I Want to Build</label>
+                <p class="field-hint">Select the BOM for the assembly you need parts for</p>
+                <div class="input-row">
+                    <select id="bom_b_recent" class="bom-dropdown">
+                        <option value="">Recent BOMs...</option>
+                    </select>
+                    <input type="text" id="bom_b" placeholder="Path to BOM (.xlsx)">
+                    <button type="button" class="btn-browse" data-target="bom_b" data-mode="excel">Browse</button>
+                </div>
+            </div>
+            <button type="button" id="compareBtn" class="btn-run">Show What I Need to Order</button>
+        </div>
+        </details>
+
+        <!-- Compare Results -->
+        <div id="compareResults" class="hidden">
+            <h2>Parts to Order</h2>
+            <div id="compareSummary" class="compare-summary"></div>
+            <div class="results-actions">
+                <a id="compareDownload" class="btn-download hidden" href="#" title="Download the comparison as an Excel file">Download Comparison (Excel)</a>
+            </div>
+            <div class="compare-table-wrap">
+                <table id="compareTable" class="compare-table">
+                    <thead>
+                        <tr>
+                            <th>Picture</th>
+                            <th>Part Number</th>
+                            <th>Description</th>
+                            <th>Already Have</th>
+                            <th>Need</th>
+                            <th>To Order</th>
+                        </tr>
+                    </thead>
+                    <tbody id="compareBody"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Progress Section -->
         <div id="progressSection" class="hidden">
             <h2>Progress</h2>

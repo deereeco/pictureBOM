@@ -107,6 +107,11 @@ def browse():
             title="Select CSV File",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
+    elif mode == "excel":
+        path = filedialog.askopenfilename(
+            title="Select BOM Excel File",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+        )
     else:
         path = filedialog.askopenfilename(
             title="Select SolidWorks Assembly",
@@ -247,6 +252,112 @@ def download_file(filename):
     if not _job["output_dir"]:
         return "No output directory", 404
     return send_from_directory(_job["output_dir"], filename, as_attachment=True)
+
+
+# ---------------------------------------------------------------------------
+# BOM Comparison
+# ---------------------------------------------------------------------------
+
+_compare_state = {
+    "output_dir": None,
+    "image_dirs": [],  # [b_dir, a_dir] — search B first
+}
+
+
+@app.route("/api/recent-boms")
+def recent_boms():
+    """Return .xlsx files from the output directory, newest first."""
+    settings = _load_settings()
+    output_dir = os.path.abspath(settings.get("output_dir", "./output"))
+    boms = []
+    if os.path.isdir(output_dir):
+        for fname in os.listdir(output_dir):
+            if fname.lower().endswith(".xlsx"):
+                full_path = os.path.join(output_dir, fname)
+                boms.append({
+                    "path": full_path,
+                    "name": fname,
+                    "modified": os.path.getmtime(full_path),
+                })
+    boms.sort(key=lambda b: b["modified"], reverse=True)
+    return jsonify(boms[:20])
+
+
+@app.route("/api/compare", methods=["POST"])
+def compare():
+    """Compare two BOM Excel files and return the results."""
+    params = request.json
+    bom_a = params.get("bom_a", "").strip()
+    bom_b = params.get("bom_b", "").strip()
+
+    if not bom_a or not bom_b:
+        return jsonify({"error": "Both BOM files are required."}), 400
+    if not os.path.isfile(bom_a):
+        return jsonify({"error": f"File not found: {bom_a}"}), 400
+    if not os.path.isfile(bom_b):
+        return jsonify({"error": f"File not found: {bom_b}"}), 400
+
+    try:
+        result = picturebom.compare_boms(bom_a, bom_b)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    # Generate comparison Excel
+    settings = _load_settings()
+    output_dir = os.path.abspath(settings.get("output_dir", "./output"))
+    os.makedirs(output_dir, exist_ok=True)
+
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    excel_name = f"comparison_{timestamp}.xlsx"
+    excel_path = os.path.join(output_dir, excel_name)
+    picturebom.generate_comparison_excel(result, excel_path)
+
+    # Store state for file serving
+    _compare_state["output_dir"] = output_dir
+    _compare_state["image_dirs"] = [
+        os.path.dirname(os.path.abspath(bom_b)),
+        os.path.dirname(os.path.abspath(bom_a)),
+    ]
+
+    # Build JSON response (image_path -> just the filename for the web UI)
+    response_rows = []
+    for row in result["rows"]:
+        response_rows.append({
+            "part_number": row["part_number"],
+            "description": row["description"],
+            "qty_a": row["qty_a"],
+            "qty_b": row["qty_b"],
+            "shortage": row["shortage"],
+            "image": os.path.basename(row["image_path"]) if row["image_path"] else None,
+        })
+
+    return jsonify({
+        "rows": response_rows,
+        "summary": result["summary"],
+        "bom_a": result["bom_a"],
+        "bom_b": result["bom_b"],
+        "excel_filename": excel_name,
+    })
+
+
+@app.route("/api/compare/download/<path:filename>")
+def compare_download(filename):
+    """Serve the comparison Excel file for download."""
+    if not _compare_state["output_dir"]:
+        return "No comparison output", 404
+    return send_from_directory(_compare_state["output_dir"], filename,
+                               as_attachment=True)
+
+
+@app.route("/api/compare/images/<path:filename>")
+def compare_image(filename):
+    """Serve a part image from either BOM's directory (tries B first)."""
+    for img_dir in _compare_state["image_dirs"]:
+        full_path = os.path.join(img_dir, filename)
+        if os.path.isfile(full_path):
+            return send_from_directory(img_dir, filename)
+    return "Image not found", 404
 
 
 # ---------------------------------------------------------------------------
