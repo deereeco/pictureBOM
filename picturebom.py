@@ -1,29 +1,25 @@
 """
-pictureBOM — Export isometric JPG images of every part in a SolidWorks assembly
-and generate an Excel visual BOM with embedded thumbnails.
+pictureBOM — Core library for exporting isometric JPG images of every part
+in a SolidWorks assembly and generating an Excel visual BOM with embedded
+thumbnails.
 
-Usage:
-    # Full pipeline: capture images + build Excel BOM from SolidWorks
-    python picturebom.py "C:\\path\\to\\assembly.sldasm" -o "C:\\output"
-
-    # Use existing images + CSV (no SolidWorks needed)
-    python picturebom.py --csv "bom.csv" --images "C:\\images" -o "C:\\output"
-
-    # Recapture images but use an existing CSV for BOM data
-    python picturebom.py "C:\\path\\to\\assembly.sldasm" --csv "bom.csv" -o "C:\\output"
+This module provides reusable functions with no CLI or GUI side effects.
+Use cli.py for the command-line interface or app.py for the web GUI.
 """
 
-import argparse
 import csv
+import logging
 import os
 import re
-import sys
 
 import pythoncom
 import win32com.client
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XlImage
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+log = logging.getLogger(__name__)
 
 # SolidWorks constants
 SW_DOC_PART = 1
@@ -32,13 +28,18 @@ SW_OPEN_DOC_OPTIONS_SILENT = 1
 SW_VIEW_ISOMETRIC = 7
 
 
+class PictureBOMError(Exception):
+    """Raised when the pipeline encounters a fatal error."""
+
+
 def connect_to_solidworks():
     """Attach to a running SolidWorks instance."""
     try:
         sw_app = win32com.client.GetActiveObject("SldWorks.Application")
     except pythoncom.com_error:
-        print("ERROR: SolidWorks is not running. Please open SolidWorks and try again.")
-        sys.exit(1)
+        raise PictureBOMError(
+            "SolidWorks is not running. Please open SolidWorks and try again."
+        )
     return sw_app
 
 
@@ -99,12 +100,14 @@ def get_custom_property(cpm, prop_name, debug=False):
             out_link,
         )
         if debug:
-            print(f"      Get6('{prop_name}'): result={result}, "
-                  f"val='{out_val.value}', resolved='{out_resolved.value}'")
+            log.debug(
+                "Get6('%s'): result=%s, val='%s', resolved='%s'",
+                prop_name, result, out_val.value, out_resolved.value,
+            )
         return str(out_resolved.value or out_val.value or "")
     except Exception as e:
         if debug:
-            print(f"      Get6('{prop_name}') FAILED: {e}, trying GetAll3 fallback...")
+            log.debug("Get6('%s') FAILED: %s, trying GetAll3 fallback...", prop_name, e)
 
     # --- Approach 2: GetAll3 bulk read fallback ---
     try:
@@ -122,11 +125,11 @@ def get_custom_property(cpm, prop_name, debug=False):
             if str(name).lower() == prop_name.lower():
                 val = str(values[i]) if i < len(values) else ""
                 if debug:
-                    print(f"      GetAll3 match '{prop_name}': '{val}'")
+                    log.debug("GetAll3 match '%s': '%s'", prop_name, val)
                 return val
     except Exception as e2:
         if debug:
-            print(f"      GetAll3 fallback FAILED: {e2}")
+            log.debug("GetAll3 fallback FAILED: %s", e2)
 
     return ""
 
@@ -154,7 +157,7 @@ def get_part_properties(comp_doc, debug=False):
 
         if debug:
             names = get_all_property_names(comp_doc)
-            print(f"    Properties found: {names}")
+            log.debug("Properties found: %s", names)
 
         # Build a case-insensitive lookup of actual property names
         all_names = get_all_property_names(comp_doc)
@@ -253,6 +256,39 @@ def capture_component(sw_app, file_path, doc_type, output_path, width, height):
         close_document(sw_app, model_doc)
 
 
+def capture_all_components(sw_app, components, output_dir, width, height, on_progress=None):
+    """
+    Capture isometric images for all components.
+
+    on_progress: optional callable(current, total, part_name, success, image_path)
+    Returns: (success_count, total)
+    """
+    total = len(components)
+    success_count = 0
+
+    for i, (_, comp) in enumerate(components.items(), 1):
+        safe_name = sanitize_filename(comp["name"])
+        img_output = os.path.join(output_dir, f"{safe_name}.jpg")
+
+        log.info("[%d/%d] Capturing %s...", i, total, comp["name"])
+        try:
+            ok = capture_component(
+                sw_app, comp["file_path"], comp["doc_type"],
+                img_output, width, height,
+            )
+            if ok:
+                success_count += 1
+            else:
+                log.warning("Failed to open %s", comp["name"])
+        except Exception as e:
+            ok = False
+            log.warning("Error capturing %s: %s", comp["name"], e)
+
+        if on_progress:
+            on_progress(i, total, comp["name"], ok, img_output)
+
+    return success_count, total
+
 
 def load_csv_bom(csv_path):
     """Load a CSV file and return a list of row dicts. Expects a 'Part Number' column."""
@@ -278,6 +314,23 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
     ws = wb.active
     ws.title = "Visual BOM"
 
+    # --- Styles ---
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="1F3864", end_color="1F3864", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin", color="BFBFBF"),
+        right=Side(style="thin", color="BFBFBF"),
+        top=Side(style="thin", color="BFBFBF"),
+        bottom=Side(style="thin", color="BFBFBF"),
+    )
+    center_align = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    # Columns where text should be left-aligned (description-like)
+    # Identified by header name, case-insensitive
+    left_align_names = {"description"}
+
     if csv_columns:
         # CSV mode: Picture + all original CSV columns
         headers = ["Picture"] + list(csv_columns)
@@ -288,7 +341,6 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
         ws.column_dimensions["A"].width = 18  # Picture column
 
         for row_idx, row_data in enumerate(bom_rows, start=2):
-            # Try to find image by part number
             part_number = row_data.get("Part Number", row_data.get("part_number", ""))
             safe_name = sanitize_filename(part_number)
             img_path = _find_image(images_dir, safe_name)
@@ -308,10 +360,10 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
         # Column widths
         ws.column_dimensions["A"].width = 18   # Picture
         ws.column_dimensions["B"].width = 25   # Part Number
-        ws.column_dimensions["C"].width = 35   # Description
+        ws.column_dimensions["C"].width = 40   # Description
         ws.column_dimensions["D"].width = 8    # Qty
         ws.column_dimensions["E"].width = 20   # Vendor
-        ws.column_dimensions["F"].width = 20   # Vendor Part No
+        ws.column_dimensions["F"].width = 22   # Vendor Part No
 
         for row_idx, row_data in enumerate(bom_rows, start=2):
             safe_name = sanitize_filename(row_data["name"])
@@ -328,10 +380,28 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
             ws.cell(row=row_idx, column=5, value=row_data.get("vendor", ""))
             ws.cell(row=row_idx, column=6, value=row_data.get("vendor_part_no", ""))
 
-    # Bold header row
-    from openpyxl.styles import Font
+    # --- Format header row ---
+    ws.row_dimensions[1].height = 30
     for cell in ws[1]:
-        cell.font = Font(bold=True)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    # --- Format data rows ---
+    num_cols = len(headers)
+    for row_idx in range(2, len(bom_rows) + 2):
+        for col_idx in range(1, num_cols + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.border = thin_border
+            col_name = headers[col_idx - 1] if col_idx <= len(headers) else ""
+            if col_name.lower() in left_align_names:
+                cell.alignment = left_align
+            else:
+                cell.alignment = center_align
+
+    # Freeze the header row so it stays visible when scrolling
+    ws.freeze_panes = "A2"
 
     wb.save(output_path)
     return output_path
@@ -358,143 +428,113 @@ def _insert_image(ws, img_path, cell_ref):
     ws.add_image(img)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Export isometric images of every part in a SolidWorks assembly "
-                    "and generate an Excel visual BOM.",
-    )
-    parser.add_argument(
-        "assembly",
-        help="Path to the SolidWorks assembly file (.sldasm).",
-    )
-    parser.add_argument(
-        "-o", "--output-dir",
-        default="./output",
-        help="Output directory for images and BOM (default: ./output)",
-    )
-    parser.add_argument(
-        "--include-subassemblies",
-        action="store_true",
-        help="Also capture images of sub-assemblies (default: parts only)",
-    )
-    parser.add_argument("--width", type=int, default=1920, help="Image width (default: 1920)")
-    parser.add_argument("--height", type=int, default=1080, help="Image height (default: 1080)")
-    parser.add_argument("--debug", action="store_true", help="Print property names found on each part")
-    parser.add_argument(
-        "--csv",
-        default=None,
-        help="Path to an existing CSV file to use as the BOM data source.",
-    )
-    parser.add_argument(
-        "--images",
-        default=None,
-        help="Path to a folder of existing part images. Skips SolidWorks image capture.",
-    )
+def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
+                 include_subassemblies=False, csv_path=None, images_dir=None,
+                 debug=False, on_progress=None, overwrite=False):
+    """
+    Run the full pictureBOM pipeline.
 
-    args = parser.parse_args()
+    Args:
+        assembly_path: Path to the .sldasm file.
+        output_dir: Directory for images and BOM output.
+        width: Image export width in pixels.
+        height: Image export height in pixels.
+        include_subassemblies: Also capture sub-assembly images.
+        csv_path: Optional CSV file for BOM data instead of SolidWorks properties.
+        images_dir: Optional folder of existing images (skips capture).
+        debug: Enable verbose property logging.
+        on_progress: Optional callable(current, total, part_name, success, image_path).
+        overwrite: If True, overwrite existing files without checking.
 
-    has_csv = args.csv is not None
-    has_images = args.images is not None
+    Returns:
+        dict with keys: excel_path, images_dir, total_components, captured_count
 
-    output_dir = os.path.abspath(args.output_dir)
+    Raises:
+        PictureBOMError: On fatal errors (file not found, SolidWorks not running, etc.)
+    """
+    has_csv = csv_path is not None
+    has_images = images_dir is not None
+
+    assembly_path = os.path.abspath(assembly_path)
+    output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Where images live
-    images_dir = os.path.abspath(args.images) if has_images else output_dir
-
-    bom_rows = []
-    csv_columns = None
-
-    # --- SolidWorks pipeline (always runs) ---
-    assembly_path = os.path.abspath(args.assembly)
     if not os.path.isfile(assembly_path):
-        print(f"ERROR: File not found: {assembly_path}")
-        sys.exit(1)
+        raise PictureBOMError(f"File not found: {assembly_path}")
     if not assembly_path.lower().endswith(".sldasm"):
-        print("ERROR: Input file must be a SolidWorks assembly (.sldasm)")
-        sys.exit(1)
+        raise PictureBOMError("Input file must be a SolidWorks assembly (.sldasm)")
 
-    # --- Check for overwrites before doing any work ---
+    # Where images live
+    img_dir = os.path.abspath(images_dir) if has_images else output_dir
+
+    # Check for existing files
     excel_path = os.path.join(output_dir, "bom.xlsx")
-    if os.path.isfile(excel_path):
-        answer = input(f"File already exists: {excel_path}\nOverwrite? (y/n): ").strip().lower()
-        if answer != "y":
-            print("Aborted.")
-            return
+    if not overwrite:
+        if os.path.isfile(excel_path):
+            raise PictureBOMError(f"File already exists: {excel_path}")
+        if not has_images:
+            existing = [f for f in os.listdir(output_dir)
+                        if f.lower().endswith((".jpg", ".jpeg", ".bmp", ".png"))] if os.path.isdir(output_dir) else []
+            if existing:
+                raise PictureBOMError(
+                    f"Output folder already contains {len(existing)} image(s): {output_dir}"
+                )
 
-    if not has_images:
-        existing_images = [f for f in os.listdir(output_dir) if f.lower().endswith((".jpg", ".jpeg", ".bmp", ".png"))] if os.path.isdir(output_dir) else []
-        if existing_images:
-            answer = input(
-                f"Output folder already contains {len(existing_images)} image(s): {output_dir}\n"
-                f"Overwrite existing images? (y/n): "
-            ).strip().lower()
-            if answer != "y":
-                print("Aborted.")
-                return
-
-    print("Connecting to SolidWorks...")
+    log.info("Connecting to SolidWorks...")
     sw_app = connect_to_solidworks()
 
-    print(f"Opening assembly: {assembly_path}")
+    log.info("Opening assembly: %s", assembly_path)
     assy_doc = open_document(sw_app, assembly_path, SW_DOC_ASSEMBLY)
     if assy_doc is None:
-        print("ERROR: Failed to open assembly file.")
-        sys.exit(1)
+        raise PictureBOMError("Failed to open assembly file.")
 
-    print("Traversing assembly components...")
-    components = traverse_assembly(assy_doc, args.include_subassemblies, debug=args.debug)
+    log.info("Traversing assembly components...")
+    components = traverse_assembly(assy_doc, include_subassemblies, debug=debug)
     total = len(components)
-    print(f"Found {total} unique component(s)")
+    log.info("Found %d unique component(s)", total)
 
     # BOM data comes from CSV if provided, otherwise from SolidWorks traversal
+    bom_rows = []
+    csv_columns = None
     if has_csv:
-        csv_path = os.path.abspath(args.csv)
+        csv_path = os.path.abspath(csv_path)
         if not os.path.isfile(csv_path):
-            print(f"ERROR: CSV file not found: {csv_path}")
-            sys.exit(1)
-        print(f"Loading CSV: {csv_path}")
+            raise PictureBOMError(f"CSV file not found: {csv_path}")
+        log.info("Loading CSV: %s", csv_path)
         bom_rows, csv_columns = load_csv_bom(csv_path)
-        print(f"Loaded {len(bom_rows)} rows from CSV")
+        log.info("Loaded %d rows from CSV", len(bom_rows))
     else:
         bom_rows = list(components.values())
 
-    # Capture images (skip if user provided --images)
+    # Capture images (skip if user provided existing images)
+    captured_count = 0
     if not has_images and total > 0:
-        success_count = 0
-        for i, (_, comp) in enumerate(components.items(), 1):
-            safe_name = sanitize_filename(comp["name"])
-            img_output = os.path.join(output_dir, f"{safe_name}.jpg")
-
-            print(f"[{i}/{total}] Capturing {comp['name']}...")
-            try:
-                ok = capture_component(
-                    sw_app, comp["file_path"], comp["doc_type"],
-                    img_output, args.width, args.height,
-                )
-                if ok:
-                    success_count += 1
-                else:
-                    print(f"  WARNING: Failed to open {comp['name']}")
-            except Exception as e:
-                print(f"  WARNING: Error capturing {comp['name']}: {e}")
-
-        print(f"\n{success_count}/{total} images captured.")
+        captured_count, _ = capture_all_components(
+            sw_app, components, output_dir, width, height, on_progress=on_progress,
+        )
+        log.info("%d/%d images captured.", captured_count, total)
     elif has_images:
-        print(f"Using existing images from: {images_dir}")
+        log.info("Using existing images from: %s", img_dir)
 
     close_document(sw_app, assy_doc)
 
     if not bom_rows:
-        print("No BOM data to write.")
-        return
+        log.warning("No BOM data to write.")
+        return {
+            "excel_path": None,
+            "images_dir": img_dir,
+            "total_components": total,
+            "captured_count": captured_count,
+        }
 
     # Generate Excel BOM
-    excel_path = os.path.join(output_dir, "bom.xlsx")
-    print(f"Generating Excel BOM...")
-    generate_excel_bom(bom_rows, images_dir, excel_path, csv_columns)
-    print(f"Done! BOM saved to: {excel_path}")
+    log.info("Generating Excel BOM...")
+    generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns)
+    log.info("Done! BOM saved to: %s", excel_path)
 
-
-if __name__ == "__main__":
-    main()
+    return {
+        "excel_path": excel_path,
+        "images_dir": img_dir,
+        "total_components": total,
+        "captured_count": captured_count,
+    }

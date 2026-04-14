@@ -1,10 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "picturebom"
-version = "0.1.0"
+version = "0.2.0"
 description = "Export isometric JPG images of every part in a SolidWorks assembly and generate an Excel visual BOM with embedded thumbnails."
 requires-python = ">=3.10"
 dependencies = [
     "pywin32>=306",
     "openpyxl>=3.1",
     "Pillow>=10.0",
+    "flask>=3.0",
 ]
+
+[project.scripts]
+picturebom = "cli:main"
+picturebom-gui = "app:main"
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]

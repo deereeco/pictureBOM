@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pictureBOM</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>pictureBOM</h1>
+        <p class="subtitle">Automatically capture isometric images of every part in a SolidWorks assembly and generate an Excel Bill of Materials with embedded thumbnails.</p>
+        <div class="how-it-works">
+            <p><strong>How it works:</strong> Point this tool at a SolidWorks assembly file (.sldasm). It will open each part, take an isometric screenshot, and build an Excel spreadsheet with a picture of every component alongside its part number, description, vendor, and quantity.</p>
+            <p>SolidWorks must be running on this machine before you click Run.</p>
+        </div>
+
+        <form id="bomForm">
+            <!-- Assembly Path -->
+            <div class="field">
+                <label for="assembly_path">Assembly File (.sldasm)</label>
+                <div class="input-row">
+                    <input type="text" id="assembly_path" name="assembly_path" placeholder="C:\path\to\assembly.sldasm" required>
+                    <button type="button" class="btn-browse" data-target="assembly_path" data-mode="file">Browse</button>
+                </div>
+            </div>
+
+            <!-- Output Directory -->
+            <div class="field">
+                <label for="output_dir">Output Directory</label>
+                <div class="input-row">
+                    <input type="text" id="output_dir" name="output_dir" placeholder="C:\output" value="./output">
+                    <button type="button" class="btn-browse" data-target="output_dir" data-mode="folder">Browse</button>
+                </div>
+            </div>
+
+            <!-- Optional: CSV Path -->
+            <details class="optional-section">
+                <summary>Optional: CSV &amp; Images</summary>
+                <div class="field">
+                    <label for="csv_path">CSV File</label>
+                    <div class="input-row">
+                        <input type="text" id="csv_path" name="csv_path" placeholder="Already have a BOM as a CSV? Add the file path here to use it instead of reading properties from SolidWorks">
+                        <button type="button" class="btn-browse" data-target="csv_path" data-mode="csv">Browse</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="images_dir">Existing Images Folder</label>
+                    <div class="input-row">
+                        <input type="text" id="images_dir" name="images_dir" placeholder="Already have part images? Add the folder path here to skip capturing new ones from SolidWorks">
+                        <button type="button" class="btn-browse" data-target="images_dir" data-mode="folder">Browse</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Image Quality -->
+            <div class="field">
+                <label>Image Quality</label>
+                <div class="quality-row">
+                    <div class="quality-presets">
+                        <label class="radio-option">
+                            <input type="radio" name="quality" value="draft" data-w="960" data-h="540">
+                            <span class="radio-label">Draft</span>
+                            <span class="radio-hint">960 &times; 540 &mdash; small file, fast</span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="quality" value="standard" data-w="1920" data-h="1080" checked>
+                            <span class="radio-label">Standard</span>
+                            <span class="radio-hint">1920 &times; 1080 &mdash; good balance</span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="quality" value="high" data-w="3840" data-h="2160">
+                            <span class="radio-label">High Quality</span>
+                            <span class="radio-hint">3840 &times; 2160 &mdash; large, detailed</span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="quality" value="custom" data-w="" data-h="">
+                            <span class="radio-label">Custom</span>
+                            <span class="radio-hint">Set your own resolution</span>
+                        </label>
+                        <div id="customSize" class="custom-size hidden">
+                            <input type="number" id="width" name="width" value="1920" min="100" max="7680" placeholder="Width">
+                            <span>&times;</span>
+                            <input type="number" id="height" name="height" value="1080" min="100" max="4320" placeholder="Height">
+                            <span>px</span>
+                        </div>
+                    </div>
+                    <div class="quality-preview">
+                        <div class="preview-box-container">
+                            <div class="preview-box" id="previewBox"></div>
+                        </div>
+                        <div class="preview-label" id="previewLabel">1920 &times; 1080</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Assembly Mode -->
+            <div class="field">
+                <label>Assembly Mode</label>
+                <label class="radio-option">
+                    <input type="radio" name="assembly_mode" value="flat" checked>
+                    <span class="radio-label">Parts only (flat list)</span>
+                    <span class="radio-hint">Every individual part appears once with its quantity</span>
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="assembly_mode" value="nested">
+                    <span class="radio-label">Include sub-assemblies</span>
+                    <span class="radio-hint">Sub-assemblies are also captured as separate line items</span>
+                </label>
+            </div>
+
+            <button type="submit" id="runBtn" class="btn-run">Run pictureBOM</button>
+        </form>
+
+        <!-- Progress Section -->
+        <div id="progressSection" class="hidden">
+            <h2>Progress</h2>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar">
+                    <span id="progressText">0%</span>
+                </div>
+            </div>
+            <div id="log" class="log"></div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultsSection" class="hidden">
+            <h2>Results</h2>
+            <div id="resultInfo"></div>
+            <a id="downloadLink" class="btn-download hidden" href="#">Download BOM (Excel)</a>
+        </div>
+
+        <!-- Thumbnail Gallery -->
+        <div id="gallerySection" class="hidden">
+            <h2>Captured Images</h2>
+            <div id="gallery" class="gallery"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

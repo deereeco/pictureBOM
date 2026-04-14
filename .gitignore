@@ -2,3 +2,6 @@
 venv*
 .ohMyClaude/
 uv.lock
+build/
+dist/
+*.spec
