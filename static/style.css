@@ -271,6 +271,12 @@ input[type="number"]:focus {
     cursor: not-allowed;
 }
 
+.results-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+}
+
 .btn-download {
     display: inline-block;
     padding: 10px 20px;
@@ -279,11 +285,24 @@ input[type="number"]:focus {
     text-decoration: none;
     border-radius: 6px;
     font-weight: 600;
-    margin-top: 8px;
 }
 
 .btn-download:hover {
     background: #27ae60;
+}
+
+.btn-open-folder {
+    padding: 10px 20px;
+    background: #4a90d9;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-open-folder:hover {
+    background: #3a7bc8;
 }
 
 /* Progress */

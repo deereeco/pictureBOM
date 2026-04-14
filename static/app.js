@@ -10,6 +10,7 @@
     const resultsSection = document.getElementById("resultsSection");
     const resultInfo = document.getElementById("resultInfo");
     const downloadLink = document.getElementById("downloadLink");
+    const openFolderBtn = document.getElementById("openFolderBtn");
     const gallerySection = document.getElementById("gallerySection");
     const gallery = document.getElementById("gallery");
     const settingsPanel = document.getElementById("settingsPanel");
@@ -246,6 +247,16 @@
     });
 
     // -----------------------------------------------------------------------
+    // Open output folder
+    // -----------------------------------------------------------------------
+
+    if (openFolderBtn) {
+        openFolderBtn.addEventListener("click", () => {
+            fetch("/api/open-folder", { method: "POST" }).catch(() => {});
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // Form submit — start pipeline
     // -----------------------------------------------------------------------
 
@@ -263,6 +274,7 @@
         resultsSection.classList.add("hidden");
         gallerySection.classList.add("hidden");
         downloadLink.classList.add("hidden");
+        if (openFolderBtn) openFolderBtn.classList.add("hidden");
         progressBar.style.width = "0%";
         progressText.textContent = "0%";
         logEl.textContent = "";
@@ -385,6 +397,7 @@
                 resultInfo.innerHTML =
                     `Components: ${r.total_components} &mdash; Images captured: ${r.captured_count}`;
 
+                if (openFolderBtn) openFolderBtn.classList.remove("hidden");
                 if (r.excel_path) {
                     downloadLink.classList.remove("hidden");
                     downloadLink.href = "/api/download/bom.xlsx";

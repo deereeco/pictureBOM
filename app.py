@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import queue
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -200,6 +201,15 @@ def progress_stream():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/open-folder", methods=["POST"])
+def open_folder():
+    """Open the output directory in the system file explorer."""
+    if not _job["output_dir"] or not os.path.isdir(_job["output_dir"]):
+        return jsonify({"error": "Output directory not found"}), 404
+    subprocess.Popen(["explorer", os.path.normpath(_job["output_dir"])])
+    return jsonify({"ok": True})
 
 
 @app.route("/api/images/<path:filename>")
