@@ -364,7 +364,6 @@
             if (event.type === "done") {
                 source.close();
                 resetBtn();
-                settingsPanel.setAttribute("open", "");
                 saveSettings();
 
                 // Stop timing and show final elapsed
