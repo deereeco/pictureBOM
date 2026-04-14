@@ -382,8 +382,7 @@ def _build_flat_from_hierarchical(rows, root_assembly_name="Assembly"):
     result = []
     for norm_path in part_order:
         data = parts[norm_path]
-        wu_parts = [f"{name} ({qty})" for name, qty in data["where_used_map"].items()]
-        data["where_used"] = ", ".join(wu_parts)
+        data["where_used"] = ", ".join(data["where_used_map"].keys())
         del data["where_used_map"]
         result.append(data)
 
