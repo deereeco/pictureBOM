@@ -160,6 +160,15 @@
 
     loadSettings();
 
+    // Auto-save settings when any input changes
+    settingsFields.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", saveSettings);
+    });
+    document.querySelectorAll('input[name="quality"], input[name="assembly_mode"]').forEach(radio => {
+        radio.addEventListener("change", saveSettings);
+    });
+
     // -----------------------------------------------------------------------
     // Time estimation
     // -----------------------------------------------------------------------
@@ -229,6 +238,7 @@
                 .then(data => {
                     if (data.path) {
                         document.getElementById(target).value = data.path;
+                        saveSettings();
                     }
                 })
                 .catch(err => console.error("Browse error:", err));
