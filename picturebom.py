@@ -177,7 +177,7 @@ def get_part_properties(comp_doc, debug=False):
 def traverse_assembly(assembly_doc, include_subassemblies=False, debug=False):
     """
     Walk the assembly component tree and return a dict of unique components
-    with quantities and custom properties.
+    with quantities and custom properties (flat list).
 
     Returns:
         dict: {normalized_file_path: {name, file_path, doc_type, quantity, description, vendor, vendor_part_no}}
@@ -225,6 +225,99 @@ def traverse_assembly(assembly_doc, include_subassemblies=False, debug=False):
         }
 
     return unique
+
+
+def traverse_assembly_hierarchical(assembly_doc, debug=False):
+    """
+    Walk the assembly tree preserving hierarchy. Returns an ordered list of
+    rows with level numbering, type, and per-parent quantities.
+
+    Returns:
+        tuple: (rows, unique_components)
+            rows: list of dicts with keys: level, type, name, file_path, doc_type,
+                  quantity, description, vendor, vendor_part_no
+            unique_components: dict keyed by normalized path (for image capture)
+    """
+    rows = []
+    unique = {}
+
+    top_components = assembly_doc.GetComponents(True)  # True = top-level only
+    if top_components is None:
+        return rows, unique
+
+    _traverse_level(top_components, "", rows, unique, debug)
+    return rows, unique
+
+
+def _traverse_level(components, parent_prefix, rows, unique, debug):
+    """Recursively traverse a list of sibling components at one level."""
+    # Group siblings by file path to count per-parent quantity
+    seen_at_level = {}  # normalized_path -> {comp, count}
+    order = []          # preserve insertion order of unique items
+
+    for comp in components:
+        if comp.IsSuppressed:
+            continue
+        file_path = comp.GetPathName
+        if not file_path:
+            continue
+
+        normalized = file_path.lower().strip()
+        if normalized in seen_at_level:
+            seen_at_level[normalized]["count"] += 1
+        else:
+            seen_at_level[normalized] = {"comp": comp, "count": 1}
+            order.append(normalized)
+
+    for idx, normalized in enumerate(order, 1):
+        info = seen_at_level[normalized]
+        comp = info["comp"]
+        file_path = comp.GetPathName
+        is_assembly = normalized.endswith(".sldasm")
+        doc_type = SW_DOC_ASSEMBLY if is_assembly else SW_DOC_PART
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+
+        # Level numbering: top-level = "1.0", "2.0"; children = "1.1", "1.2"
+        if parent_prefix == "":
+            level = f"{idx}.0"
+        else:
+            level = f"{parent_prefix}.{idx}"
+
+        comp_doc = comp.GetModelDoc2
+        props = get_part_properties(comp_doc, debug=debug)
+
+        row = {
+            "level": level,
+            "type": "Assembly" if is_assembly else "Part",
+            "name": base_name,
+            "file_path": file_path,
+            "doc_type": doc_type,
+            "quantity": info["count"],
+            "description": props["description"],
+            "vendor": props["vendor"],
+            "vendor_part_no": props["vendor_part_no"],
+        }
+        rows.append(row)
+
+        # Track unique components for image capture
+        if normalized not in unique:
+            unique[normalized] = {
+                "name": base_name,
+                "file_path": file_path,
+                "doc_type": doc_type,
+                "quantity": info["count"],
+                "description": props["description"],
+                "vendor": props["vendor"],
+                "vendor_part_no": props["vendor_part_no"],
+            }
+
+        # Recurse into sub-assembly children
+        if is_assembly:
+            children = comp.GetChildren
+            if children:
+                # Level prefix for children: "1" for top-level "1.0", "1.1" for "1.1", etc.
+                child_prefix = f"{idx}" if parent_prefix == "" else f"{parent_prefix}.{idx}"
+                _traverse_level(children, child_prefix, rows, unique, debug)
 
 
 def capture_component(sw_app, file_path, doc_type, output_path, width, height):
@@ -300,15 +393,18 @@ def load_csv_bom(csv_path):
     return rows, reader.fieldnames
 
 
-def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
+def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
+                       hierarchical=False):
     """
     Generate an Excel BOM with embedded thumbnail images.
 
     bom_rows: list of dicts with at least 'name' key. May also have
               description, quantity, vendor, vendor_part_no.
+              In hierarchical mode, also has 'level' and 'type'.
     images_dir: folder containing JPG images named <part_name>.jpg
     output_path: path to write the .xlsx file
     csv_columns: if provided, use these column names (from CSV import)
+    hierarchical: if True, add Level and Type columns, highlight assembly rows
     """
     wb = Workbook()
     ws = wb.active
@@ -326,9 +422,9 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
     )
     center_align = Alignment(horizontal="center", vertical="center")
     left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    assembly_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
 
     # Columns where text should be left-aligned (description-like)
-    # Identified by header name, case-insensitive
     left_align_names = {"description"}
 
     if csv_columns:
@@ -348,8 +444,32 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
 
             for col_idx, col_name in enumerate(csv_columns, start=2):
                 ws.cell(row=row_idx, column=col_idx, value=row_data.get(col_name, ""))
+
+    elif hierarchical:
+        # Hierarchical BOM with Level and Type columns
+        headers = ["Picture", "Level", "Type", "Part Number", "Description",
+                    "Qty", "Vendor", "Vendor Part No"]
+        ws.append(headers)
+
+        for row_idx, row_data in enumerate(bom_rows, start=2):
+            safe_name = sanitize_filename(row_data["name"])
+            img_path = _find_image(images_dir, safe_name)
+
+            ws.row_dimensions[row_idx].height = 45
+
+            if img_path:
+                _insert_image(ws, img_path, f"A{row_idx}")
+
+            ws.cell(row=row_idx, column=2, value=row_data.get("level", ""))
+            ws.cell(row=row_idx, column=3, value=row_data.get("type", ""))
+            ws.cell(row=row_idx, column=4, value=row_data["name"])
+            ws.cell(row=row_idx, column=5, value=row_data.get("description", ""))
+            ws.cell(row=row_idx, column=6, value=row_data.get("quantity", 1))
+            ws.cell(row=row_idx, column=7, value=row_data.get("vendor", ""))
+            ws.cell(row=row_idx, column=8, value=row_data.get("vendor_part_no", ""))
+
     else:
-        # SolidWorks traversal mode
+        # Flat BOM (parts only)
         headers = ["Picture", "Part Number", "Description", "Qty", "Vendor", "Vendor Part No"]
         ws.append(headers)
 
@@ -394,6 +514,9 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
     # --- Format data rows ---
     num_cols = len(headers)
     for row_idx in range(2, len(bom_rows) + 2):
+        row_data = bom_rows[row_idx - 2]
+        is_assembly_row = hierarchical and row_data.get("type") == "Assembly"
+
         for col_idx in range(1, num_cols + 1):
             cell = ws.cell(row=row_idx, column=col_idx)
             cell.border = thin_border
@@ -402,6 +525,12 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None):
                 cell.alignment = left_align
             else:
                 cell.alignment = center_align
+
+            # Highlight assembly rows with a light blue tint
+            if is_assembly_row:
+                cell.fill = assembly_fill
+                if col_idx > 1:  # don't bold the picture cell
+                    cell.font = Font(bold=True)
 
     # Freeze the header row so it stays visible when scrolling
     ws.freeze_panes = "A2"
@@ -492,12 +621,17 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         raise PictureBOMError("Failed to open assembly file.")
 
     log.info("Traversing assembly components...")
-    components = traverse_assembly(assy_doc, include_subassemblies, debug=debug)
+    hierarchical = False
+    if include_subassemblies:
+        bom_rows, components = traverse_assembly_hierarchical(assy_doc, debug=debug)
+        hierarchical = True
+    else:
+        components = traverse_assembly(assy_doc, include_subassemblies=False, debug=debug)
+        bom_rows = None  # set below
     total = len(components)
     log.info("Found %d unique component(s)", total)
 
     # BOM data comes from CSV if provided, otherwise from SolidWorks traversal
-    bom_rows = []
     csv_columns = None
     if has_csv:
         csv_path = os.path.abspath(csv_path)
@@ -505,8 +639,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             raise PictureBOMError(f"CSV file not found: {csv_path}")
         log.info("Loading CSV: %s", csv_path)
         bom_rows, csv_columns = load_csv_bom(csv_path)
+        hierarchical = False  # CSV overrides hierarchical layout
         log.info("Loaded %d rows from CSV", len(bom_rows))
-    else:
+    elif not hierarchical:
         bom_rows = list(components.values())
 
     # Capture images (skip if user provided existing images)
@@ -532,7 +667,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     # Generate Excel BOM
     log.info("Generating Excel BOM...")
-    generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns)
+    generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns,
+                       hierarchical=hierarchical)
     log.info("Done! BOM saved to: %s", excel_path)
 
     return {
