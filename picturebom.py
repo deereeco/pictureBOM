@@ -16,6 +16,7 @@ import time
 
 import pythoncom
 import win32com.client
+import win32com.client.dynamic
 from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -35,14 +36,23 @@ class PictureBOMError(Exception):
 
 
 def connect_to_solidworks():
-    """Attach to a running SolidWorks instance."""
+    """Attach to a running SolidWorks instance.
+
+    Force late binding by re-wrapping the raw IDispatch with
+    win32com.client.dynamic. This bypasses pywin32's auto-generated typelib
+    wrappers (gen_py), which break SolidWorks calls in subtle ways:
+    byref VARIANT args raise TypeError, derived interfaces (IAssemblyDoc)
+    hide base-interface members (GetTitle), and ActivateDoc2 doesn't
+    actually switch the active doc — so SaveAs ends up exporting the same
+    view repeatedly under different filenames.
+    """
     try:
         sw_app = win32com.client.GetActiveObject("SldWorks.Application")
     except pythoncom.com_error:
         raise PictureBOMError(
             "SolidWorks is not running. Please open SolidWorks and try again."
         )
-    return sw_app
+    return win32com.client.dynamic.Dispatch(sw_app._oleobj_)
 
 
 def open_document(sw_app, file_path, doc_type):

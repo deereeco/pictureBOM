@@ -457,16 +457,6 @@
     }
 
     // -----------------------------------------------------------------------
-    // Heartbeat — keeps server alive while browser tab is open
-    // -----------------------------------------------------------------------
-
-    setInterval(function () {
-        fetch("/api/heartbeat", { method: "POST" }).catch(function () {});
-    }, 10000);
-    // Send an initial heartbeat immediately
-    fetch("/api/heartbeat", { method: "POST" }).catch(function () {});
-
-    // -----------------------------------------------------------------------
     // Warn on tab close
     // -----------------------------------------------------------------------
 

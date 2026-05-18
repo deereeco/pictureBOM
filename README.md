@@ -84,7 +84,7 @@ A browser tab will open automatically at `http://127.0.0.1:5000`.
 ## Shutting down
 
 - Use the **Quit** button in the top-right corner to shut down the server.
-- If you close the browser tab, the server will automatically shut down after ~30 seconds.
+- Or press **Ctrl+C** in the terminal where you launched it.
 
 ## Command-line interface
 

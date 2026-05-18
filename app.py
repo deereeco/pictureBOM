@@ -14,7 +14,6 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 import webbrowser
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
@@ -45,10 +44,6 @@ _job = {
     "events": queue.Queue(),
     "output_dir": None,
 }
-
-# Heartbeat — browser pings every 10s; server exits after 30s of silence
-_last_heartbeat = time.time()
-_HEARTBEAT_TIMEOUT = 30
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +178,8 @@ def run_job():
 
             _job["events"].put({"type": "done", "result": result})
         except Exception as e:
+            import traceback
+            log.error("Job failed:\n%s", traceback.format_exc())
             _job["events"].put({"type": "error", "message": str(e)})
         finally:
             pythoncom.CoUninitialize()
@@ -212,14 +209,6 @@ def progress_stream():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@app.route("/api/heartbeat", methods=["POST"])
-def heartbeat():
-    """Browser pings this to signal it's still open."""
-    global _last_heartbeat
-    _last_heartbeat = time.time()
-    return jsonify({"ok": True})
 
 
 @app.route("/api/quit", methods=["POST"])
@@ -364,21 +353,9 @@ def compare_image(filename):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _heartbeat_watchdog():
-    """Background thread that exits the process if no heartbeat is received."""
-    while True:
-        time.sleep(10)
-        if time.time() - _last_heartbeat > _HEARTBEAT_TIMEOUT:
-            log.info("No browser connected for %ds — shutting down.", _HEARTBEAT_TIMEOUT)
-            os.kill(os.getpid(), signal.SIGTERM)
-            break
-
-
 def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     port = int(os.environ.get("PORT", 5000))
-    # Start heartbeat watchdog
-    threading.Thread(target=_heartbeat_watchdog, daemon=True).start()
     # Open browser after a short delay so the server is ready
     threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     print(f"Starting pictureBOM GUI at http://127.0.0.1:{port}")
