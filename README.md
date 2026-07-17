@@ -11,69 +11,53 @@ Point pictureBOM at a SolidWorks assembly file (`.sldasm`). It will:
 
 The output Excel file is named after the assembly with a timestamp (e.g. `MainFrame_2026-04-14_143025.xlsx`) so consecutive runs never overwrite each other.
 
+It can also **compare two BOMs** to show which parts you still need to order.
+
 ## Requirements
 
 - **Windows** (SolidWorks is Windows-only)
 - **SolidWorks** installed and running before you click Run
-- **Python 3.10+** installed on Windows
+
+That's it — no Python installation needed; the installer takes care of everything else.
 
 > **Important:** Pack and Go your assembly before running. Files locked in PDM will not open correctly.
 
-## Installation (Windows)
+## Install
 
-### Step 1: Install Python
+Paste this into **PowerShell** and press Enter:
 
-If you don't already have Python installed:
-
-1. Download Python 3.10+ from [python.org/downloads](https://www.python.org/downloads/).
-2. Run the installer. **Check "Add Python to PATH"** at the bottom of the first screen -- this is required.
-3. Click "Install Now".
-4. To verify it worked, open **Command Prompt** or **PowerShell** and run:
-   ```
-   python --version
-   ```
-   You should see something like `Python 3.13.3`. If you get an error, restart your terminal and try again.
-
-> **Note:** pip comes bundled with Python, so you don't need to install it separately.
-
-### Step 2: Download pictureBOM
-
-If you have git installed:
 ```
-git clone https://github.com/deereeco/pictureBOM.git
-cd pictureBOM
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/deereeco/pictureBOM/main/install.ps1 | iex"
 ```
 
-If you don't have git, download the repo as a ZIP from GitHub and extract it, then open a terminal in that folder.
+The installer:
 
-### Step 3: Install dependencies and run
+1. Installs [git](https://git-scm.com) and [uv](https://docs.astral.sh/uv/) if they're missing (uv downloads its own Python, so you don't need Python installed)
+2. Installs pictureBOM
+3. Creates a **Start Menu shortcut**
 
-**Using pip** (comes with Python):
+Then launch **pictureBOM** from the Start Menu. A browser tab opens automatically at `http://127.0.0.1:5000`.
+
+### Update
+
 ```
-pip install -e .
-python app.py
+uv tool upgrade picturebom
 ```
 
-**Or using uv** (faster alternative, handles virtual environments automatically):
-1. Install uv by running this in PowerShell:
-   ```
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
-2. Then run:
-   ```
-   uv run python app.py
-   ```
+### Uninstall
 
----
+```
+uv tool uninstall picturebom
+```
 
-A browser tab will open automatically at `http://127.0.0.1:5000`.
+(Then delete the Start Menu shortcut if you created one.)
 
 ## Usage
 
 1. Open SolidWorks with your assembly (or have it accessible on disk).
-2. Launch pictureBOM (`python app.py` or `uv run python app.py`).
+2. Launch pictureBOM from the Start Menu (or run `picturebom-gui` in a terminal).
 3. Set the **Assembly File** path to your `.sldasm` file.
-4. Set the **Output Directory** where images and the Excel BOM will be saved.
+4. Set the **Output Directory** where images and the Excel BOM will be saved (defaults to `Documents\pictureBOM`).
 5. Choose your **Image Quality** and **Assembly Mode**:
    - **Parts only (flat)** -- every unique part listed once with total quantity
    - **Include sub-assemblies (nested)** -- hierarchical list including sub-assemblies
@@ -81,28 +65,53 @@ A browser tab will open automatically at `http://127.0.0.1:5000`.
 6. Click **Run pictureBOM**.
 7. When complete, use **Open Output Folder** to find your files or **Download Copy of BOM** to grab the Excel through the browser.
 
+### Compare BOMs
+
+The **Compare BOMs** panel shows which parts you still need to order: pick the BOM for parts you already have and the BOM for the assembly you want to build, and it produces a shortage list (on screen and as an Excel file).
+
 ## Shutting down
 
 - Use the **Quit** button in the top-right corner to shut down the server.
-- Or press **Ctrl+C** in the terminal where you launched it.
+- Or close the pictureBOM console window / press **Ctrl+C** in it.
 
 ## Command-line interface
 
 For scripting or automation, a CLI is also available:
 
 ```
-python cli.py path/to/assembly.sldasm -o output_folder
+picturebom path\to\assembly.sldasm -o output_folder
 ```
 
-Run `python cli.py --help` for all options.
+Run `picturebom --help` for all options.
 
-## Project structure
+## Troubleshooting
+
+- **"SolidWorks is not running"** — open SolidWorks first, then click Run again.
+- **Port 5000 already in use** — launch with a different port: set the `PORT` environment variable (e.g. `$env:PORT=5050; picturebom-gui`).
+- **PowerShell blocks the install script** — the one-liner above already bypasses the execution policy for that single command; if you downloaded `install.ps1` manually, right-click it → Properties → Unblock.
+- **Parts fail to open** — Pack and Go the assembly first; files locked in PDM will not open correctly.
+
+## Developer setup
+
+```
+git clone https://github.com/deereeco/pictureBOM.git
+cd pictureBOM
+uv run picturebom-gui
+```
+
+Project structure:
 
 ```
 pictureBOM/
-  app.py          -- Flask web GUI (entry point for browser interface)
-  cli.py          -- Command-line interface
-  picturebom.py   -- Core library (SolidWorks COM, image capture, Excel generation)
-  templates/      -- HTML template
-  static/         -- JavaScript, CSS
+  src/picturebom/
+    app.py        -- Flask web GUI (entry point: picturebom-gui)
+    cli.py        -- Command-line interface (entry point: picturebom)
+    core.py       -- Core library (SolidWorks COM, image capture, Excel generation)
+    templates/    -- HTML template
+    static/       -- JavaScript, CSS
+  install.ps1     -- One-line installer for end users
 ```
+
+### Releasing
+
+`main` is the release channel — `uv tool upgrade picturebom` installs whatever `main` points at, so keep `main` shippable. To cut a release: bump `version` in `pyproject.toml`, commit, tag (`git tag v0.3.0`), and push with tags.

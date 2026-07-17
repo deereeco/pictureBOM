@@ -2,8 +2,8 @@
 pictureBOM CLI — Command-line interface for pictureBOM.
 
 Usage:
-    python cli.py "C:\\path\\to\\assembly.sldasm" -o "C:\\output"
-    python cli.py --csv "bom.csv" --images "C:\\images" -o "C:\\output"
+    picturebom "C:\\path\\to\\assembly.sldasm" -o "C:\\output"
+    picturebom --csv "bom.csv" --images "C:\\images" -o "C:\\output"
 """
 
 import argparse
@@ -11,7 +11,7 @@ import logging
 import os
 import sys
 
-from picturebom import PictureBOMError, run_pipeline
+from .core import PictureBOMError, run_pipeline
 
 
 def main():

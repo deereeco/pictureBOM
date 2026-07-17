@@ -36,7 +36,7 @@
             <div class="field">
                 <label for="output_dir">Output Directory</label>
                 <div class="input-row">
-                    <input type="text" id="output_dir" name="output_dir" placeholder="C:\output" value="./output">
+                    <input type="text" id="output_dir" name="output_dir" placeholder="C:\output">
                     <button type="button" class="btn-browse" data-target="output_dir" data-mode="folder">Browse</button>
                 </div>
             </div>
@@ -210,6 +210,8 @@
             <h2>Captured Images</h2>
             <div id="gallery" class="gallery"></div>
         </div>
+
+        <footer class="app-footer">pictureBOM v{{ version }}</footer>
     </div>
 
     <script src="{{ url_for('static', filename='app.js') }}"></script>

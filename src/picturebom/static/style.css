@@ -524,3 +524,10 @@ input[type="number"]:focus {
 .compare-shortage {
     background: #fff3cd;
 }
+
+.app-footer {
+    margin-top: 24px;
+    text-align: center;
+    color: #999;
+    font-size: 12px;
+}

@@ -2,7 +2,7 @@
 pictureBOM Web GUI — Flask-based interface for pictureBOM.
 
 Usage:
-    python app.py
+    picturebom-gui
     # Opens browser to http://127.0.0.1:5000
 """
 
@@ -12,30 +12,24 @@ import os
 import queue
 import signal
 import subprocess
-import sys
 import threading
 import webbrowser
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
-import picturebom
+from . import __version__
+from . import core as picturebom
 
-# Detect PyInstaller frozen bundle
-if getattr(sys, "frozen", False):
-    _base_dir = sys._MEIPASS
-else:
-    _base_dir = os.path.dirname(os.path.abspath(__file__))
-
-app = Flask(
-    __name__,
-    template_folder=os.path.join(_base_dir, "templates"),
-    static_folder=os.path.join(_base_dir, "static"),
-)
+app = Flask(__name__)
 
 log = logging.getLogger(__name__)
 
 # Settings file location
 SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".picturebom", "settings.json")
+
+# Absolute default so launches from a Start Menu shortcut (CWD = System32)
+# never write output relative to the working directory.
+DEFAULT_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "pictureBOM")
 
 # Job state — one job at a time (SolidWorks is single-instance)
 _job_lock = threading.Lock()
@@ -70,18 +64,26 @@ def _save_settings(data):
 
 @app.route("/")
 def index():
-    return render_template("index.html"), 200, {"Cache-Control": "no-cache"}
+    return render_template("index.html", version=__version__), 200, {"Cache-Control": "no-cache"}
 
 
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
-    return jsonify(_load_settings())
+    settings = _load_settings()
+    if not settings.get("output_dir"):
+        settings["output_dir"] = DEFAULT_OUTPUT_DIR
+    return jsonify(settings)
 
 
 @app.route("/api/settings", methods=["POST"])
 def save_settings():
     _save_settings(request.json)
     return jsonify({"ok": True})
+
+
+@app.route("/api/version")
+def get_version():
+    return jsonify({"version": __version__})
 
 
 @app.route("/api/browse", methods=["POST"])
@@ -127,7 +129,7 @@ def run_job():
         _job["events"] = queue.Queue()
 
     params = request.json
-    output_dir = os.path.abspath(params.get("output_dir", "./output"))
+    output_dir = os.path.abspath(params.get("output_dir") or DEFAULT_OUTPUT_DIR)
     _job["output_dir"] = output_dir
 
     def worker():
@@ -257,7 +259,7 @@ _compare_state = {
 def recent_boms():
     """Return .xlsx files from the output directory, newest first."""
     settings = _load_settings()
-    output_dir = os.path.abspath(settings.get("output_dir", "./output"))
+    output_dir = os.path.abspath(settings.get("output_dir") or DEFAULT_OUTPUT_DIR)
     boms = []
     if os.path.isdir(output_dir):
         for fname in os.listdir(output_dir):
@@ -293,7 +295,7 @@ def compare():
 
     # Generate comparison Excel
     settings = _load_settings()
-    output_dir = os.path.abspath(settings.get("output_dir", "./output"))
+    output_dir = os.path.abspath(settings.get("output_dir") or DEFAULT_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
     from datetime import datetime

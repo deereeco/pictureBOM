@@ -295,7 +295,7 @@
 
         const params = {
             assembly_path: assemblyPath,
-            output_dir: document.getElementById("output_dir").value.trim() || "./output",
+            output_dir: document.getElementById("output_dir").value.trim(),
             csv_path: document.getElementById("csv_path").value.trim(),
             images_dir: document.getElementById("images_dir").value.trim(),
             width: wh.w,

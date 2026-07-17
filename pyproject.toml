@@ -4,8 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "picturebom"
-version = "0.2.0"
+version = "0.3.0"
 description = "Export isometric JPG images of every part in a SolidWorks assembly and generate an Excel visual BOM with embedded thumbnails."
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "pywin32>=306",
@@ -15,6 +16,9 @@ dependencies = [
 ]
 
 [project.scripts]
-picturebom = "cli:main"
-picturebom-gui = "app:main"
+picturebom = "picturebom.cli:main"
+picturebom-gui = "picturebom.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/picturebom"]
 

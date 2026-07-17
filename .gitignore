@@ -3,3 +3,5 @@ venv*
 .ohMyClaude/
 uv.lock
 __pycache__/
+dist/
+build/
