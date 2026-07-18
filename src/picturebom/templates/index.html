@@ -4,216 +4,360 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>pictureBOM</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233878c0' stroke-width='1.7' stroke-linejoin='round'%3E%3Cpath d='M12 2.5 21 7.5 21 16.5 12 21.5 3 16.5 3 7.5Z'/%3E%3Cpath d='M3 7.5 12 12.5 21 7.5M12 12.5 12 21.5'/%3E%3C/svg%3E">
+    <script>
+    (function () {
+        var t = null;
+        try { t = localStorage.getItem("picturebom-theme"); } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+            t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+    })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ version }}">
 </head>
 <body>
-    <div class="container">
-        <div class="header-row">
-            <h1>pictureBOM</h1>
-            <button id="quitBtn" class="btn-quit" title="Shut down the pictureBOM server">Quit</button>
+
+    <header class="appbar">
+        <div class="appbar-left">
+            <svg class="mark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 2.5 21 7.5 21 16.5 12 21.5 3 16.5 3 7.5Z"/>
+                <path d="M3 7.5 12 12.5 21 7.5M12 12.5 12 21.5"/>
+            </svg>
+            <h1 class="wordmark"><span class="wm-a">picture</span><span class="wm-b">BOM</span></h1>
+            <span class="version">v{{ version }}</span>
+        </div>
+        <div class="appbar-right">
+            <button type="button" id="themeToggle" class="icon-btn" title="Switch between light and dark theme" aria-label="Switch theme">
+                <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4"/>
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+                </svg>
+                <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+            <button type="button" id="quitBtn" class="btn-quit" title="Shut down the pictureBOM server">Quit</button>
+        </div>
+    </header>
+
+    <div class="shell">
+        <p class="tagline">Capture an isometric image of every part in a SolidWorks assembly and build an Excel BOM with embedded thumbnails.</p>
+
+        <div class="seg">
+            <button type="button" class="seg-btn is-active" data-view-btn="generate">Generate BOM</button>
+            <button type="button" class="seg-btn" data-view-btn="compare">Compare BOMs</button>
         </div>
 
-        <details id="settingsPanel" open>
-        <summary>Settings</summary>
-        <p class="subtitle">Automatically capture isometric images of every part in a SolidWorks assembly and generate an Excel Bill of Materials with embedded thumbnails.</p>
-        <div class="how-it-works">
-            <p><strong>How it works:</strong> Point this tool at a SolidWorks assembly file (.sldasm). It will open each part, take an isometric screenshot, and build an Excel spreadsheet with a picture of every component alongside its part number, description, vendor, and quantity.</p>
-            <p>SolidWorks must be running on this machine before you click Run.</p>
-            <p><strong>Important:</strong> Pack and Go your assembly before running. Files locked in PDM will not open correctly.</p>
-        </div>
+        <!-- ================= GENERATE VIEW ================= -->
+        <div class="view is-active" data-view="generate">
+            <form id="bomForm">
+                <ol class="stepper" id="setupSteps">
 
-        <form id="bomForm">
-            <!-- Assembly Path -->
-            <div class="field">
-                <label for="assembly_path">Assembly File (.sldasm)</label>
-                <div class="input-row">
-                    <input type="text" id="assembly_path" name="assembly_path" placeholder="C:\path\to\assembly.sldasm" required>
-                    <button type="button" class="btn-browse" data-target="assembly_path" data-mode="file">Browse</button>
-                </div>
-            </div>
+                    <!-- Step 1: pre-flight -->
+                    <li class="step">
+                        <span class="node" id="node1" aria-hidden="true">1</span>
+                        <div class="card">
+                            <div class="card-head">
+                                <h2 class="card-title">Before you run</h2>
+                                <span class="tally" id="readyTally">0 of 2 ready</span>
+                            </div>
+                            <label class="check"><input type="checkbox" class="ready-check"> SolidWorks is open on this machine</label>
+                            <label class="check"><input type="checkbox" class="ready-check"> Pack and Go your assembly to a local folder &mdash; files locked in PDM won't open</label>
+                        </div>
+                    </li>
 
-            <!-- Output Directory -->
-            <div class="field">
-                <label for="output_dir">Output Directory</label>
-                <div class="input-row">
-                    <input type="text" id="output_dir" name="output_dir" placeholder="C:\output">
-                    <button type="button" class="btn-browse" data-target="output_dir" data-mode="folder">Browse</button>
-                </div>
-            </div>
+                    <!-- Step 2: files -->
+                    <li class="step">
+                        <span class="node" id="node2" aria-hidden="true">2</span>
+                        <div class="card">
+                            <div class="card-head">
+                                <h2 class="card-title">Choose files</h2>
+                            </div>
+                            <div class="field">
+                                <label class="label" for="assembly_path">Assembly file (.sldasm)</label>
+                                <div class="row">
+                                    <input class="input" type="text" id="assembly_path" name="assembly_path" placeholder="C:\path\to\assembly.sldasm">
+                                    <button type="button" class="btn btn-neutral btn-browse" data-target="assembly_path" data-mode="file">Browse&hellip;</button>
+                                </div>
+                                <p class="field-msg hidden" id="assemblyMsg"></p>
+                                <p class="ihint">
+                                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.5v3.5M8 5.1v.2"/></svg>
+                                    <span>The file picker opens in a separate window &mdash; if you don't see it, check behind this window or in the taskbar.</span>
+                                </p>
+                            </div>
+                            <div class="field">
+                                <label class="label" for="output_dir">Output folder</label>
+                                <div class="row">
+                                    <input class="input" type="text" id="output_dir" name="output_dir" placeholder="C:\output">
+                                    <button type="button" class="btn btn-neutral btn-browse" data-target="output_dir" data-mode="folder">Browse&hellip;</button>
+                                </div>
+                            </div>
+                            <details class="adv">
+                                <summary>
+                                    <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5 7 5 3.5 8.5"/></svg>
+                                    Advanced &mdash; reuse an existing CSV or part images
+                                </summary>
+                                <div class="adv-body">
+                                    <div class="field">
+                                        <label class="label" for="csv_path">CSV file</label>
+                                        <div class="row">
+                                            <input class="input" type="text" id="csv_path" name="csv_path" placeholder="C:\path\to\bom.csv">
+                                            <button type="button" class="btn btn-neutral btn-browse" data-target="csv_path" data-mode="csv">Browse&hellip;</button>
+                                        </div>
+                                        <p class="hint">Use a CSV BOM instead of reading properties from SolidWorks</p>
+                                    </div>
+                                    <div class="field">
+                                        <label class="label" for="images_dir">Existing images folder</label>
+                                        <div class="row">
+                                            <input class="input" type="text" id="images_dir" name="images_dir" placeholder="C:\path\to\images">
+                                            <button type="button" class="btn btn-neutral btn-browse" data-target="images_dir" data-mode="folder">Browse&hellip;</button>
+                                        </div>
+                                        <p class="hint">Skip capturing &mdash; reuse part images from a previous run</p>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </li>
 
-            <!-- Optional: CSV Path -->
-            <details class="optional-section">
-                <summary>Optional: CSV &amp; Images</summary>
-                <div class="field">
-                    <label for="csv_path">CSV File</label>
-                    <div class="input-row">
-                        <input type="text" id="csv_path" name="csv_path" placeholder="Already have a BOM as a CSV? Add the file path here to use it instead of reading properties from SolidWorks">
-                        <button type="button" class="btn-browse" data-target="csv_path" data-mode="csv">Browse</button>
+                    <!-- Step 3: options -->
+                    <li class="step">
+                        <span class="node node-complete" aria-hidden="true"></span>
+                        <div class="card">
+                            <div class="card-head">
+                                <h2 class="card-title">Options</h2>
+                            </div>
+                            <details class="options" id="optionsPanel">
+                                <summary>
+                                    <span class="chip" id="chipQuality">Standard</span>
+                                    <span class="chip chip-mono" id="chipRes">1920 &times; 1080</span>
+                                    <span class="chip" id="chipMode">Parts only</span>
+                                    <span class="change">Change</span>
+                                </summary>
+                                <div class="options-body">
+                                    <div class="optgroup">
+                                        <span class="label">Image quality</span>
+                                        <div class="quality">
+                                            <div class="radios">
+                                                <label class="radio">
+                                                    <input type="radio" name="quality" value="draft" data-w="960" data-h="540">
+                                                    <span><span class="radio-name">Draft</span>
+                                                    <span class="radio-hint"><span class="mono">960 &times; 540</span> &mdash; small file, fast</span></span>
+                                                </label>
+                                                <label class="radio">
+                                                    <input type="radio" name="quality" value="standard" data-w="1920" data-h="1080" checked>
+                                                    <span><span class="radio-name">Standard</span>
+                                                    <span class="radio-hint"><span class="mono">1920 &times; 1080</span> &mdash; good balance</span></span>
+                                                </label>
+                                                <label class="radio">
+                                                    <input type="radio" name="quality" value="high" data-w="3840" data-h="2160">
+                                                    <span><span class="radio-name">High quality</span>
+                                                    <span class="radio-hint"><span class="mono">3840 &times; 2160</span> &mdash; large, detailed</span></span>
+                                                </label>
+                                                <label class="radio">
+                                                    <input type="radio" name="quality" value="custom" data-w="" data-h="">
+                                                    <span><span class="radio-name">Custom</span>
+                                                    <span class="radio-hint">Set your own resolution</span></span>
+                                                </label>
+                                                <div id="customSize" class="custom-size hidden">
+                                                    <input class="input input-num" type="number" id="width" name="width" value="1920" min="100" max="7680" placeholder="Width">
+                                                    <span>&times;</span>
+                                                    <input class="input input-num" type="number" id="height" name="height" value="1080" min="100" max="4320" placeholder="Height">
+                                                    <span>px</span>
+                                                </div>
+                                            </div>
+                                            <div class="preview">
+                                                <div class="viewport-frame">
+                                                    <span class="vpc"></span>
+                                                    <div class="preview-box" id="previewBox"></div>
+                                                </div>
+                                                <span class="vp-label" id="previewLabel">1920 &times; 1080</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="optgroup">
+                                        <span class="label">Assembly mode</span>
+                                        <div class="radios">
+                                            <label class="radio">
+                                                <input type="radio" name="assembly_mode" value="flat" checked>
+                                                <span><span class="radio-name">Parts only (flat list)</span>
+                                                <span class="radio-hint">Every individual part appears once with its quantity</span></span>
+                                            </label>
+                                            <label class="radio">
+                                                <input type="radio" name="assembly_mode" value="nested">
+                                                <span><span class="radio-name">Include sub-assemblies (nested list)</span>
+                                                <span class="radio-hint">Sub-assemblies are also captured as separate line items</span></span>
+                                            </label>
+                                            <label class="radio">
+                                                <input type="radio" name="assembly_mode" value="linked">
+                                                <span><span class="radio-name">Linked (two-sheet workbook)</span>
+                                                <span class="radio-hint">Sheet 1: editable parts list &mdash; Sheet 2: hierarchical view linked by formulas (Excel 365/2021+)</span></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </li>
+
+                    <!-- Step 4: run -->
+                    <li class="step">
+                        <span class="node node-active" aria-hidden="true">4</span>
+                        <div class="card">
+                            <div class="card-head">
+                                <h2 class="card-title">Run</h2>
+                            </div>
+                            <p class="estimate" id="estimateInfo"></p>
+                            <button type="submit" id="runBtn" class="btn btn-primary btn-run">Run pictureBOM</button>
+                        </div>
+                    </li>
+                </ol>
+            </form>
+
+            <!-- Run continuation: summary strip + progress + results + gallery -->
+            <ol class="stepper hidden" id="runSteps">
+
+                <li class="step hidden" id="summaryStep">
+                    <span class="node node-complete" aria-hidden="true"></span>
+                    <div class="card strip">
+                        <div class="strip-main">
+                            <span class="mono" id="stripAssembly"></span>
+                            <span class="strip-sep">&rarr;</span>
+                            <span class="mono" id="stripOutput"></span>
+                            <span class="strip-sep">&middot;</span>
+                            <span id="stripQuality"></span>
+                            <span class="strip-sep">&middot;</span>
+                            <span id="stripMode"></span>
+                        </div>
+                        <button type="button" class="linklike" id="editSetupBtn">Edit</button>
                     </div>
-                </div>
-                <div class="field">
-                    <label for="images_dir">Existing Images Folder</label>
-                    <div class="input-row">
-                        <input type="text" id="images_dir" name="images_dir" placeholder="Already have part images? Add the folder path here to skip capturing new ones from SolidWorks">
-                        <button type="button" class="btn-browse" data-target="images_dir" data-mode="folder">Browse</button>
-                    </div>
-                </div>
-            </details>
+                </li>
 
-            <!-- Image Quality -->
-            <div class="field">
-                <label>Image Quality</label>
-                <div class="quality-row">
-                    <div class="quality-presets">
-                        <label class="radio-option">
-                            <input type="radio" name="quality" value="draft" data-w="960" data-h="540">
-                            <span class="radio-label">Draft</span>
-                            <span class="radio-hint">960 &times; 540 &mdash; small file, fast</span>
-                        </label>
-                        <label class="radio-option">
-                            <input type="radio" name="quality" value="standard" data-w="1920" data-h="1080" checked>
-                            <span class="radio-label">Standard</span>
-                            <span class="radio-hint">1920 &times; 1080 &mdash; good balance</span>
-                        </label>
-                        <label class="radio-option">
-                            <input type="radio" name="quality" value="high" data-w="3840" data-h="2160">
-                            <span class="radio-label">High Quality</span>
-                            <span class="radio-hint">3840 &times; 2160 &mdash; large, detailed</span>
-                        </label>
-                        <label class="radio-option">
-                            <input type="radio" name="quality" value="custom" data-w="" data-h="">
-                            <span class="radio-label">Custom</span>
-                            <span class="radio-hint">Set your own resolution</span>
-                        </label>
-                        <div id="customSize" class="custom-size hidden">
-                            <input type="number" id="width" name="width" value="1920" min="100" max="7680" placeholder="Width">
-                            <span>&times;</span>
-                            <input type="number" id="height" name="height" value="1080" min="100" max="4320" placeholder="Height">
-                            <span>px</span>
+                <li class="step" id="progressSection">
+                    <span class="node node-run" id="progressNode" aria-hidden="true"></span>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Progress</h2>
+                            <span class="count" id="progressCount"></span>
+                        </div>
+                        <div class="bar-row">
+                            <div class="track"><div class="fill" id="progressBar"></div></div>
+                            <span class="pct" id="progressText">0%</span>
+                        </div>
+                        <p class="timing hidden" id="timingInfo">
+                            <span id="elapsedTime">Elapsed: 0s</span>
+                            <span id="remainingTime"></span>
+                        </p>
+                        <div id="log" class="log"></div>
+                    </div>
+                </li>
+
+                <li class="step hidden" id="resultsSection">
+                    <span class="node node-complete" aria-hidden="true"></span>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Results</h2>
+                        </div>
+                        <div class="resline" id="resultInfo"></div>
+                        <div class="actions">
+                            <a id="downloadLink" class="btn btn-success hidden" href="#" title="The BOM is already saved to your output folder. This downloads an extra copy through your browser.">Download copy of BOM (Excel)</a>
+                            <button type="button" id="openFolderBtn" class="btn btn-neutral hidden" title="Open the output folder in File Explorer">Open output folder</button>
                         </div>
                     </div>
-                    <div class="quality-preview">
-                        <div class="preview-box-container">
-                            <div class="preview-box" id="previewBox"></div>
+                </li>
+
+                <li class="step hidden" id="gallerySection">
+                    <span class="node node-complete" aria-hidden="true"></span>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Captured images</h2>
                         </div>
-                        <div class="preview-label" id="previewLabel">1920 &times; 1080</div>
+                        <div id="gallery" class="gallery"></div>
                     </div>
-                </div>
-            </div>
-
-            <!-- Assembly Mode -->
-            <div class="field">
-                <label>Assembly Mode</label>
-                <label class="radio-option">
-                    <input type="radio" name="assembly_mode" value="flat" checked>
-                    <span class="radio-label">Parts only (flat list)</span>
-                    <span class="radio-hint">Every individual part appears once with its quantity</span>
-                </label>
-                <label class="radio-option">
-                    <input type="radio" name="assembly_mode" value="nested">
-                    <span class="radio-label">Include sub-assemblies (nested list)</span>
-                    <span class="radio-hint">Sub-assemblies are also captured as separate line items</span>
-                </label>
-                <label class="radio-option">
-                    <input type="radio" name="assembly_mode" value="linked">
-                    <span class="radio-label">Linked (two-sheet workbook)</span>
-                    <span class="radio-hint">Sheet 1: editable parts list &mdash; Sheet 2: hierarchical view linked by formulas (Excel 365/2021+)</span>
-                </label>
-            </div>
-
-            <div id="estimateInfo" class="estimate-info"></div>
-            <button type="submit" id="runBtn" class="btn-run">Run pictureBOM</button>
-        </form>
-        </details>
-
-        <details id="comparePanel">
-        <summary>Compare BOMs</summary>
-        <p class="subtitle">Find out which parts you still need to order. Pick the BOM for parts you already have, and the BOM for the assembly you want to build.</p>
-        <div class="compare-form">
-            <div class="field">
-                <label for="bom_a">Parts I Already Have</label>
-                <p class="field-hint">Select the BOM for the assembly whose parts you already have on hand</p>
-                <div class="input-row">
-                    <select id="bom_a_recent" class="bom-dropdown">
-                        <option value="">Recent BOMs...</option>
-                    </select>
-                    <input type="text" id="bom_a" placeholder="Path to BOM (.xlsx)">
-                    <button type="button" class="btn-browse" data-target="bom_a" data-mode="excel">Browse</button>
-                </div>
-            </div>
-            <div class="field">
-                <label for="bom_b">Assembly I Want to Build</label>
-                <p class="field-hint">Select the BOM for the assembly you need parts for</p>
-                <div class="input-row">
-                    <select id="bom_b_recent" class="bom-dropdown">
-                        <option value="">Recent BOMs...</option>
-                    </select>
-                    <input type="text" id="bom_b" placeholder="Path to BOM (.xlsx)">
-                    <button type="button" class="btn-browse" data-target="bom_b" data-mode="excel">Browse</button>
-                </div>
-            </div>
-            <button type="button" id="compareBtn" class="btn-run">Show What I Need to Order</button>
-        </div>
-        </details>
-
-        <!-- Compare Results -->
-        <div id="compareResults" class="hidden">
-            <h2>Parts to Order</h2>
-            <div id="compareSummary" class="compare-summary"></div>
-            <div class="results-actions">
-                <a id="compareDownload" class="btn-download hidden" href="#" title="Download the comparison as an Excel file">Download Comparison (Excel)</a>
-            </div>
-            <div class="compare-table-wrap">
-                <table id="compareTable" class="compare-table">
-                    <thead>
-                        <tr>
-                            <th>Picture</th>
-                            <th>Part Number</th>
-                            <th>Description</th>
-                            <th>Already Have</th>
-                            <th>Need</th>
-                            <th>To Order</th>
-                        </tr>
-                    </thead>
-                    <tbody id="compareBody"></tbody>
-                </table>
-            </div>
+                </li>
+            </ol>
         </div>
 
-        <!-- Progress Section -->
-        <div id="progressSection" class="hidden">
-            <h2>Progress</h2>
-            <div class="progress-bar-container">
-                <div class="progress-bar" id="progressBar">
-                    <span id="progressText">0%</span>
-                </div>
-            </div>
-            <div id="timingInfo" class="timing-info hidden">
-                <span id="elapsedTime">Elapsed: 0s</span>
-                <span id="remainingTime"></span>
-            </div>
-            <div id="log" class="log"></div>
+        <!-- ================= COMPARE VIEW ================= -->
+        <div class="view" data-view="compare">
+            <p class="intro">Find out which parts you still need to order. Pick the BOM for parts you already have, and the BOM for the assembly you want to build.</p>
+            <ol class="stepper">
+
+                <li class="step">
+                    <span class="node" id="cmpNode1" aria-hidden="true">1</span>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Parts I already have</h2>
+                        </div>
+                        <div class="field">
+                            <div class="row">
+                                <input class="input" type="text" id="bom_a" placeholder="C:\path\to\BOM.xlsx" aria-label="Parts I already have">
+                                <button type="button" class="btn btn-neutral btn-browse" data-target="bom_a" data-mode="excel">Browse&hellip;</button>
+                            </div>
+                            <div class="recent" id="recentA"></div>
+                        </div>
+                    </div>
+                </li>
+
+                <li class="step">
+                    <span class="node" id="cmpNode2" aria-hidden="true">2</span>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Assembly I want to build</h2>
+                        </div>
+                        <div class="field">
+                            <div class="row">
+                                <input class="input" type="text" id="bom_b" placeholder="C:\path\to\BOM.xlsx" aria-label="Assembly I want to build">
+                                <button type="button" class="btn btn-neutral btn-browse" data-target="bom_b" data-mode="excel">Browse&hellip;</button>
+                            </div>
+                            <div class="recent" id="recentB"></div>
+                        </div>
+                    </div>
+                </li>
+
+                <li class="step">
+                    <span class="node node-active" aria-hidden="true">3</span>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Compare</h2>
+                        </div>
+                        <p class="field-msg hidden" id="compareError"></p>
+                        <button type="button" id="compareBtn" class="btn btn-secondary">Show what I need to order</button>
+                    </div>
+                </li>
+
+                <li class="step hidden" id="compareResults">
+                    <span class="node node-complete" aria-hidden="true"></span>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Parts to order</h2>
+                            <a id="compareDownload" class="linklike hidden" href="#" title="Download the comparison as an Excel file">Download comparison (Excel)</a>
+                        </div>
+                        <div class="cmp-summary" id="compareSummary"></div>
+                        <div class="tablewrap">
+                            <table id="compareTable" class="compare-table">
+                                <thead>
+                                    <tr>
+                                        <th>Picture</th>
+                                        <th>Part number</th>
+                                        <th>Description</th>
+                                        <th class="num">Already have</th>
+                                        <th class="num">Need</th>
+                                        <th class="num">To order</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="compareBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </li>
+            </ol>
         </div>
 
-        <!-- Results Section -->
-        <div id="resultsSection" class="hidden">
-            <h2>Results</h2>
-            <div id="resultInfo"></div>
-            <div class="results-actions">
-                <a id="downloadLink" class="btn-download hidden" href="#" title="The BOM is already saved to your output folder. This downloads an extra copy through your browser.">Download Copy of BOM (Excel)</a>
-                <button id="openFolderBtn" class="btn-open-folder hidden" title="Open the output folder in File Explorer">Open Output Folder</button>
-            </div>
-        </div>
-
-        <!-- Thumbnail Gallery -->
-        <div id="gallerySection" class="hidden">
-            <h2>Captured Images</h2>
-            <div id="gallery" class="gallery"></div>
-        </div>
-
-        <footer class="app-footer">pictureBOM v{{ version }}</footer>
+        <footer class="app-footer">pictureBOM v{{ version }} &middot; runs locally</footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
 </body>
 </html>

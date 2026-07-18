@@ -58,6 +58,20 @@ def _save_settings(data):
         json.dump(data, f, indent=2)
 
 
+# Serializes read-modify-write cycles on settings.json: the request thread
+# (POST /api/settings) and the job worker (timing_history append) both merge
+# into the file and would otherwise race and drop each other's writes.
+_settings_lock = threading.Lock()
+
+
+def _merge_settings(update_fn):
+    """Load settings, apply update_fn(settings) in place, save — atomically."""
+    with _settings_lock:
+        settings = _load_settings()
+        update_fn(settings)
+        _save_settings(settings)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -77,7 +91,10 @@ def get_settings():
 
 @app.route("/api/settings", methods=["POST"])
 def save_settings():
-    _save_settings(request.json)
+    # Merge into the existing file: the client only posts form fields, and a
+    # full replace would erase server-written keys like timing_history.
+    data = request.json or {}
+    _merge_settings(lambda settings: settings.update(data))
     return jsonify({"ok": True})
 
 
@@ -168,15 +185,15 @@ def run_job():
             # Persist timing history for future estimates (skip if no capture data)
             timing = result.get("timing", {})
             if timing.get("per_component_avg") and result.get("total_components"):
-                settings = _load_settings()
-                runs = settings.get("timing_history", {}).get("runs", [])
-                runs.append({
-                    "per_component_avg": timing["per_component_avg"],
-                    "excel_seconds": timing["excel_seconds"],
-                    "components": result["total_components"],
-                })
-                settings["timing_history"] = {"runs": runs[-20:]}
-                _save_settings(settings)
+                def append_run(settings):
+                    runs = settings.get("timing_history", {}).get("runs", [])
+                    runs.append({
+                        "per_component_avg": timing["per_component_avg"],
+                        "excel_seconds": timing["excel_seconds"],
+                        "components": result["total_components"],
+                    })
+                    settings["timing_history"] = {"runs": runs[-20:]}
+                _merge_settings(append_run)
 
             _job["events"].put({"type": "done", "result": result})
         except Exception as e:
@@ -263,7 +280,9 @@ def recent_boms():
     boms = []
     if os.path.isdir(output_dir):
         for fname in os.listdir(output_dir):
-            if fname.lower().endswith(".xlsx"):
+            # Skip comparison outputs — feeding them back into Compare is
+            # meaningless and they'd crowd real BOMs out of the chip row.
+            if fname.lower().endswith(".xlsx") and not fname.lower().startswith("comparison_"):
                 full_path = os.path.join(output_dir, fname)
                 boms.append({
                     "path": full_path,

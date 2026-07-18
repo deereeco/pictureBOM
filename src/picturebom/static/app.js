@@ -3,9 +3,14 @@
 (function () {
     const form = document.getElementById("bomForm");
     const runBtn = document.getElementById("runBtn");
+    const setupSteps = document.getElementById("setupSteps");
+    const runSteps = document.getElementById("runSteps");
+    const summaryStep = document.getElementById("summaryStep");
     const progressSection = document.getElementById("progressSection");
+    const progressNode = document.getElementById("progressNode");
     const progressBar = document.getElementById("progressBar");
     const progressText = document.getElementById("progressText");
+    const progressCount = document.getElementById("progressCount");
     const logEl = document.getElementById("log");
     const resultsSection = document.getElementById("resultsSection");
     const resultInfo = document.getElementById("resultInfo");
@@ -13,7 +18,6 @@
     const openFolderBtn = document.getElementById("openFolderBtn");
     const gallerySection = document.getElementById("gallerySection");
     const gallery = document.getElementById("gallery");
-    const settingsPanel = document.getElementById("settingsPanel");
     const previewBox = document.getElementById("previewBox");
     const previewLabel = document.getElementById("previewLabel");
     const customSizeEl = document.getElementById("customSize");
@@ -21,29 +25,143 @@
     const timingInfo = document.getElementById("timingInfo");
     const elapsedTimeEl = document.getElementById("elapsedTime");
     const remainingTimeEl = document.getElementById("remainingTime");
+    const assemblyInput = document.getElementById("assembly_path");
+    const assemblyMsg = document.getElementById("assemblyMsg");
 
     // Timing state
     let runStartTime = null;
     let elapsedInterval = null;
     let componentTimes = [];
     let preRunEstimate = null;
+    let jobRunning = false;
+
+    // -----------------------------------------------------------------------
+    // Theme toggle — persisted per browser, defaults to the OS preference
+    // (an inline <head> script sets data-theme before first paint)
+    // -----------------------------------------------------------------------
+
+    const THEME_KEY = "picturebom-theme"; // must match the inline boot script in index.html
+    const themeToggle = document.getElementById("themeToggle");
+    let themeTransitionTimer = null;
+
+    function setTheme(theme) {
+        document.documentElement.classList.add("theme-transition");
+        document.documentElement.setAttribute("data-theme", theme);
+        clearTimeout(themeTransitionTimer);
+        themeTransitionTimer = setTimeout(function () {
+            document.documentElement.classList.remove("theme-transition");
+        }, 300);
+    }
+
+    if (themeToggle) {
+        themeToggle.addEventListener("click", () => {
+            const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+            setTheme(next);
+            try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+        });
+    }
+
+    // Follow OS theme changes only until the user makes an explicit choice
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+        let stored = null;
+        try { stored = localStorage.getItem(THEME_KEY); } catch (err) {}
+        if (stored !== "light" && stored !== "dark") setTheme(e.matches ? "dark" : "light");
+    });
+
+    // -----------------------------------------------------------------------
+    // View switching — Generate BOM | Compare BOMs
+    // -----------------------------------------------------------------------
+
+    document.querySelectorAll("[data-view-btn]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const view = btn.dataset.viewBtn;
+            document.querySelectorAll("[data-view-btn]").forEach(b => {
+                b.classList.toggle("is-active", b.dataset.viewBtn === view);
+            });
+            document.querySelectorAll("[data-view]").forEach(p => {
+                p.classList.toggle("is-active", p.dataset.view === view);
+            });
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // Step nodes + inline field messages
+    // -----------------------------------------------------------------------
+
+    // Nodes render their check (.node-complete::after) and pulsing dot
+    // (.node-run::after) purely in CSS, so state changes are class toggles.
+    function setNodeDone(node, done, label) {
+        if (!node || node.classList.contains("node-complete") === done) return;
+        node.classList.toggle("node-complete", done);
+        node.textContent = done ? "" : label;
+    }
+
+    function setProgressNode(state) {
+        progressNode.classList.remove("node-run", "node-complete", "node-error");
+        progressNode.classList.add("node-" + state);
+        progressNode.textContent = state === "error" ? "!" : "";
+    }
+
+    function showFieldMsg(el, kind, text) {
+        el.textContent = text;
+        el.classList.remove("hidden", "err", "warn");
+        el.classList.add(kind);
+    }
+
+    function hideFieldMsg(el) {
+        el.classList.add("hidden");
+        el.classList.remove("err", "warn");
+        el.textContent = "";
+    }
+
+    // Step 1 — advisory pre-flight checklist (session-only, never persisted)
+    const readyChecks = Array.from(document.querySelectorAll(".ready-check"));
+    const readyTally = document.getElementById("readyTally");
+    const node1 = document.getElementById("node1");
+
+    function updateReady() {
+        const n = readyChecks.filter(c => c.checked).length;
+        readyTally.textContent = n + " of " + readyChecks.length + " ready";
+        readyTally.classList.toggle("ok", n === readyChecks.length);
+        setNodeDone(node1, n === readyChecks.length, "1");
+    }
+    readyChecks.forEach(c => c.addEventListener("change", updateReady));
+
+    // Step 2 — files
+    const node2 = document.getElementById("node2");
+
+    function refreshAssemblyField() {
+        const value = assemblyInput.value.trim();
+        setNodeDone(node2, value !== "", "2");
+        if (value && !/\.sldasm$/i.test(value)) {
+            showFieldMsg(assemblyMsg, "warn",
+                "That doesn't look like a .sldasm file — pictureBOM needs the assembly, not a part or drawing.");
+        } else {
+            hideFieldMsg(assemblyMsg);
+        }
+    }
+    assemblyInput.addEventListener("input", refreshAssemblyField);
 
     // -----------------------------------------------------------------------
     // Quality presets + preview box
     // -----------------------------------------------------------------------
 
-    // Max resolution maps to the full preview container size (140x100)
+    // Max resolution maps to the full viewport frame (208x117 minus the border)
     const MAX_W = 3840;
     const MAX_H = 2160;
-    const BOX_MAX_W = 130;
-    const BOX_MAX_H = 90;
+    const BOX_MAX_W = 204;
+    const BOX_MAX_H = 113;
+
+    function formatRes(w, h) {
+        return w + " × " + h;
+    }
 
     function updatePreview(w, h) {
         const scaleW = (w / MAX_W) * BOX_MAX_W;
         const scaleH = (h / MAX_H) * BOX_MAX_H;
-        previewBox.style.width = Math.max(20, Math.round(scaleW)) + "px";
+        previewBox.style.width = Math.max(24, Math.round(scaleW)) + "px";
         previewBox.style.height = Math.max(14, Math.round(scaleH)) + "px";
-        previewLabel.innerHTML = w + " &times; " + h;
+        previewLabel.textContent = formatRes(w, h);
     }
 
     function getSelectedQuality() {
@@ -64,34 +182,51 @@
         };
     }
 
+    // Step 3 — options summary chips
+    const chipQuality = document.getElementById("chipQuality");
+    const chipRes = document.getElementById("chipRes");
+    const chipMode = document.getElementById("chipMode");
+    const QUALITY_LABELS = { draft: "Draft", standard: "Standard", high: "High quality", custom: "Custom" };
+    const MODE_LABELS = { flat: "Parts only", nested: "Sub-assemblies", linked: "Linked workbook" };
+
+    function getModeValue() {
+        const radio = document.querySelector('input[name="assembly_mode"]:checked');
+        return radio ? radio.value : "flat";
+    }
+
+    function updateChips() {
+        const quality = getSelectedQuality();
+        const wh = getWidthHeight();
+        chipQuality.textContent = QUALITY_LABELS[quality ? quality.value : "standard"];
+        chipRes.textContent = formatRes(wh.w, wh.h);
+        chipMode.textContent = MODE_LABELS[getModeValue()];
+    }
+
+    // One refresh for everything derived from the quality/mode selections
+    function refreshQualityUI() {
+        const quality = getSelectedQuality();
+        customSizeEl.classList.toggle("hidden", !quality || quality.value !== "custom");
+        const wh = getWidthHeight();
+        updatePreview(wh.w, wh.h);
+        updateChips();
+    }
+
     document.querySelectorAll('input[name="quality"]').forEach(radio => {
-        radio.addEventListener("change", () => {
-            if (radio.value === "custom") {
-                customSizeEl.classList.remove("hidden");
-                const wh = getWidthHeight();
-                updatePreview(wh.w, wh.h);
-            } else {
-                customSizeEl.classList.add("hidden");
-                updatePreview(parseInt(radio.dataset.w, 10), parseInt(radio.dataset.h, 10));
-            }
-        });
+        radio.addEventListener("change", refreshQualityUI);
     });
 
-    // Update preview when custom inputs change
-    document.getElementById("width").addEventListener("input", () => {
-        const wh = getWidthHeight();
-        updatePreview(wh.w, wh.h);
-    });
-    document.getElementById("height").addEventListener("input", () => {
-        const wh = getWidthHeight();
-        updatePreview(wh.w, wh.h);
+    ["width", "height"].forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener("input", refreshQualityUI);
+        el.addEventListener("change", () => saveSettings());
     });
 
-    // Initialize preview
-    updatePreview(1920, 1080);
+    document.querySelectorAll('input[name="assembly_mode"]').forEach(radio => {
+        radio.addEventListener("change", updateChips);
+    });
 
     // -----------------------------------------------------------------------
-    // Settings — load on init, save after successful run
+    // Settings — load on init, auto-save on change
     // -----------------------------------------------------------------------
 
     const settingsFields = [
@@ -109,13 +244,12 @@
                     el.value = data[id];
                 });
 
-                // Quality preset
+                // Quality preset — set silently (no change event): the auto-save
+                // listener must not fire before width/height/mode are applied,
+                // or it would POST the DOM defaults over the stored values.
                 if (data.quality) {
                     const radio = document.querySelector(`input[name="quality"][value="${data.quality}"]`);
-                    if (radio) {
-                        radio.checked = true;
-                        radio.dispatchEvent(new Event("change"));
-                    }
+                    if (radio) radio.checked = true;
                 }
                 // Custom width/height
                 if (data.width) document.getElementById("width").value = data.width;
@@ -127,9 +261,9 @@
                     if (radio) radio.checked = true;
                 }
 
-                // Update preview with loaded settings
-                const wh = getWidthHeight();
-                updatePreview(wh.w, wh.h);
+                // Update preview + chips + node states with loaded settings
+                refreshQualityUI();
+                refreshAssemblyField();
 
                 // Show time estimate from history
                 showEstimate(data);
@@ -148,18 +282,10 @@
         data.quality = qualityRadio ? qualityRadio.value : "standard";
         data.width = parseInt(document.getElementById("width").value, 10) || 1920;
         data.height = parseInt(document.getElementById("height").value, 10) || 1080;
+        data.assembly_mode = getModeValue();
 
-        const modeRadio = document.querySelector('input[name="assembly_mode"]:checked');
-        data.assembly_mode = modeRadio ? modeRadio.value : "flat";
-
-        fetch("/api/settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        }).catch(() => {});
+        postJson("/api/settings", data).catch(() => {});
     }
-
-    loadSettings();
 
     // Auto-save settings when any input changes
     settingsFields.forEach(id => {
@@ -189,7 +315,7 @@
         if (!estimateInfo) return;
         var history = settings.timing_history;
         if (!history || !history.runs || history.runs.length === 0) {
-            estimateInfo.textContent = "Run once to calibrate time estimates.";
+            estimateInfo.textContent = "Time estimate appears after your first run.";
             preRunEstimate = null;
             return;
         }
@@ -203,7 +329,7 @@
 
         var msg = "Estimated time: ~" + formatDuration(estimatedSec);
         msg += " (based on " + n + " previous run" + (n > 1 ? "s" : "");
-        if (n < 3) msg += " \u2014 accuracy improves with each run";
+        if (n < 3) msg += " — accuracy improves with each run";
         msg += ")";
         estimateInfo.textContent = msg;
     }
@@ -214,6 +340,11 @@
         elapsedTimeEl.textContent = "Elapsed: " + formatDuration(elapsed);
     }
 
+    function stopRunTimer() {
+        clearInterval(elapsedInterval);
+        elapsedInterval = null;
+    }
+
     function refreshEstimate() {
         fetch("/api/settings")
             .then(function (r) { return r.json(); })
@@ -222,27 +353,28 @@
     }
 
     // -----------------------------------------------------------------------
-    // Browse buttons — open native file dialogs
+    // Browse buttons — open native file dialogs (they can appear behind
+    // the browser window, so the button shows a pending state meanwhile)
     // -----------------------------------------------------------------------
 
     document.querySelectorAll(".btn-browse").forEach(btn => {
         btn.addEventListener("click", () => {
             const target = btn.dataset.target;
             const mode = btn.dataset.mode || "file";
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = "Opening…";
 
-            fetch("/api/browse", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mode }),
-            })
+            postJson("/api/browse", { mode })
                 .then(r => r.json())
                 .then(data => {
-                    if (data.path) {
-                        document.getElementById(target).value = data.path;
-                        saveSettings();
-                    }
+                    if (data.path) setFieldValue(document.getElementById(target), data.path);
                 })
-                .catch(err => console.error("Browse error:", err));
+                .catch(err => console.error("Browse error:", err))
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                });
         });
     });
 
@@ -257,29 +389,90 @@
     }
 
     // -----------------------------------------------------------------------
+    // Collapse the setup steps into a summary strip during a run
+    // -----------------------------------------------------------------------
+
+    function basename(path) {
+        return path.split(/[\\/]/).pop();
+    }
+
+    function postJson(url, body) {
+        return fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+    }
+
+    // Set a field programmatically (Browse dialog, recent-BOM chip) and fire
+    // the same events typing would, so every listener wired to the input
+    // (validation, node states, auto-save) reacts identically.
+    function setFieldValue(input, value) {
+        input.value = value;
+        input.dispatchEvent(new Event("input"));
+        input.dispatchEvent(new Event("change"));
+    }
+
+    function populateStrip() {
+        const assemblyPath = assemblyInput.value.trim();
+        const stripAssembly = document.getElementById("stripAssembly");
+        stripAssembly.textContent = basename(assemblyPath);
+        stripAssembly.title = assemblyPath;
+        const outputDir = document.getElementById("output_dir").value.trim();
+        document.getElementById("stripOutput").textContent = outputDir || "output folder";
+        document.getElementById("stripQuality").textContent = chipQuality.textContent;
+        document.getElementById("stripMode").textContent = chipMode.textContent;
+    }
+
+    function collapseSetup() {
+        populateStrip();
+        setupSteps.classList.add("hidden");
+        runSteps.classList.remove("hidden");
+        summaryStep.classList.remove("hidden");
+    }
+
+    function restoreSetup() {
+        setupSteps.classList.remove("hidden");
+        summaryStep.classList.add("hidden");
+    }
+
+    document.getElementById("editSetupBtn").addEventListener("click", () => {
+        restoreSetup();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+
+    // -----------------------------------------------------------------------
     // Form submit — start pipeline
     // -----------------------------------------------------------------------
 
     form.addEventListener("submit", (e) => {
         e.preventDefault();
 
-        const assemblyPath = document.getElementById("assembly_path").value.trim();
-        if (!assemblyPath) return;
+        const assemblyPath = assemblyInput.value.trim();
+        if (!assemblyPath) {
+            showFieldMsg(assemblyMsg, "err",
+                "Choose your assembly file first — click Browse to find the .sldasm.");
+            assemblyInput.focus();
+            assemblyInput.scrollIntoView({ block: "center", behavior: "smooth" });
+            return;
+        }
 
         // Reset UI
         runBtn.disabled = true;
         runBtn.textContent = "Running...";
-        settingsPanel.removeAttribute("open");
-        progressSection.classList.remove("hidden");
+        collapseSetup();
+        setProgressNode("run");
         resultsSection.classList.add("hidden");
         gallerySection.classList.add("hidden");
         downloadLink.classList.add("hidden");
         if (openFolderBtn) openFolderBtn.classList.add("hidden");
         progressBar.style.width = "0%";
         progressText.textContent = "0%";
+        progressCount.textContent = "";
         logEl.textContent = "";
         gallery.innerHTML = "";
         resultInfo.innerHTML = "";
+        window.scrollTo({ top: 0, behavior: "smooth" });
 
         // Start timing
         if (estimateInfo) estimateInfo.textContent = "";
@@ -288,11 +481,10 @@
         if (timingInfo) timingInfo.classList.remove("hidden");
         if (elapsedTimeEl) elapsedTimeEl.textContent = "Elapsed: 0s";
         if (remainingTimeEl) remainingTimeEl.textContent = "";
+        stopRunTimer();
         elapsedInterval = setInterval(updateElapsedTime, 1000);
 
         const wh = getWidthHeight();
-        const modeRadio = document.querySelector('input[name="assembly_mode"]:checked');
-
         const params = {
             assembly_path: assemblyPath,
             output_dir: document.getElementById("output_dir").value.trim(),
@@ -300,28 +492,33 @@
             images_dir: document.getElementById("images_dir").value.trim(),
             width: wh.w,
             height: wh.h,
-            bom_mode: modeRadio ? modeRadio.value : "flat",
+            bom_mode: getModeValue(),
         };
 
-        fetch("/api/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(params),
-        })
+        postJson("/api/run", params)
             .then(r => r.json())
             .then(data => {
                 if (data.error) {
-                    appendLog("ERROR: " + data.error);
-                    resetBtn();
+                    failRunStart(data.error);
                     return;
                 }
+                jobRunning = true;
                 listenProgress();
             })
             .catch(err => {
-                appendLog("ERROR: " + err.message);
-                resetBtn();
+                failRunStart(err.message);
             });
     });
+
+    // The run never started — undo everything the submit handler set up
+    function failRunStart(message) {
+        stopRunTimer();
+        runStartTime = null;
+        resetBtn();
+        restoreSetup();
+        runSteps.classList.add("hidden");
+        showFieldMsg(assemblyMsg, "err", "Couldn't start the run: " + message);
+    }
 
     // -----------------------------------------------------------------------
     // SSE — listen for progress events
@@ -346,6 +543,7 @@
                 const pct = Math.round((event.current / event.total) * 100);
                 progressBar.style.width = pct + "%";
                 progressText.textContent = pct + "%";
+                progressCount.textContent = event.current + " of " + event.total + " parts";
 
                 const status = event.success ? "" : "  WARNING: Failed";
                 appendLog(`[${event.current}/${event.total}] Capturing ${event.part_name}...${status}`);
@@ -366,21 +564,26 @@
                     gallerySection.classList.remove("hidden");
                     const item = document.createElement("div");
                     item.className = "gallery-item";
-                    item.innerHTML =
-                        `<img src="/api/images/${encodeURIComponent(event.image)}" alt="${escapeHtml(event.part_name)}">` +
-                        `<div class="name" title="${escapeHtml(event.part_name)}">${escapeHtml(event.part_name)}</div>`;
+                    const img = document.createElement("img");
+                    img.src = "/api/images/" + encodeURIComponent(event.image);
+                    img.alt = event.part_name;
+                    const name = document.createElement("div");
+                    name.className = "name";
+                    name.title = event.part_name;
+                    name.textContent = event.part_name;
+                    item.append(img, name);
                     gallery.prepend(item);
                 }
             }
 
             if (event.type === "done") {
                 source.close();
+                jobRunning = false;
                 resetBtn();
-                saveSettings();
+                setProgressNode("complete");
 
                 // Stop timing and show final elapsed
-                clearInterval(elapsedInterval);
-                elapsedInterval = null;
+                stopRunTimer();
                 if (runStartTime) {
                     var totalElapsed = (Date.now() - runStartTime) / 1000;
                     var completedMsg = "Completed in " + formatDuration(totalElapsed);
@@ -399,7 +602,7 @@
 
                 if (openFolderBtn) openFolderBtn.classList.remove("hidden");
                 if (r.excel_path) {
-                    var excelName = r.excel_path.split(/[/\\]/).pop();
+                    var excelName = basename(r.excel_path);
                     downloadLink.classList.remove("hidden");
                     downloadLink.href = "/api/download/" + encodeURIComponent(excelName);
                     appendLog("\nDone! BOM generated successfully.");
@@ -410,18 +613,19 @@
                 // Refresh estimate for next run with updated history
                 refreshEstimate();
 
-                // Refresh recent BOMs dropdown (new BOM was generated)
+                // Refresh recent BOMs chips (new BOM was generated)
                 loadRecentBoms();
             }
 
             if (event.type === "error") {
                 source.close();
+                jobRunning = false;
                 resetBtn();
-                settingsPanel.setAttribute("open", "");
+                restoreSetup();
+                setProgressNode("error");
 
                 // Stop timing
-                clearInterval(elapsedInterval);
-                elapsedInterval = null;
+                stopRunTimer();
                 if (runStartTime) {
                     var errorElapsed = (Date.now() - runStartTime) / 1000;
                     if (elapsedTimeEl) elapsedTimeEl.textContent = "Failed after " + formatDuration(errorElapsed);
@@ -436,8 +640,18 @@
         };
 
         source.onerror = () => {
-            source.close();
+            // Transient drops (sleep/wake, brief network blips) leave readyState
+            // at CONNECTING and the browser reconnects on its own — the backend
+            // job keeps running and its queued events resume flowing. Only a
+            // permanently closed stream needs UI recovery.
+            if (source.readyState !== EventSource.CLOSED) return;
+            stopRunTimer();
+            setProgressNode("error");
             resetBtn();
+            restoreSetup();
+            appendLog("\nLost the connection to the local pictureBOM server — the job may still be running. Reload this page to reconnect.");
+            // jobRunning stays true: the server-side job may still be working,
+            // so keep the tab-close warning until we know otherwise.
         };
     }
 
@@ -449,18 +663,20 @@
     if (quitBtn) {
         quitBtn.addEventListener("click", () => {
             if (!confirm("Shut down pictureBOM? This will stop the server.")) return;
+            jobRunning = false;
             fetch("/api/quit", { method: "POST" }).catch(() => {});
-            document.body.innerHTML = '<div style="text-align:center;margin-top:80px;font-family:sans-serif;">' +
+            document.body.innerHTML = '<div class="shutdown-message">' +
                 '<h2>pictureBOM has been shut down.</h2>' +
-                '<p style="color:#666;">You can close this tab.</p></div>';
+                '<p>You can close this tab.</p></div>';
         });
     }
 
     // -----------------------------------------------------------------------
-    // Warn on tab close
+    // Warn on tab close — only while a job is running
     // -----------------------------------------------------------------------
 
     window.addEventListener("beforeunload", function (e) {
+        if (!jobRunning) return;
         e.preventDefault();
     });
 
@@ -489,72 +705,95 @@
     // -----------------------------------------------------------------------
 
     const compareBtn = document.getElementById("compareBtn");
+    const compareError = document.getElementById("compareError");
     const compareResults = document.getElementById("compareResults");
     const compareSummary = document.getElementById("compareSummary");
     const compareBody = document.getElementById("compareBody");
     const compareDownload = document.getElementById("compareDownload");
+    const cmpNode1 = document.getElementById("cmpNode1");
+    const cmpNode2 = document.getElementById("cmpNode2");
+    const bomAInput = document.getElementById("bom_a");
+    const bomBInput = document.getElementById("bom_b");
+
+    function updateCompareNodes() {
+        setNodeDone(cmpNode1, bomAInput.value.trim() !== "", "1");
+        setNodeDone(cmpNode2, bomBInput.value.trim() !== "", "2");
+    }
+
+    [bomAInput, bomBInput].forEach(input => {
+        input.addEventListener("input", () => {
+            updateCompareNodes();
+            hideFieldMsg(compareError);
+        });
+    });
+
+    function renderRecentChips(containerId, inputEl, boms) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = "";
+        const label = document.createElement("span");
+        label.className = "recent-label";
+        label.textContent = "Recent:";
+        container.appendChild(label);
+
+        if (!boms.length) {
+            const empty = document.createElement("span");
+            empty.className = "recent-empty";
+            empty.textContent = "No BOMs yet — run pictureBOM once and they'll show up here.";
+            container.appendChild(empty);
+            return;
+        }
+
+        boms.slice(0, 5).forEach(b => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "fchip";
+            chip.textContent = b.name;
+            chip.title = b.path;
+            chip.addEventListener("click", () => setFieldValue(inputEl, b.path));
+            container.appendChild(chip);
+        });
+    }
 
     function loadRecentBoms() {
         fetch("/api/recent-boms")
             .then(function (r) { return r.json(); })
             .then(function (boms) {
-                ["bom_a_recent", "bom_b_recent"].forEach(function (id) {
-                    var sel = document.getElementById(id);
-                    sel.innerHTML = '<option value="">Recent BOMs...</option>';
-                    boms.forEach(function (b) {
-                        var opt = document.createElement("option");
-                        opt.value = b.path;
-                        opt.textContent = b.name;
-                        sel.appendChild(opt);
-                    });
-                });
+                renderRecentChips("recentA", bomAInput, boms);
+                renderRecentChips("recentB", bomBInput, boms);
             })
             .catch(function () {});
     }
 
-    loadRecentBoms();
-
-    // Sync dropdown selection to text input
-    document.getElementById("bom_a_recent").addEventListener("change", function () {
-        document.getElementById("bom_a").value = this.value;
-    });
-    document.getElementById("bom_b_recent").addEventListener("change", function () {
-        document.getElementById("bom_b").value = this.value;
-    });
-
-    // Compare button
     if (compareBtn) {
         compareBtn.addEventListener("click", function () {
-            var bomA = document.getElementById("bom_a").value.trim();
-            var bomB = document.getElementById("bom_b").value.trim();
+            var bomA = bomAInput.value.trim();
+            var bomB = bomBInput.value.trim();
             if (!bomA || !bomB) {
-                alert("Please select both BOM files.");
+                showFieldMsg(compareError, "err",
+                    "Pick both BOMs to compare — the one you have, and the one you want to build.");
                 return;
             }
 
+            hideFieldMsg(compareError);
             compareBtn.disabled = true;
             compareBtn.textContent = "Comparing...";
             compareResults.classList.add("hidden");
 
-            fetch("/api/compare", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ bom_a: bomA, bom_b: bomB }),
-            })
+            postJson("/api/compare", { bom_a: bomA, bom_b: bomB })
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
                     if (data.error) {
-                        alert("Error: " + data.error);
+                        showFieldMsg(compareError, "err", data.error);
                         return;
                     }
                     showCompareResults(data);
                 })
                 .catch(function (err) {
-                    alert("Compare failed: " + err.message);
+                    showFieldMsg(compareError, "err", "Compare failed: " + err.message);
                 })
                 .finally(function () {
                     compareBtn.disabled = false;
-                    compareBtn.textContent = "Show What I Need to Order";
+                    compareBtn.textContent = "Show what I need to order";
                 });
         });
     }
@@ -564,11 +803,13 @@
 
         var s = data.summary;
         if (s.shortage_count === 0) {
+            compareSummary.classList.add("ok");
             compareSummary.innerHTML =
                 "All <strong>" + s.total_in_b + "</strong> part(s) in " +
                 "<strong>" + escapeHtml(data.bom_b) + "</strong> are already covered " +
                 "by what you have. Nothing to order!";
         } else {
+            compareSummary.classList.remove("ok");
             compareSummary.innerHTML =
                 "You need to order <strong>" + s.shortage_count + "</strong> part(s). " +
                 "<strong>" + s.fully_covered + "</strong> of <strong>" + s.total_in_b +
@@ -593,28 +834,30 @@
             // Part number
             var tdPN = document.createElement("td");
             tdPN.textContent = row.part_number;
+            tdPN.className = "part";
             tr.appendChild(tdPN);
 
             // Description
             var tdDesc = document.createElement("td");
             tdDesc.textContent = row.description;
-            tdDesc.className = "text-left";
             tr.appendChild(tdDesc);
 
             // Already Have
             var tdA = document.createElement("td");
             tdA.textContent = row.qty_a;
+            tdA.className = "num";
             tr.appendChild(tdA);
 
             // Need
             var tdB = document.createElement("td");
             tdB.textContent = row.qty_b;
+            tdB.className = "num";
             tr.appendChild(tdB);
 
             // To Order
             var tdShortage = document.createElement("td");
             tdShortage.textContent = row.shortage;
-            tdShortage.style.fontWeight = "bold";
+            tdShortage.className = "num num-order";
             tr.appendChild(tdShortage);
 
             // Color code row
@@ -628,7 +871,20 @@
             compareDownload.classList.remove("hidden");
         }
 
+        compareResults.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
         // Refresh recent BOMs list (new comparison file was created)
         loadRecentBoms();
     }
+
+    // -----------------------------------------------------------------------
+    // Init
+    // -----------------------------------------------------------------------
+
+    updateReady();
+    refreshAssemblyField();
+    refreshQualityUI();
+    loadSettings();
+    loadRecentBoms();
+    updateCompareNodes();
 })();
