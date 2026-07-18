@@ -19,11 +19,11 @@
     --text-faint: #8a94a1;
     --border: #d8dee6;
     --border-strong: #c3ccd6;
-    --accent: #3878c0;
-    --accent-hover: #2d63a3;
-    --accent-tint: rgba(56, 120, 192, 0.10);
+    --accent: #2b9187;
+    --accent-hover: #23786f;
+    --accent-tint: rgba(43, 145, 135, 0.10);
     --on-accent: #ffffff;
-    --focus-ring: rgba(56, 120, 192, 0.25);
+    --focus-ring: rgba(43, 145, 135, 0.25);
     --danger: #d64545;
     --danger-bg: #fceaea;
     --success: #2f9e63;
@@ -51,11 +51,11 @@
     --text-faint: #77828f;
     --border: #2c3542;
     --border-strong: #3c4756;
-    --accent: #69a5e3;
-    --accent-hover: #85b7ea;
-    --accent-tint: rgba(105, 165, 227, 0.13);
-    --on-accent: #0e1319;
-    --focus-ring: rgba(105, 165, 227, 0.35);
+    --accent: #58bdb2;
+    --accent-hover: #74cbc1;
+    --accent-tint: rgba(88, 189, 178, 0.13);
+    --on-accent: #0e1917;
+    --focus-ring: rgba(88, 189, 178, 0.35);
     --danger: #ef7b6d;
     --danger-bg: #3c2426;
     --success: #57b98a;
@@ -267,8 +267,8 @@ html.theme-transition .fill { transition: none !important; }
 .node-error { border-color: var(--danger); color: var(--danger); }
 @keyframes node-pulse {
     0%   { box-shadow: 0 0 0 0 var(--focus-ring); }
-    70%  { box-shadow: 0 0 0 8px rgba(56, 120, 192, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(56, 120, 192, 0); }
+    70%  { box-shadow: 0 0 0 8px rgba(43, 145, 135, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(43, 145, 135, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
     .node-run::after { animation: none; }

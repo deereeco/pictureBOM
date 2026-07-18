@@ -26,14 +26,33 @@ function Update-SessionPath {
     $env:Path = "$machine;$user;$env:USERPROFILE\.local\bin"
 }
 
-function New-AppShortcut([string]$Directory) {
+function New-AppShortcut([string]$Directory, [string]$IconPath) {
     $ws = New-Object -ComObject WScript.Shell
     $lnk = $ws.CreateShortcut((Join-Path $Directory "pictureBOM.lnk"))
     $lnk.TargetPath = Join-Path $env:USERPROFILE ".local\bin\picturebom-gui.exe"
     $lnk.WorkingDirectory = [Environment]::GetFolderPath("MyDocuments")
     $lnk.Description = "pictureBOM - SolidWorks visual BOM generator"
     $lnk.WindowStyle = 7  # minimized: the console window just hosts the local server
+    if ($IconPath) { $lnk.IconLocation = "$IconPath,0" }
     $lnk.Save()
+}
+
+# The package ships picturebom.ico; copy it to a stable path the shortcut can
+# reference (the tool env path contains a Python version dir that changes).
+function Install-AppIcon {
+    try {
+        $toolRoot = (& uv tool dir).Trim()
+        $src = Get-ChildItem -Path (Join-Path $toolRoot "picturebom") -Recurse -Filter "picturebom.ico" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($src) {
+            $destDir = Join-Path $env:USERPROFILE ".picturebom"
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            $dest = Join-Path $destDir "picturebom.ico"
+            Copy-Item $src.FullName $dest -Force
+            return $dest
+        }
+    } catch {}
+    return $null
 }
 
 Write-Host ""
@@ -88,12 +107,13 @@ if ($LASTEXITCODE -ne 0) {
 uv tool update-shell
 
 # --- shortcuts ------------------------------------------------------------------
+$icon = Install-AppIcon
 if (-not $NoShortcut) {
-    New-AppShortcut ([Environment]::GetFolderPath("Programs"))
+    New-AppShortcut ([Environment]::GetFolderPath("Programs")) $icon
     Write-Host "Start Menu shortcut created: pictureBOM"
 }
 if ($DesktopIcon) {
-    New-AppShortcut ([Environment]::GetFolderPath("Desktop"))
+    New-AppShortcut ([Environment]::GetFolderPath("Desktop")) $icon
     Write-Host "Desktop shortcut created: pictureBOM"
 }
 
