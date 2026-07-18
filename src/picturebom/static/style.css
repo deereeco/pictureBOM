@@ -155,7 +155,7 @@ html.theme-transition .fill { transition: none !important; }
 .btn-quit:hover { color: var(--danger); background: var(--danger-bg); }
 
 /* ---------- shell ---------- */
-.shell { max-width: 880px; margin: 0 auto; padding: 24px 20px 0; }
+.shell { max-width: 1200px; margin: 0 auto; padding: 24px 20px 0; }
 .tagline {
     text-align: center;
     max-width: 620px;

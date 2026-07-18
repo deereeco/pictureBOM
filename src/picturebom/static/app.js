@@ -264,6 +264,7 @@
                 // Update preview + chips + node states with loaded settings
                 refreshQualityUI();
                 refreshAssemblyField();
+                settingsFields.forEach(id => showPathEnd(document.getElementById(id)));
 
                 // Show time estimate from history
                 showEstimate(data);
@@ -411,7 +412,24 @@
         input.value = value;
         input.dispatchEvent(new Event("input"));
         input.dispatchEvent(new Event("change"));
+        showPathEnd(input);
     }
+
+    // Long Windows paths overflow the inputs, and browsers snap the scroll
+    // back to the start on blur — the least useful end of a file path. Keep
+    // the tail (the filename) in view whenever the field isn't being edited.
+    function showPathEnd(input) {
+        if (input && document.activeElement !== input) {
+            input.scrollLeft = input.scrollWidth;
+        }
+    }
+
+    document.addEventListener("focusout", (e) => {
+        const el = e.target;
+        if (el && el.classList && el.classList.contains("input") && el.type === "text") {
+            setTimeout(() => showPathEnd(el), 0);
+        }
+    });
 
     function populateStrip() {
         const assemblyPath = assemblyInput.value.trim();
