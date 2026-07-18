@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "picturebom"
-version = "0.4.2"
+version = "0.4.3"
 description = "Export isometric JPG images of every part in a SolidWorks assembly and generate an Excel visual BOM with embedded thumbnails."
 license = "MIT"
 requires-python = ">=3.10"

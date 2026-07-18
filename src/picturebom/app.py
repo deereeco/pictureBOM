@@ -181,6 +181,7 @@ def run_job():
                 on_progress=on_progress,
                 on_status=on_status,
                 overwrite=True,
+                completion_popup=True,
             )
             # Persist timing history for future estimates (skip if no capture data)
             timing = result.get("timing", {})

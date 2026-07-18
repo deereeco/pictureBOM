@@ -76,6 +76,33 @@ def close_document(sw_app, model_doc):
     sw_app.CloseDoc(model_doc.GetTitle)
 
 
+def activate_document(sw_app, model_doc):
+    """Bring a document to the front in SolidWorks."""
+    errors = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    sw_app.ActivateDoc2(model_doc.GetTitle, False, errors)
+
+
+def show_completion_popup(message):
+    """Show a topmost Windows info box without blocking the caller.
+
+    Used by the GUI so someone watching SolidWorks (not the browser) sees
+    that the run finished.
+    """
+    import ctypes
+
+    def _popup():
+        MB_ICONINFORMATION = 0x40
+        MB_SETFOREGROUND = 0x10000
+        MB_TOPMOST = 0x40000
+        ctypes.windll.user32.MessageBoxW(
+            0, message, "pictureBOM",
+            MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST,
+        )
+
+    import threading
+    threading.Thread(target=_popup, daemon=True).start()
+
+
 def sanitize_filename(name):
     """Remove or replace characters that are invalid in file names."""
     return re.sub(r'[<>:"/\\|?*]', "_", name).strip()
@@ -1081,7 +1108,7 @@ def generate_comparison_excel(comparison, output_path):
 def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  include_subassemblies=False, bom_mode=None, csv_path=None,
                  images_dir=None, debug=False, on_progress=None,
-                 on_status=None, overwrite=False):
+                 on_status=None, overwrite=False, completion_popup=False):
     """
     Run the full pictureBOM pipeline.
 
@@ -1099,6 +1126,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         on_progress: Optional callable(current, total, part_name, success, image_path).
         on_status: Optional callable(message) for stage updates.
         overwrite: If True, overwrite existing files without checking.
+        completion_popup: If True, show a topmost Windows message box when the
+                          BOM is done (for users watching SolidWorks, not the
+                          browser).
 
     Returns:
         dict with keys: excel_path, images_dir, total_components, captured_count
@@ -1184,7 +1214,10 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         status(f"Using existing images from: {img_dir}")
     capture_elapsed = time.time() - capture_start
 
-    close_document(sw_app, assy_doc)
+    # Leave the assembly open and bring it back to the front — ending on a
+    # blank SolidWorks screen reads as "something went wrong". Re-runs are
+    # fine: OpenDoc6 returns the already-open document.
+    activate_document(sw_app, assy_doc)
 
     if not hierarchical_rows and not bom_rows:
         log.warning("No BOM data to write.")
@@ -1219,6 +1252,13 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     excel_elapsed = time.time() - excel_start
     status(f"Done! BOM saved to: {excel_path}")
+
+    if completion_popup:
+        show_completion_popup(
+            "Your visual BOM is ready.\n\n"
+            "Switch to the pictureBOM tab in your browser to see it, "
+            "or find the Excel file in your output folder."
+        )
 
     return {
         "excel_path": excel_path,
