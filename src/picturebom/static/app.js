@@ -182,10 +182,7 @@
         };
     }
 
-    // Step 3 — options summary chips
-    const chipQuality = document.getElementById("chipQuality");
-    const chipRes = document.getElementById("chipRes");
-    const chipMode = document.getElementById("chipMode");
+    // Step 3 — export options: human-readable labels for the run summary strip
     const QUALITY_LABELS = { draft: "Draft", standard: "Standard", high: "High quality", custom: "Custom" };
     const MODE_LABELS = { flat: "Parts only", nested: "Sub-assemblies", linked: "Linked workbook" };
 
@@ -194,12 +191,13 @@
         return radio ? radio.value : "flat";
     }
 
-    function updateChips() {
+    function qualityLabel() {
         const quality = getSelectedQuality();
-        const wh = getWidthHeight();
-        chipQuality.textContent = QUALITY_LABELS[quality ? quality.value : "standard"];
-        chipRes.textContent = formatRes(wh.w, wh.h);
-        chipMode.textContent = MODE_LABELS[getModeValue()];
+        return QUALITY_LABELS[quality ? quality.value : "standard"];
+    }
+
+    function modeLabel() {
+        return MODE_LABELS[getModeValue()];
     }
 
     // One refresh for everything derived from the quality/mode selections
@@ -208,7 +206,6 @@
         customSizeEl.classList.toggle("hidden", !quality || quality.value !== "custom");
         const wh = getWidthHeight();
         updatePreview(wh.w, wh.h);
-        updateChips();
     }
 
     document.querySelectorAll('input[name="quality"]').forEach(radio => {
@@ -219,10 +216,6 @@
         const el = document.getElementById(id);
         el.addEventListener("input", refreshQualityUI);
         el.addEventListener("change", () => saveSettings());
-    });
-
-    document.querySelectorAll('input[name="assembly_mode"]').forEach(radio => {
-        radio.addEventListener("change", updateChips);
     });
 
     // -----------------------------------------------------------------------
@@ -438,8 +431,8 @@
         stripAssembly.title = assemblyPath;
         const outputDir = document.getElementById("output_dir").value.trim();
         document.getElementById("stripOutput").textContent = outputDir || "output folder";
-        document.getElementById("stripQuality").textContent = chipQuality.textContent;
-        document.getElementById("stripMode").textContent = chipMode.textContent;
+        document.getElementById("stripQuality").textContent = qualityLabel();
+        document.getElementById("stripMode").textContent = modeLabel();
     }
 
     function collapseSetup() {

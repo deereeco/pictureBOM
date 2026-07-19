@@ -428,39 +428,7 @@ html.theme-transition .fill { transition: none !important; }
 .adv[open] > summary .chev { transform: rotate(90deg); }
 .adv-body { padding: 10px 0 2px 21px; }
 
-/* ---------- options step (details + chip summary) ---------- */
-.options > summary {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    cursor: pointer;
-    padding: 4px;
-    margin: -4px;
-    border-radius: 6px;
-}
-.options > summary::-webkit-details-marker { display: none; }
-.options > summary:hover .change { color: var(--accent-hover); text-decoration: underline; }
-.chip {
-    font-size: 12px;
-    color: var(--text-secondary);
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 3px 10px;
-    white-space: nowrap;
-}
-.chip-mono { font-family: "Cascadia Code", Consolas, monospace; font-size: 11.5px; }
-.change {
-    margin-left: auto;
-    color: var(--accent);
-    font-size: 12.5px;
-    font-weight: 600;
-}
-.options-body { margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
-
-/* ---------- radios ---------- */
+/* ---------- export options: radios ---------- */
 .optgroup { margin-bottom: 16px; }
 .optgroup:last-child { margin-bottom: 0; }
 .quality { display: flex; gap: 24px; }

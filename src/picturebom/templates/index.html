@@ -122,83 +122,75 @@
                         </div>
                     </li>
 
-                    <!-- Step 3: options -->
+                    <!-- Step 3: export options -->
                     <li class="step">
                         <span class="node node-complete" aria-hidden="true"></span>
                         <div class="card">
                             <div class="card-head">
-                                <h2 class="card-title">Options</h2>
+                                <h2 class="card-title">Export options</h2>
                             </div>
-                            <details class="options" id="optionsPanel">
-                                <summary>
-                                    <span class="chip" id="chipQuality">Standard</span>
-                                    <span class="chip chip-mono" id="chipRes">1920 &times; 1080</span>
-                                    <span class="chip" id="chipMode">Parts only</span>
-                                    <span class="change">Change</span>
-                                </summary>
-                                <div class="options-body">
-                                    <div class="optgroup">
-                                        <span class="label">Image quality</span>
-                                        <div class="quality">
-                                            <div class="radios">
-                                                <label class="radio">
-                                                    <input type="radio" name="quality" value="draft" data-w="960" data-h="540">
-                                                    <span><span class="radio-name">Draft</span>
-                                                    <span class="radio-hint"><span class="mono">960 &times; 540</span> &mdash; small file, fast</span></span>
-                                                </label>
-                                                <label class="radio">
-                                                    <input type="radio" name="quality" value="standard" data-w="1920" data-h="1080" checked>
-                                                    <span><span class="radio-name">Standard</span>
-                                                    <span class="radio-hint"><span class="mono">1920 &times; 1080</span> &mdash; good balance</span></span>
-                                                </label>
-                                                <label class="radio">
-                                                    <input type="radio" name="quality" value="high" data-w="3840" data-h="2160">
-                                                    <span><span class="radio-name">High quality</span>
-                                                    <span class="radio-hint"><span class="mono">3840 &times; 2160</span> &mdash; large, detailed</span></span>
-                                                </label>
-                                                <label class="radio">
-                                                    <input type="radio" name="quality" value="custom" data-w="" data-h="">
-                                                    <span><span class="radio-name">Custom</span>
-                                                    <span class="radio-hint">Set your own resolution</span></span>
-                                                </label>
-                                                <div id="customSize" class="custom-size hidden">
-                                                    <input class="input input-num" type="number" id="width" name="width" value="1920" min="100" max="7680" placeholder="Width">
-                                                    <span>&times;</span>
-                                                    <input class="input input-num" type="number" id="height" name="height" value="1080" min="100" max="4320" placeholder="Height">
-                                                    <span>px</span>
-                                                </div>
-                                            </div>
-                                            <div class="preview">
-                                                <div class="viewport-frame">
-                                                    <span class="vpc"></span>
-                                                    <div class="preview-box" id="previewBox"></div>
-                                                </div>
-                                                <span class="vp-label" id="previewLabel">1920 &times; 1080</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="optgroup">
-                                        <span class="label">Assembly mode</span>
+                            <div class="options-body">
+                                <div class="optgroup">
+                                    <span class="label">Image quality</span>
+                                    <div class="quality">
                                         <div class="radios">
                                             <label class="radio">
-                                                <input type="radio" name="assembly_mode" value="flat" checked>
-                                                <span><span class="radio-name">Parts only (flat list)</span>
-                                                <span class="radio-hint">Every individual part appears once with its quantity</span></span>
+                                                <input type="radio" name="quality" value="draft" data-w="960" data-h="540">
+                                                <span><span class="radio-name">Draft</span>
+                                                <span class="radio-hint"><span class="mono">960 &times; 540</span> &mdash; small file, fast</span></span>
                                             </label>
                                             <label class="radio">
-                                                <input type="radio" name="assembly_mode" value="nested">
-                                                <span><span class="radio-name">Include sub-assemblies (nested list)</span>
-                                                <span class="radio-hint">Sub-assemblies are also captured as separate line items</span></span>
+                                                <input type="radio" name="quality" value="standard" data-w="1920" data-h="1080" checked>
+                                                <span><span class="radio-name">Standard</span>
+                                                <span class="radio-hint"><span class="mono">1920 &times; 1080</span> &mdash; good balance</span></span>
                                             </label>
                                             <label class="radio">
-                                                <input type="radio" name="assembly_mode" value="linked">
-                                                <span><span class="radio-name">Linked (two-sheet workbook)</span>
-                                                <span class="radio-hint">Sheet 1: editable parts list &mdash; Sheet 2: hierarchical view linked by formulas (Excel 365/2021+)</span></span>
+                                                <input type="radio" name="quality" value="high" data-w="3840" data-h="2160">
+                                                <span><span class="radio-name">High quality</span>
+                                                <span class="radio-hint"><span class="mono">3840 &times; 2160</span> &mdash; large, detailed</span></span>
                                             </label>
+                                            <label class="radio">
+                                                <input type="radio" name="quality" value="custom" data-w="" data-h="">
+                                                <span><span class="radio-name">Custom</span>
+                                                <span class="radio-hint">Set your own resolution</span></span>
+                                            </label>
+                                            <div id="customSize" class="custom-size hidden">
+                                                <input class="input input-num" type="number" id="width" name="width" value="1920" min="100" max="7680" placeholder="Width">
+                                                <span>&times;</span>
+                                                <input class="input input-num" type="number" id="height" name="height" value="1080" min="100" max="4320" placeholder="Height">
+                                                <span>px</span>
+                                            </div>
+                                        </div>
+                                        <div class="preview">
+                                            <div class="viewport-frame">
+                                                <span class="vpc"></span>
+                                                <div class="preview-box" id="previewBox"></div>
+                                            </div>
+                                            <span class="vp-label" id="previewLabel">1920 &times; 1080</span>
                                         </div>
                                     </div>
                                 </div>
-                            </details>
+                                <div class="optgroup">
+                                    <span class="label">Assembly mode</span>
+                                    <div class="radios">
+                                        <label class="radio">
+                                            <input type="radio" name="assembly_mode" value="flat" checked>
+                                            <span><span class="radio-name">Parts only (flat list)</span>
+                                            <span class="radio-hint">Every individual part appears once with its quantity</span></span>
+                                        </label>
+                                        <label class="radio">
+                                            <input type="radio" name="assembly_mode" value="nested">
+                                            <span><span class="radio-name">Include sub-assemblies (nested list)</span>
+                                            <span class="radio-hint">Sub-assemblies are also captured as separate line items</span></span>
+                                        </label>
+                                        <label class="radio">
+                                            <input type="radio" name="assembly_mode" value="linked">
+                                            <span><span class="radio-name">Linked (two-sheet workbook)</span>
+                                            <span class="radio-hint">Sheet 1: editable parts list &mdash; Sheet 2: hierarchical view linked by formulas (Excel 365/2021+)</span></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </li>
 
