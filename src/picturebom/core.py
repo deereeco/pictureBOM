@@ -13,14 +13,13 @@ import logging
 import os
 import re
 import time
+from urllib.parse import quote
 
 import pythoncom
 import win32com.client
 import win32com.client.dynamic
-from openpyxl import Workbook, load_workbook
-from openpyxl.drawing.image import Image as XlImage
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+import xlsxwriter
+from openpyxl import load_workbook
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +28,43 @@ SW_DOC_PART = 1
 SW_DOC_ASSEMBLY = 2
 SW_OPEN_DOC_OPTIONS_SILENT = 1
 SW_VIEW_ISOMETRIC = 7
+
+# --- Excel export styling ---
+HEADER_BG = "#1F3864"
+BORDER_COLOR = "#BFBFBF"
+ASSEMBLY_BG = "#D6E4F0"
+MISSING_BG = "#FDDEDE"
+PARTIAL_BG = "#FFF3CD"
+LINK_COLOR = "#0563C1"
+PICTURE_COL_WIDTH = 18
+DATA_ROW_HEIGHT = 45
+HEADER_ROW_HEIGHT = 30
+MAX_COL_WIDTH = 60
+BUFFER_ROWS = 200  # rows past the data that keep dropdowns/colors working
+
+# Columns where text should be left-aligned (description-like)
+LEFT_ALIGN_HEADERS = {"description", "where used (sub-asm qty)"}
+
+STATUS_OPTIONS = ["To Order", "Ordered", "Received", "Installed"]
+COMMON_VENDORS = ["Thorlabs", "McMaster-Carr", "Newport", "Digi-Key", "Unknown"]
+
+# Lowercase substring of Vendor -> (fill, font color). The cell recolors as
+# soon as a matching vendor is picked (Excel can't color the dropdown
+# popup items themselves).
+VENDOR_HIGHLIGHTS = {
+    "mcmaster": ("#FFEB9C", "#9C6500"),
+    "thorlabs": ("#FFC7CE", "#9C0006"),
+    "unknown": ("#D9D9D9", "#3F3F3F"),
+}
+
+# Lowercase substring of Vendor -> product URL template
+VENDOR_URL_TEMPLATES = {
+    "thorlabs": "https://www.thorlabs.com/thorproduct.cfm?partnumber={pn}",
+    "mcmaster": "https://www.mcmaster.com/{pn}/",
+}
+# Fallbacks when Vendor is blank: PN shapes are distinctive enough to guess.
+_MCMASTER_PN_RE = re.compile(r"^\d{4,6}[A-Z]{1,2}\d{1,4}$")  # e.g. 91290A115
+_THORLABS_PN_RE = re.compile(r"^[A-Z]{1,4}\d+[A-Z0-9]*(?:[/-][A-Z0-9]+)*$")  # e.g. KC1T/M
 
 
 class PictureBOMError(Exception):
@@ -505,10 +541,222 @@ def load_csv_bom(csv_path):
     return rows, reader.fieldnames
 
 
+def _create_workbook(output_path):
+    """Create an xlsxwriter workbook plus the shared format dictionary.
+
+    xlsxwriter formats are fixed at write time (no post-hoc restyling), so
+    every fill/alignment combination the builders need is created up front.
+    """
+    wb = xlsxwriter.Workbook(str(output_path), {
+        "strings_to_formulas": False,  # user text starting with '=' stays text
+        "strings_to_urls": False,      # links only via explicit write_url
+    })
+    border = {"border": 1, "border_color": BORDER_COLOR, "valign": "vcenter"}
+
+    def fmt(**props):
+        return wb.add_format({**border, **props})
+
+    fmts = {
+        "header": fmt(bold=True, font_color="#FFFFFF", font_size=11,
+                      bg_color=HEADER_BG, align="center", text_wrap=True),
+        "center": fmt(align="center"),
+        "left": fmt(align="left", text_wrap=True),
+        "link": fmt(align="center", font_color=LINK_COLOR, underline=1),
+        "asm_center": fmt(align="center", bg_color=ASSEMBLY_BG, bold=True),
+        "asm_left": fmt(align="left", text_wrap=True, bg_color=ASSEMBLY_BG,
+                        bold=True),
+        "asm_picture": fmt(align="center", bg_color=ASSEMBLY_BG),  # no bold
+        "summary": wb.add_format({"bold": True, "font_size": 11,
+                                  "align": "left", "valign": "vcenter",
+                                  "text_wrap": True}),
+        "missing_center": fmt(align="center", bg_color=MISSING_BG),
+        "missing_left": fmt(align="left", text_wrap=True, bg_color=MISSING_BG),
+        "partial_center": fmt(align="center", bg_color=PARTIAL_BG),
+        "partial_left": fmt(align="left", text_wrap=True, bg_color=PARTIAL_BG),
+        # Conditional-format formats carry fill + font only; borders and
+        # alignment stay with the underlying cell format.
+        "cf": {key: wb.add_format({"bg_color": bg, "font_color": fg})
+               for key, (bg, fg) in VENDOR_HIGHLIGHTS.items()},
+    }
+    return wb, fmts
+
+
+def _embed_image(ws, row, col, img_path, cell_format):
+    """Insert a picture as the cell's value (Excel 365 "Place in Cell").
+
+    In-cell pictures sort/filter with their row and rescale automatically
+    when the row height or column width changes. They render in Excel 365
+    (2023+); older Excel shows #VALUE! in the cell.
+    """
+    ws.embed_image(row, col, img_path, {"cell_format": cell_format})
+
+
+def _vendor_url(vendor, part_no):
+    """Return a product-page URL for a part, or None.
+
+    The Vendor property wins when present; a blank vendor falls back to
+    part-number shape (McMaster PNs are digit-led, Thorlabs letter-led).
+    A wrong guess only costs a dead link, so the patterns stay conservative.
+    """
+    part_no = str(part_no or "").strip()
+    if not part_no:
+        return None
+    pn_quoted = quote(part_no, safe="")  # Thorlabs "/M" suffix -> %2FM
+    vendor_lc = str(vendor or "").strip().lower()
+    for key, template in VENDOR_URL_TEMPLATES.items():
+        if key in vendor_lc:
+            return template.format(pn=pn_quoted)
+    if not vendor_lc:
+        pn_upper = part_no.upper()
+        if _MCMASTER_PN_RE.match(pn_upper):
+            return VENDOR_URL_TEMPLATES["mcmaster"].format(pn=pn_quoted)
+        if _THORLABS_PN_RE.match(pn_upper):
+            return VENDOR_URL_TEMPLATES["thorlabs"].format(pn=pn_quoted)
+    return None
+
+
+def _write_part_link(ws, row, col, url, text, link_fmt, fallback_fmt):
+    """Write a hyperlinked part number. write_url writes NOTHING when it
+    fails (e.g. URL past Excel's ~2079-char limit), so fall back to plain
+    text rather than losing the cell."""
+    if ws.write_url(row, col, url, link_fmt, string=text) < 0:
+        ws.write(row, col, text, fallback_fmt)
+
+
+def _vendor_options(discovered):
+    """Vendor dropdown options: vendors seen in the BOM, then common vendors
+    not already present, with 'Unknown' always last."""
+    seen = {}
+    for vendor in discovered:
+        vendor = str(vendor or "").strip()
+        if vendor and vendor.lower() not in seen and vendor.lower() != "unknown":
+            seen[vendor.lower()] = vendor
+    options = sorted(seen.values(), key=str.lower)
+    options += [v for v in COMMON_VENDORS
+                if v != "Unknown" and v.lower() not in seen]
+    options.append("Unknown")
+    return options
+
+
+def _add_vendor_list_sheet(wb, options):
+    """Write dropdown options to a hidden 'Lists' sheet and return the range
+    reference for data validation. A sheet-backed list (vs. inline) avoids
+    Excel's 255-char inline limit and survives commas in vendor names."""
+    ws = wb.add_worksheet("Lists")
+    for idx, option in enumerate(options):
+        ws.write(idx, 0, option)
+    ws.hide()
+    return f"='Lists'!$A$1:$A${len(options)}"
+
+
+def _add_row_extras(ws, first_row, last_row, vendor_col, status_col,
+                    vendor_source, cf_fmts):
+    """Attach the Status dropdown, Vendor dropdown, and vendor color rules
+    to a 0-based row range. The range may extend past the data (buffer
+    rows): validation and conditional formatting leave empty cells empty,
+    so readers that skip blank rows are unaffected."""
+    if status_col is not None:
+        ws.data_validation(first_row, status_col, last_row, status_col, {
+            "validate": "list", "source": STATUS_OPTIONS,
+            "ignore_blank": True})
+    if vendor_col is not None:
+        if vendor_source:
+            ws.data_validation(first_row, vendor_col, last_row, vendor_col, {
+                "validate": "list", "source": vendor_source,
+                "ignore_blank": True})
+        # Excel's text-contains rule is SEARCH-based, i.e. case-insensitive.
+        for key, cf in cf_fmts.items():
+            ws.conditional_format(first_row, vendor_col, last_row, vendor_col, {
+                "type": "text", "criteria": "containing", "value": key,
+                "format": cf})
+
+
+def _part_row_runs(bom_rows):
+    """Contiguous 0-based index runs of non-Assembly rows (hierarchical
+    mode). Extras apply to parts only; assembly rows are structure."""
+    runs = []
+    start = None
+    for idx, row in enumerate(bom_rows):
+        if row.get("type") != "Assembly":
+            if start is None:
+                start = idx
+        elif start is not None:
+            runs.append((start, idx - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(bom_rows) - 1))
+    return runs
+
+
+class _ColWidths:
+    """Column-width accumulator: xlsxwriter cells can't be read back after
+    writing, so widths are tracked as values are written."""
+
+    def __init__(self, headers):
+        self._max = [len(str(h)) for h in headers]
+
+    def track(self, col, value):
+        if value is not None:
+            self._max[col] = max(self._max[col], len(str(value)))
+
+    def apply(self, ws, picture_col=0):
+        for col, max_len in enumerate(self._max):
+            if col == picture_col:
+                ws.set_column(col, col, PICTURE_COL_WIDTH)
+            else:
+                # Add padding, cap so descriptions don't stretch forever
+                ws.set_column(col, col, min(max_len + 4, MAX_COL_WIDTH))
+
+
+def _write_flat_rows(ws, fmts, widths, flat_parts, images_dir):
+    """Write flat-layout data rows (shared by flat mode and the linked
+    Parts sheet). Returns the set of vendor names seen."""
+    vendors = set()
+    for idx, part in enumerate(flat_parts):
+        r = idx + 1
+        ws.set_row(r, DATA_ROW_HEIGHT)
+
+        img_path = _find_image(images_dir, sanitize_filename(part["name"]))
+        if img_path:
+            _embed_image(ws, r, 0, img_path, fmts["center"])
+        else:
+            ws.write_blank(r, 0, None, fmts["center"])
+
+        vendor = part.get("vendor", "")
+        vendors.add(vendor)
+        vendor_pn = part.get("vendor_part_no", "")
+        cells = [
+            (1, part["name"], fmts["center"]),
+            (2, part.get("description", ""), fmts["left"]),
+            (3, part.get("total_quantity", part.get("quantity", 1)),
+             fmts["center"]),
+            (4, vendor, fmts["center"]),
+            (6, part.get("where_used", ""), fmts["left"]),
+        ]
+        for col, value, cell_fmt in cells:
+            ws.write(r, col, value, cell_fmt)
+            widths.track(col, value)
+
+        url = _vendor_url(vendor, vendor_pn)
+        if url:
+            _write_part_link(ws, r, 5, url, vendor_pn, fmts["link"],
+                             fmts["center"])
+        else:
+            ws.write(r, 5, vendor_pn, fmts["center"])
+        widths.track(5, vendor_pn)
+
+        ws.write_blank(r, 7, None, fmts["center"])  # Status
+    return vendors
+
+
 def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
                        hierarchical=False):
     """
-    Generate an Excel BOM with embedded thumbnail images.
+    Generate an Excel BOM with in-cell thumbnail images (Excel 365
+    "Place in Cell": pictures sort/filter with their row and rescale with
+    row height). Every mode gains a Status dropdown column; sheets with a
+    Vendor column also get a vendor dropdown, vendor color highlighting,
+    and Thorlabs/McMaster product links on Vendor Part No.
 
     bom_rows: list of dicts with at least 'name' key. May also have
               description, quantity, vendor, vendor_part_no.
@@ -518,288 +766,238 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
     csv_columns: if provided, use these column names (from CSV import)
     hierarchical: if True, add Level and Type columns, highlight assembly rows
     """
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Visual BOM"
-
-    # --- Styles ---
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    header_fill = PatternFill(start_color="1F3864", end_color="1F3864", fill_type="solid")
-    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    thin_border = Border(
-        left=Side(style="thin", color="BFBFBF"),
-        right=Side(style="thin", color="BFBFBF"),
-        top=Side(style="thin", color="BFBFBF"),
-        bottom=Side(style="thin", color="BFBFBF"),
-    )
-    center_align = Alignment(horizontal="center", vertical="center")
-    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    assembly_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
-
-    # Columns where text should be left-aligned (description-like)
-    left_align_names = {"description", "where used (sub-asm qty)"}
+    wb, fmts = _create_workbook(output_path)
+    ws = wb.add_worksheet("Visual BOM")
 
     if csv_columns:
-        # CSV mode: Picture + all original CSV columns
-        headers = ["Picture"] + list(csv_columns)
-        ws.append(headers)
+        headers = ["Picture"] + [str(c) for c in csv_columns] + ["Status"]
+    elif hierarchical:
+        headers = ["Picture", "Level", "Type", "Part Number", "Description",
+                   "Qty", "Vendor", "Vendor Part No", "Status"]
+    else:
+        headers = ["Picture", "Part Number", "Description", "Total Qty",
+                   "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)",
+                   "Status"]
+    status_col = len(headers) - 1
 
-        for row_idx, row_data in enumerate(bom_rows, start=2):
-            part_number = row_data.get("Part Number", row_data.get("part_number", ""))
-            safe_name = sanitize_filename(part_number)
-            img_path = _find_image(images_dir, safe_name)
+    widths = _ColWidths(headers)
+    ws.set_row(0, HEADER_ROW_HEIGHT)
+    for col, header in enumerate(headers):
+        ws.write(0, col, header, fmts["header"])
 
-            ws.row_dimensions[row_idx].height = 45
+    if csv_columns:
+        # CSV mode: Picture + all original CSV columns (+ Status)
+        vendor_col = vendor_pn_col = None
+        for col_idx, name in enumerate(csv_columns, start=1):
+            name_lc = str(name).strip().lower()
+            if name_lc == "vendor":
+                vendor_col = col_idx
+            elif name_lc in {"vendor part no", "vendor part number",
+                             "vendor pn"}:
+                vendor_pn_col = col_idx
 
+        vendors = set()
+        for idx, row_data in enumerate(bom_rows):
+            r = idx + 1
+            ws.set_row(r, DATA_ROW_HEIGHT)
+            part_number = row_data.get("Part Number",
+                                       row_data.get("part_number", ""))
+            img_path = _find_image(images_dir, sanitize_filename(part_number))
             if img_path:
-                _insert_image(ws, img_path, f"A{row_idx}")
+                _embed_image(ws, r, 0, img_path, fmts["center"])
+            else:
+                ws.write_blank(r, 0, None, fmts["center"])
 
-            for col_idx, col_name in enumerate(csv_columns, start=2):
-                ws.cell(row=row_idx, column=col_idx, value=row_data.get(col_name, ""))
+            # `or ""` guards ragged CSV rows: DictReader fills missing
+            # trailing fields with None, and str(None) is "None".
+            vendor = (str(row_data.get(csv_columns[vendor_col - 1]) or "")
+                      if vendor_col else "")
+            vendors.add(vendor)
+            for col_idx, col_name in enumerate(csv_columns, start=1):
+                value = row_data.get(col_name, "")
+                cell_fmt = (fmts["left"]
+                            if str(col_name).strip().lower() in LEFT_ALIGN_HEADERS
+                            else fmts["center"])
+                url = (_vendor_url(vendor, value)
+                       if col_idx == vendor_pn_col else None)
+                if url:
+                    _write_part_link(ws, r, col_idx, url, str(value),
+                                     fmts["link"], cell_fmt)
+                else:
+                    ws.write(r, col_idx, value, cell_fmt)
+                widths.track(col_idx, value)
+            ws.write_blank(r, status_col, None, fmts["center"])
+
+        vendor_source = (_add_vendor_list_sheet(wb, _vendor_options(vendors))
+                         if vendor_col else None)
+        _add_row_extras(ws, 1, len(bom_rows) + BUFFER_ROWS, vendor_col,
+                        status_col, vendor_source, fmts["cf"])
 
     elif hierarchical:
-        # Hierarchical BOM with Level and Type columns
-        headers = ["Picture", "Level", "Type", "Part Number", "Description",
-                    "Qty", "Vendor", "Vendor Part No"]
-        ws.append(headers)
+        vendor_col = 6
+        vendors = set()
+        for idx, row_data in enumerate(bom_rows):
+            r = idx + 1
+            ws.set_row(r, DATA_ROW_HEIGHT)
+            is_assembly = row_data.get("type") == "Assembly"
+            center = fmts["asm_center"] if is_assembly else fmts["center"]
+            left = fmts["asm_left"] if is_assembly else fmts["left"]
 
-        for row_idx, row_data in enumerate(bom_rows, start=2):
-            safe_name = sanitize_filename(row_data["name"])
-            img_path = _find_image(images_dir, safe_name)
-
-            ws.row_dimensions[row_idx].height = 45
-
+            img_path = _find_image(images_dir,
+                                   sanitize_filename(row_data["name"]))
+            pic_fmt = fmts["asm_picture"] if is_assembly else fmts["center"]
             if img_path:
-                _insert_image(ws, img_path, f"A{row_idx}")
+                _embed_image(ws, r, 0, img_path, pic_fmt)
+            else:
+                ws.write_blank(r, 0, None, pic_fmt)
 
-            ws.cell(row=row_idx, column=2, value=row_data.get("level", ""))
-            ws.cell(row=row_idx, column=3, value=row_data.get("type", ""))
-            ws.cell(row=row_idx, column=4, value=row_data["name"])
-            ws.cell(row=row_idx, column=5, value=row_data.get("description", ""))
-            ws.cell(row=row_idx, column=6, value=row_data.get("quantity", 1))
-            ws.cell(row=row_idx, column=7, value=row_data.get("vendor", ""))
-            ws.cell(row=row_idx, column=8, value=row_data.get("vendor_part_no", ""))
+            vendor = row_data.get("vendor", "")
+            if not is_assembly:
+                vendors.add(vendor)
+            cells = [
+                (1, row_data.get("level", ""), center),
+                (2, row_data.get("type", ""), center),
+                (3, row_data["name"], center),
+                (4, row_data.get("description", ""), left),
+                (5, row_data.get("quantity", 1), center),
+                (6, vendor, center),
+            ]
+            for col, value, cell_fmt in cells:
+                ws.write(r, col, value, cell_fmt)
+                widths.track(col, value)
+
+            vendor_pn = row_data.get("vendor_part_no", "")
+            url = None if is_assembly else _vendor_url(vendor, vendor_pn)
+            if url:
+                _write_part_link(ws, r, 7, url, vendor_pn, fmts["link"],
+                                 center)
+            else:
+                ws.write(r, 7, vendor_pn, center)
+            widths.track(7, vendor_pn)
+
+            ws.write_blank(r, status_col, None, center)
+
+        vendor_source = _add_vendor_list_sheet(wb, _vendor_options(vendors))
+        # Extras on part rows only — assembly rows are structure, and the
+        # vendor colors would fight the assembly tint.
+        for start, end in _part_row_runs(bom_rows):
+            _add_row_extras(ws, start + 1, end + 1, vendor_col, status_col,
+                            vendor_source, fmts["cf"])
 
     else:
-        # Flat BOM (parts only)
-        headers = ["Picture", "Part Number", "Description", "Total Qty",
-                    "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)"]
-        ws.append(headers)
+        vendors = _write_flat_rows(ws, fmts, widths, bom_rows, images_dir)
+        vendor_source = _add_vendor_list_sheet(wb, _vendor_options(vendors))
+        _add_row_extras(ws, 1, len(bom_rows) + BUFFER_ROWS, 4, status_col,
+                        vendor_source, fmts["cf"])
 
-        for row_idx, row_data in enumerate(bom_rows, start=2):
-            safe_name = sanitize_filename(row_data["name"])
-            img_path = _find_image(images_dir, safe_name)
-
-            ws.row_dimensions[row_idx].height = 45
-
-            if img_path:
-                _insert_image(ws, img_path, f"A{row_idx}")
-
-            ws.cell(row=row_idx, column=2, value=row_data["name"])
-            ws.cell(row=row_idx, column=3, value=row_data.get("description", ""))
-            ws.cell(row=row_idx, column=4, value=row_data.get("total_quantity",
-                                                               row_data.get("quantity", 1)))
-            ws.cell(row=row_idx, column=5, value=row_data.get("vendor", ""))
-            ws.cell(row=row_idx, column=6, value=row_data.get("vendor_part_no", ""))
-            ws.cell(row=row_idx, column=7, value=row_data.get("where_used", ""))
-
-    # --- Auto-fit column widths based on content ---
-    for col_idx in range(1, len(headers) + 1):
-        col_letter = get_column_letter(col_idx)
-        max_len = len(str(headers[col_idx - 1]))  # start with header length
-        for row_idx in range(2, len(bom_rows) + 2):
-            val = ws.cell(row=row_idx, column=col_idx).value
-            if val is not None:
-                max_len = max(max_len, len(str(val)))
-        # Add padding, cap at 60 so descriptions don't stretch forever
-        width = min(max_len + 4, 60)
-        # Picture column: fixed width for the thumbnail
-        if col_idx == 1:
-            width = 18
-        ws.column_dimensions[col_letter].width = width
-
-    # --- Format header row ---
-    ws.row_dimensions[1].height = 30
-    for cell in ws[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        cell.border = thin_border
-
-    # --- Format data rows ---
-    num_cols = len(headers)
-    for row_idx in range(2, len(bom_rows) + 2):
-        row_data = bom_rows[row_idx - 2]
-        is_assembly_row = hierarchical and row_data.get("type") == "Assembly"
-
-        for col_idx in range(1, num_cols + 1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            cell.border = thin_border
-            col_name = headers[col_idx - 1] if col_idx <= len(headers) else ""
-            if col_name.lower() in left_align_names:
-                cell.alignment = left_align
-            else:
-                cell.alignment = center_align
-
-            # Highlight assembly rows with a light blue tint
-            if is_assembly_row:
-                cell.fill = assembly_fill
-                if col_idx > 1:  # don't bold the picture cell
-                    cell.font = Font(bold=True)
-
-    # Freeze the header row so it stays visible when scrolling
-    ws.freeze_panes = "A2"
-
-    wb.save(output_path)
+    widths.apply(ws)
+    ws.freeze_panes(1, 0)  # keep the header row visible when scrolling
+    ws.activate()
+    wb.close()
     return output_path
 
 
-def _format_sheet(ws, headers, num_data_rows, bom_rows, hierarchical=False):
-    """Apply shared formatting to a BOM worksheet: header styles, borders,
-    column widths, assembly highlighting, and freeze panes."""
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    header_fill = PatternFill(start_color="1F3864", end_color="1F3864", fill_type="solid")
-    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    thin_border = Border(
-        left=Side(style="thin", color="BFBFBF"),
-        right=Side(style="thin", color="BFBFBF"),
-        top=Side(style="thin", color="BFBFBF"),
-        bottom=Side(style="thin", color="BFBFBF"),
-    )
-    center_align = Alignment(horizontal="center", vertical="center")
-    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    assembly_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
-    left_align_names = {"description", "where used (sub-asm qty)"}
-
-    # Auto-fit column widths
-    for col_idx in range(1, len(headers) + 1):
-        col_letter = get_column_letter(col_idx)
-        max_len = len(str(headers[col_idx - 1]))
-        for row_idx in range(2, num_data_rows + 2):
-            val = ws.cell(row=row_idx, column=col_idx).value
-            if val is not None and not str(val).startswith("="):
-                max_len = max(max_len, len(str(val)))
-        width = min(max_len + 4, 60)
-        if col_idx == 1:
-            width = 18
-        ws.column_dimensions[col_letter].width = width
-
-    # Format header row
-    ws.row_dimensions[1].height = 30
-    for cell in ws[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        cell.border = thin_border
-
-    # Format data rows
-    num_cols = len(headers)
-    for row_idx in range(2, num_data_rows + 2):
-        row_data = bom_rows[row_idx - 2] if bom_rows else {}
-        is_assembly_row = hierarchical and row_data.get("type") == "Assembly"
-
-        for col_idx in range(1, num_cols + 1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            cell.border = thin_border
-            col_name = headers[col_idx - 1] if col_idx <= len(headers) else ""
-            if col_name.lower() in left_align_names:
-                cell.alignment = left_align
-            else:
-                cell.alignment = center_align
-
-            if is_assembly_row:
-                cell.fill = assembly_fill
-                if col_idx > 1:
-                    cell.font = Font(bold=True)
-
-    ws.freeze_panes = "A2"
-
-
 def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output_path):
-    """Generate a two-sheet Excel BOM with XLOOKUP formulas linking the
-    Assemblies sheet back to the Parts sheet.
+    """Generate a two-sheet Excel BOM with INDEX/MATCH formulas linking the
+    Assemblies sheet back to the Parts sheet (INDEX/MATCH kept over XLOOKUP
+    for compatibility with older Excel).
 
     flat_parts: list of dicts from _build_flat_from_hierarchical()
     hierarchical_rows: list of dicts from traverse_assembly_hierarchical()
     """
-    wb = Workbook()
+    wb, fmts = _create_workbook(output_path)
 
     # ---- Sheet 1: Parts Only (Editable) ----
-    ws1 = wb.active
-    ws1.title = "Parts Only (Editable)"
-
+    # Added first so it stays the workbook's default sheet (parse_bom_excel
+    # prefers it). Status must remain the LAST column: the Assemblies sheet
+    # references $B/$C/$E/$F by letter.
+    ws1 = wb.add_worksheet("Parts Only (Editable)")
     headers1 = ["Picture", "Part Number", "Description", "Total Qty",
-                 "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)"]
-    ws1.append(headers1)
+                "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)",
+                "Status"]
+    widths1 = _ColWidths(headers1)
+    ws1.set_row(0, HEADER_ROW_HEIGHT)
+    for col, header in enumerate(headers1):
+        ws1.write(0, col, header, fmts["header"])
 
-    for row_idx, part in enumerate(flat_parts, start=2):
-        safe_name = sanitize_filename(part["name"])
-        img_path = _find_image(images_dir, safe_name)
+    vendors = _write_flat_rows(ws1, fmts, widths1, flat_parts, images_dir)
 
-        ws1.row_dimensions[row_idx].height = 45
-
-        if img_path:
-            _insert_image(ws1, img_path, f"A{row_idx}")
-
-        ws1.cell(row=row_idx, column=2, value=part["name"])
-        ws1.cell(row=row_idx, column=3, value=part.get("description", ""))
-        ws1.cell(row=row_idx, column=4, value=part.get("total_quantity", 1))
-        ws1.cell(row=row_idx, column=5, value=part.get("vendor", ""))
-        ws1.cell(row=row_idx, column=6, value=part.get("vendor_part_no", ""))
-        ws1.cell(row=row_idx, column=7, value=part.get("where_used", ""))
-
-    _format_sheet(ws1, headers1, len(flat_parts), flat_parts)
+    vendor_source = _add_vendor_list_sheet(wb, _vendor_options(vendors))
+    _add_row_extras(ws1, 1, len(flat_parts) + BUFFER_ROWS, 4, 7,
+                    vendor_source, fmts["cf"])
+    widths1.apply(ws1)
+    ws1.freeze_panes(1, 0)
 
     # ---- Sheet 2: Assemblies (Read-Only) ----
-    ws2 = wb.create_sheet("Assemblies (Read-Only)")
-
+    ws2 = wb.add_worksheet("Assemblies (Read-Only)")
     headers2 = ["Picture", "Level", "Type", "Part Number", "Description",
-                 "Qty", "Vendor", "Vendor Part No"]
-    ws2.append(headers2)
+                "Qty", "Vendor", "Vendor Part No"]
+    widths2 = _ColWidths(headers2)
+    ws2.set_row(0, HEADER_ROW_HEIGHT)
+    for col, header in enumerate(headers2):
+        ws2.write(0, col, header, fmts["header"])
 
     S1 = "Parts Only (Editable)"  # sheet name for formula references
-    last_row = len(flat_parts) + 201  # bounded range + 200 row buffer for user additions
+    # Bounded range + buffer for user additions; matches the validation
+    # range on Sheet 1 (0-based rows 1..len+BUFFER_ROWS = A2:A{last_row}).
+    last_row = len(flat_parts) + BUFFER_ROWS + 1
+    # Cached values for formula cells so readers that don't recalculate
+    # (openpyxl data_only, file previews) still see real strings.
+    parts_by_name = {p["name"]: p for p in flat_parts}
 
-    for row_idx, row_data in enumerate(hierarchical_rows, start=2):
-        safe_name = sanitize_filename(row_data["name"])
-        img_path = _find_image(images_dir, safe_name)
+    def write_cell(row, col, value, cell_fmt):
+        ws2.write(row, col, value, cell_fmt)
+        widths2.track(col, value)
 
-        ws2.row_dimensions[row_idx].height = 45
+    for idx, row_data in enumerate(hierarchical_rows):
+        r = idx + 1
+        excel_row = r + 1
+        ws2.set_row(r, DATA_ROW_HEIGHT)
+        is_assembly = row_data.get("type") == "Assembly"
+        center = fmts["asm_center"] if is_assembly else fmts["center"]
+        left = fmts["asm_left"] if is_assembly else fmts["left"]
 
+        img_path = _find_image(images_dir, sanitize_filename(row_data["name"]))
+        pic_fmt = fmts["asm_picture"] if is_assembly else fmts["center"]
         if img_path:
-            _insert_image(ws2, img_path, f"A{row_idx}")
+            _embed_image(ws2, r, 0, img_path, pic_fmt)
+        else:
+            ws2.write_blank(r, 0, None, pic_fmt)
 
-        ws2.cell(row=row_idx, column=2, value=row_data.get("level", ""))
-        ws2.cell(row=row_idx, column=3, value=row_data.get("type", ""))
-        ws2.cell(row=row_idx, column=4, value=row_data["name"])
-        ws2.cell(row=row_idx, column=6, value=row_data.get("quantity", 1))
+        write_cell(r, 1, row_data.get("level", ""), center)
+        write_cell(r, 2, row_data.get("type", ""), center)
+        write_cell(r, 3, row_data["name"], center)
+        write_cell(r, 5, row_data.get("quantity", 1), center)
 
-        if row_data.get("type") == "Part":
+        if not is_assembly:
             # INDEX/MATCH formulas: look up Part Number (col D) in Sheet 1
+            part = parts_by_name.get(row_data["name"], row_data)
             B = f"'{S1}'!$B$2:$B${last_row}"  # lookup range (Part Number)
-            ws2.cell(row=row_idx, column=5).value = (
-                f"=IFERROR(INDEX('{S1}'!$C$2:$C${last_row},MATCH(D{row_idx},{B},0)),\"\")")
-            ws2.cell(row=row_idx, column=7).value = (
-                f"=IFERROR(INDEX('{S1}'!$E$2:$E${last_row},MATCH(D{row_idx},{B},0)),\"\")")
-            ws2.cell(row=row_idx, column=8).value = (
-                f"=IFERROR(INDEX('{S1}'!$F$2:$F${last_row},MATCH(D{row_idx},{B},0)),\"\")")
+            for col, s1_col, field, cell_fmt in (
+                    (4, "C", "description", left),
+                    (6, "E", "vendor", center),
+                    (7, "F", "vendor_part_no", center)):
+                formula = (
+                    f"=IFERROR(INDEX('{S1}'!${s1_col}$2:${s1_col}${last_row},"
+                    f"MATCH(D{excel_row},{B},0)),\"\")")
+                cached = part.get(field, "")
+                ws2.write_formula(r, col, formula, cell_fmt, cached)
+                widths2.track(col, cached)
         else:
             # Assembly rows: static values (assemblies aren't on the flat sheet)
-            ws2.cell(row=row_idx, column=5, value=row_data.get("description", ""))
-            ws2.cell(row=row_idx, column=7, value=row_data.get("vendor", ""))
-            ws2.cell(row=row_idx, column=8, value=row_data.get("vendor_part_no", ""))
+            write_cell(r, 4, row_data.get("description", ""), left)
+            write_cell(r, 6, row_data.get("vendor", ""), center)
+            write_cell(r, 7, row_data.get("vendor_part_no", ""), center)
 
-    # For formula columns on Sheet 2, estimate widths from Sheet 1 data
-    _format_sheet(ws2, headers2, len(hierarchical_rows), hierarchical_rows,
-                  hierarchical=True)
+    # Vendor colors on Sheet 2's part rows too (conditional formatting
+    # evaluates the formulas' computed values). No dropdowns here.
+    for start, end in _part_row_runs(hierarchical_rows):
+        _add_row_extras(ws2, start + 1, end + 1, 6, None, None, fmts["cf"])
 
-    # Widen formula columns using Sheet 1 data as estimate
-    for s2_col, s1_col in [(5, 3), (7, 5), (8, 6)]:
-        letter = get_column_letter(s2_col)
-        s1_letter = get_column_letter(s1_col)
-        ws2.column_dimensions[letter].width = ws1.column_dimensions[s1_letter].width
-
-    wb.save(output_path)
+    widths2.apply(ws2)
+    ws2.freeze_panes(1, 0)
+    ws1.activate()
+    wb.close()
     return output_path
 
 
@@ -810,18 +1008,6 @@ def _find_image(images_dir, safe_name):
         if os.path.isfile(path):
             return path
     return None
-
-
-def _insert_image(ws, img_path, cell_ref):
-    """Insert and size an image into a worksheet cell."""
-    img = XlImage(img_path)
-    # Scale to fit within ~55px tall (row height 45pt ≈ 60px)
-    thumb_height = 55
-    aspect = img.width / img.height if img.height else 1.78
-    img.height = thumb_height
-    img.width = int(thumb_height * aspect)
-    img.anchor = cell_ref
-    ws.add_image(img)
 
 
 # ---------------------------------------------------------------------------
@@ -1018,9 +1204,8 @@ def generate_comparison_excel(comparison, output_path):
     Returns:
         output_path
     """
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Parts to Order"
+    wb, fmts = _create_workbook(output_path)
+    ws = wb.add_worksheet("Parts to Order")
 
     rows = comparison["rows"]
     summary = comparison["summary"]
@@ -1031,77 +1216,38 @@ def generate_comparison_excel(comparison, output_path):
         f"{summary['shortage_count']} part(s) to order, "
         f"{summary['fully_covered']} already covered"
     )
-    ws.merge_cells("A1:F1")
-    summary_cell = ws.cell(row=1, column=1, value=summary_text)
-    summary_cell.font = Font(bold=True, size=11)
-    summary_cell.alignment = Alignment(horizontal="left", vertical="center",
-                                       wrap_text=True)
-    ws.row_dimensions[1].height = 30
+    ws.merge_range(0, 0, 0, 5, summary_text, fmts["summary"])
+    ws.set_row(0, HEADER_ROW_HEIGHT)
 
     # Headers in row 2
     headers = ["Picture", "Part Number", "Description", "Already Have",
                "Need", "To Order"]
-    for col_idx, header in enumerate(headers, start=1):
-        ws.cell(row=2, column=col_idx, value=header)
+    ws.set_row(1, HEADER_ROW_HEIGHT)
+    for col, header in enumerate(headers):
+        ws.write(1, col, header, fmts["header"])
 
-    # Styles
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    header_fill = PatternFill(start_color="1F3864", end_color="1F3864",
-                              fill_type="solid")
-    header_alignment = Alignment(horizontal="center", vertical="center",
-                                 wrap_text=True)
-    thin_border = Border(
-        left=Side(style="thin", color="BFBFBF"),
-        right=Side(style="thin", color="BFBFBF"),
-        top=Side(style="thin", color="BFBFBF"),
-        bottom=Side(style="thin", color="BFBFBF"),
-    )
-    center_align = Alignment(horizontal="center", vertical="center")
-    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    missing_fill = PatternFill(start_color="FDDEDE", end_color="FDDEDE",
-                               fill_type="solid")
-    shortage_fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD",
-                                fill_type="solid")
-
-    # Format header row
-    ws.row_dimensions[2].height = 30
-    for cell in ws[2]:
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        cell.border = thin_border
-
-    # Data rows starting at row 3
-    for row_idx, row_data in enumerate(rows, start=3):
-        ws.row_dimensions[row_idx].height = 45
+    # Data rows; color code: red if completely missing, yellow if partial
+    for idx, row_data in enumerate(rows):
+        r = idx + 2
+        ws.set_row(r, DATA_ROW_HEIGHT)
+        kind = "missing" if row_data["qty_a"] == 0 else "partial"
+        center = fmts[f"{kind}_center"]
 
         if row_data["image_path"]:
-            _insert_image(ws, row_data["image_path"], f"A{row_idx}")
+            _embed_image(ws, r, 0, row_data["image_path"], center)
+        else:
+            ws.write_blank(r, 0, None, center)
+        ws.write(r, 1, row_data["part_number"], center)
+        ws.write(r, 2, row_data["description"], fmts[f"{kind}_left"])
+        ws.write(r, 3, row_data["qty_a"], center)
+        ws.write(r, 4, row_data["qty_b"], center)
+        ws.write(r, 5, row_data["shortage"], center)
 
-        ws.cell(row=row_idx, column=2, value=row_data["part_number"])
-        ws.cell(row=row_idx, column=3, value=row_data["description"])
-        ws.cell(row=row_idx, column=4, value=row_data["qty_a"])
-        ws.cell(row=row_idx, column=5, value=row_data["qty_b"])
-        ws.cell(row=row_idx, column=6, value=row_data["shortage"])
+    for col, width in enumerate([PICTURE_COL_WIDTH, 25, 40, 14, 10, 12]):
+        ws.set_column(col, col, width)
 
-        # Color code: red if completely missing, yellow if partial shortage
-        fill = missing_fill if row_data["qty_a"] == 0 else shortage_fill
-        for col_idx in range(1, len(headers) + 1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            cell.border = thin_border
-            cell.fill = fill
-            if col_idx == 3:  # Description
-                cell.alignment = left_align
-            else:
-                cell.alignment = center_align
-
-    # Column widths
-    col_widths = [18, 25, 40, 14, 10, 12]
-    for col_idx, width in enumerate(col_widths, start=1):
-        ws.column_dimensions[get_column_letter(col_idx)].width = width
-
-    ws.freeze_panes = "A3"
-    wb.save(output_path)
+    ws.freeze_panes(2, 0)
+    wb.close()
     return output_path
 
 

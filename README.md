@@ -9,6 +9,12 @@ Point pictureBOM at a SolidWorks assembly file (`.sldasm`). It will:
 1. Open each part in SolidWorks and take an isometric screenshot
 2. Build an Excel spreadsheet with a picture of every component alongside its part number, description, vendor, and quantity
 
+Pictures are embedded **in the cells** (Excel's "Place in Cell"), so they sort and filter with their rows, and resizing rows resizes every picture at once. Each BOM also ships ready for part tracking:
+
+- A **Status** column with a dropdown (To Order / Ordered / Received / Installed)
+- A **Vendor** dropdown seeded with the vendors found in your assembly plus common ones, with automatic color highlighting (McMaster-Carr yellow, Thorlabs red, Unknown gray)
+- **Clickable product links** on Vendor Part No for Thorlabs and McMaster-Carr parts
+
 The output Excel file is named after the assembly with a timestamp (e.g. `MainFrame_2026-04-14_143025.xlsx`) so consecutive runs never overwrite each other.
 
 It can also **compare two BOMs** to show which parts you still need to order.
@@ -17,6 +23,7 @@ It can also **compare two BOMs** to show which parts you still need to order.
 
 - **Windows** (SolidWorks is Windows-only)
 - **SolidWorks** installed and running before you click Run
+- **Microsoft 365 Excel** (or Excel 2024+) to see the in-cell pictures — older Excel versions show `#VALUE!` in the Picture column
 
 That's it — no Python installation needed; the installer takes care of everything else.
 
