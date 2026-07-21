@@ -1,0 +1,15 @@
+{
+  "name": "picturebom-bomdom-viewer",
+  "private": true,
+  "description": "Source for the BomDom viewer template. Node is needed only by developers; the built template is committed at src/picturebom/assets/bomdom/viewer_template.html.",
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/build_viewer.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.8",
+    "three": "0.178.0",
+    "three-mesh-bvh": "0.9.1",
+    "write-excel-file": "2.3.2"
+  }
+}

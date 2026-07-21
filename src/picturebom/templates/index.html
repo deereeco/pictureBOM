@@ -190,6 +190,17 @@
                                         </label>
                                     </div>
                                 </div>
+                                <div class="optgroup">
+                                    <span class="label">Outputs</span>
+                                    <div class="radios">
+                                        <label class="check"><input type="checkbox" id="output_excel" checked>
+                                            Excel BOM (.xlsx)</label>
+                                        <label class="check"><input type="checkbox" id="output_html">
+                                            3D interactive BOM (.html) &mdash; a single file teammates open in any browser; needs SolidWorks 2024+</label>
+                                        <label class="check check-sub"><input type="checkbox" id="viewer_exports" checked>
+                                            Allow exporting parts lists from the 3D viewer <span class="hint-inline">&mdash; uncheck so recipients can view but not re-export; hand-editable in the HTML afterwards ("allow_exports")</span></label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </li>
@@ -222,6 +233,8 @@
                             <span id="stripQuality"></span>
                             <span class="strip-sep">&middot;</span>
                             <span id="stripMode"></span>
+                            <span class="strip-sep">&middot;</span>
+                            <span id="stripOutputs"></span>
                         </div>
                         <button type="button" class="linklike" id="editSetupBtn">Edit</button>
                     </div>
@@ -253,8 +266,10 @@
                             <h2 class="card-title">Results</h2>
                         </div>
                         <div class="resline" id="resultInfo"></div>
+                        <div id="resultWarnings" class="result-warnings hidden"></div>
                         <div class="actions">
                             <a id="downloadLink" class="btn btn-success hidden" href="#" title="The BOM is already saved to your output folder. This downloads an extra copy through your browser.">Download copy of BOM (Excel)</a>
+                            <a id="downloadHtmlLink" class="btn btn-success hidden" href="#" title="The 3D BOM is already saved to your output folder. This downloads an extra copy through your browser.">Download 3D BOM (HTML)</a>
                             <button type="button" id="openFolderBtn" class="btn btn-neutral hidden" title="Open the output folder in File Explorer">Open output folder</button>
                         </div>
                     </div>

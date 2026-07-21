@@ -15,6 +15,8 @@
     const resultsSection = document.getElementById("resultsSection");
     const resultInfo = document.getElementById("resultInfo");
     const downloadLink = document.getElementById("downloadLink");
+    const downloadHtmlLink = document.getElementById("downloadHtmlLink");
+    const resultWarnings = document.getElementById("resultWarnings");
     const openFolderBtn = document.getElementById("openFolderBtn");
     const gallerySection = document.getElementById("gallerySection");
     const gallery = document.getElementById("gallery");
@@ -191,6 +193,27 @@
         return radio ? radio.value : "flat";
     }
 
+    function getOutputs() {
+        return {
+            excel: document.getElementById("output_excel").checked,
+            html: document.getElementById("output_html").checked,
+            viewerExports: document.getElementById("viewer_exports").checked,
+        };
+    }
+
+    // The viewer-exports sub-option only means something when the 3D output is on
+    function refreshViewerExportsState() {
+        document.getElementById("viewer_exports").disabled =
+            !document.getElementById("output_html").checked;
+    }
+
+    function outputsLabel() {
+        const o = getOutputs();
+        if (o.excel && o.html) return "Excel + 3D HTML";
+        if (o.html) return "3D HTML only";
+        return "Excel";
+    }
+
     function qualityLabel() {
         const quality = getSelectedQuality();
         return QUALITY_LABELS[quality ? quality.value : "standard"];
@@ -254,6 +277,18 @@
                     if (radio) radio.checked = true;
                 }
 
+                // Output checkboxes
+                if (data.output_excel !== undefined) {
+                    document.getElementById("output_excel").checked = !!data.output_excel;
+                }
+                if (data.output_html !== undefined) {
+                    document.getElementById("output_html").checked = !!data.output_html;
+                }
+                if (data.viewer_exports !== undefined) {
+                    document.getElementById("viewer_exports").checked = !!data.viewer_exports;
+                }
+                refreshViewerExportsState();
+
                 // Update preview + chips + node states with loaded settings
                 refreshQualityUI();
                 refreshAssemblyField();
@@ -277,6 +312,10 @@
         data.width = parseInt(document.getElementById("width").value, 10) || 1920;
         data.height = parseInt(document.getElementById("height").value, 10) || 1080;
         data.assembly_mode = getModeValue();
+        const outputs = getOutputs();
+        data.output_excel = outputs.excel;
+        data.output_html = outputs.html;
+        data.viewer_exports = outputs.viewerExports;
 
         postJson("/api/settings", data).catch(() => {});
     }
@@ -289,6 +328,11 @@
     document.querySelectorAll('input[name="quality"], input[name="assembly_mode"]').forEach(radio => {
         radio.addEventListener("change", saveSettings);
     });
+    ["output_excel", "output_html", "viewer_exports"].forEach(id => {
+        document.getElementById(id).addEventListener("change", saveSettings);
+    });
+    document.getElementById("output_html").addEventListener("change", refreshViewerExportsState);
+    refreshViewerExportsState();
 
     // -----------------------------------------------------------------------
     // Time estimation
@@ -433,6 +477,7 @@
         document.getElementById("stripOutput").textContent = outputDir || "output folder";
         document.getElementById("stripQuality").textContent = qualityLabel();
         document.getElementById("stripMode").textContent = modeLabel();
+        document.getElementById("stripOutputs").textContent = outputsLabel();
     }
 
     function collapseSetup() {
@@ -468,6 +513,15 @@
             return;
         }
 
+        const outputs = getOutputs();
+        if (!outputs.excel && !outputs.html) {
+            showFieldMsg(assemblyMsg, "err",
+                "Pick at least one output in Export options (Excel or 3D interactive BOM).");
+            document.getElementById("output_excel")
+                .scrollIntoView({ block: "center", behavior: "smooth" });
+            return;
+        }
+
         // Reset UI
         runBtn.disabled = true;
         runBtn.textContent = "Running...";
@@ -476,6 +530,9 @@
         resultsSection.classList.add("hidden");
         gallerySection.classList.add("hidden");
         downloadLink.classList.add("hidden");
+        downloadHtmlLink.classList.add("hidden");
+        resultWarnings.classList.add("hidden");
+        resultWarnings.innerHTML = "";
         if (openFolderBtn) openFolderBtn.classList.add("hidden");
         progressBar.style.width = "0%";
         progressText.textContent = "0%";
@@ -504,6 +561,9 @@
             width: wh.w,
             height: wh.h,
             bom_mode: getModeValue(),
+            output_excel: outputs.excel,
+            output_html: outputs.html,
+            viewer_exports: outputs.viewerExports,
         };
 
         postJson("/api/run", params)
@@ -545,8 +605,18 @@
 
             if (event.type === "status") {
                 appendLog(event.message);
-                if (remainingTimeEl && event.message.indexOf("Generating Excel") === 0) {
-                    remainingTimeEl.textContent = "Generating Excel...";
+                // Post-capture stages have no per-part progress — surface the
+                // current stage where the countdown used to be.
+                const STAGE_LABELS = [
+                    ["Generating Excel", "Generating Excel..."],
+                    ["Exporting 3D model", "Exporting 3D model (may take a few minutes)..."],
+                    ["Optimizing 3D model", "Optimizing 3D model..."],
+                    ["Preparing thumbnails", "Preparing thumbnails..."],
+                    ["Writing interactive 3D BOM", "Writing 3D BOM file..."],
+                ];
+                if (remainingTimeEl) {
+                    const stage = STAGE_LABELS.find(s => event.message.indexOf(s[0]) === 0);
+                    if (stage) remainingTimeEl.textContent = stage[1];
                 }
             }
 
@@ -608,17 +678,43 @@
 
                 const r = event.result;
                 resultsSection.classList.remove("hidden");
-                resultInfo.innerHTML =
+                let resLine =
                     `Components: ${r.total_components} &mdash; Images captured: ${r.captured_count}`;
+                if (r.html_path && r.html_projected_mb) {
+                    resLine += ` &mdash; 3D BOM: ${r.html_projected_mb} MB`;
+                }
+                resultInfo.innerHTML = resLine;
 
                 if (openFolderBtn) openFolderBtn.classList.remove("hidden");
                 if (r.excel_path) {
                     var excelName = basename(r.excel_path);
                     downloadLink.classList.remove("hidden");
                     downloadLink.href = "/api/download/" + encodeURIComponent(excelName);
+                }
+                if (r.html_path) {
+                    downloadHtmlLink.classList.remove("hidden");
+                    downloadHtmlLink.href = "/api/download/" +
+                        encodeURIComponent(basename(r.html_path));
+                }
+                if (r.excel_path || r.html_path) {
                     appendLog("\nDone! BOM generated successfully.");
                 } else {
                     appendLog("\nDone! No BOM data to write.");
+                }
+
+                const warnings = (r.warnings || []).slice();
+                if (r.html_mode === "sidecar" && r.sidecar_path) {
+                    warnings.unshift(
+                        "The 3D BOM was too large for a single file, so it was split: " +
+                        "keep the .html and " + basename(r.sidecar_path) +
+                        " together — the page asks for the .glb when opened.");
+                }
+                if (warnings.length) {
+                    resultWarnings.classList.remove("hidden");
+                    resultWarnings.innerHTML = warnings
+                        .map(w => `<div class="result-warning">${escapeHtml(w)}</div>`)
+                        .join("");
+                    warnings.forEach(w => appendLog("WARNING: " + w));
                 }
 
                 // Refresh estimate for next run with updated history

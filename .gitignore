@@ -5,3 +5,8 @@ uv.lock
 __pycache__/
 dist/
 build/
+# SolidWorks lock files (present while documents are open)
+~$*
+**/~$*
+# Machine-local test fixture paths (never commit local paths)
+scripts/fixtures.local.json

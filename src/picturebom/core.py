@@ -531,6 +531,56 @@ def capture_all_components(sw_app, components, output_dir, width, height, on_pro
     return success_count, total
 
 
+def export_assembly_glb(sw_app, assy_doc, glb_path):
+    """SaveAs the open assembly to a .glb (SolidWorks 2024+ Extended Reality export).
+
+    The exporter acts on the ACTIVE document, and ActivateDoc2 has a history of
+    silently failing (see connect_to_solidworks docstring), so activation is
+    verified by title before saving. Returns (ok, error_message).
+    """
+    try:
+        title = assy_doc.GetTitle
+        active = sw_app.ActiveDoc
+        if active is None or active.GetTitle != title:
+            activate_document(sw_app, assy_doc)
+            active = sw_app.ActiveDoc
+            if active is None or active.GetTitle != title:
+                return False, "could not bring the assembly to the front for 3D export"
+
+        export_data = win32com.client.VARIANT(pythoncom.VT_DISPATCH, None)
+        save_errors = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        save_warnings = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        success = assy_doc.Extension.SaveAs(
+            glb_path,
+            0,              # swSaveAsCurrentVersion
+            1,              # swSaveAsOptions_Silent
+            export_data,
+            save_errors,
+            save_warnings,
+        )
+        # SaveAs can return True yet write nothing on versions without the
+        # exporter — trust only a real glTF file on disk.
+        if not success:
+            return False, f"SolidWorks refused the .glb export (error code {save_errors.value})"
+        if not os.path.isfile(glb_path) or os.path.getsize(glb_path) <= 12:
+            return False, "SolidWorks wrote no 3D data (.glb file missing or empty)"
+        with open(glb_path, "rb") as f:
+            if f.read(4) != b"glTF":
+                return False, "SolidWorks produced an invalid .glb file"
+        return True, ""
+    except Exception as e:
+        return False, f"3D export failed: {e}"
+
+
+def get_solidworks_year(sw_app):
+    """Best-effort SolidWorks release year (e.g. 2024) from RevisionNumber, or None."""
+    try:
+        major = int(str(sw_app.RevisionNumber).split(".")[0])
+        return major + 1992  # SW2024 reports revision 32
+    except Exception:
+        return None
+
+
 def load_csv_bom(csv_path):
     """Load a CSV file and return a list of row dicts. Expects a 'Part Number' column."""
     rows = []
@@ -1254,7 +1304,9 @@ def generate_comparison_excel(comparison, output_path):
 def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  include_subassemblies=False, bom_mode=None, csv_path=None,
                  images_dir=None, debug=False, on_progress=None,
-                 on_status=None, overwrite=False, completion_popup=False):
+                 on_status=None, overwrite=False, completion_popup=False,
+                 output_excel=True, output_html=False,
+                 html_size_limit_mb=25, keep_raw_glb=False, viewer_exports=True):
     """
     Run the full pictureBOM pipeline.
 
@@ -1275,9 +1327,20 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         completion_popup: If True, show a topmost Windows message box when the
                           BOM is done (for users watching SolidWorks, not the
                           browser).
+        output_excel: Write the Excel BOM (default True).
+        output_html: Also export an interactive 3D BOM (single .html; needs
+                     SolidWorks 2024+ for the .glb export). 3D failures never
+                     block the Excel output — they surface as warnings.
+        html_size_limit_mb: Above this projected HTML size, geometry is written
+                            as a sidecar .glb next to the HTML instead of embedded.
+        keep_raw_glb: Keep the intermediate SolidWorks .glb export on disk.
+        viewer_exports: Show the Export menu (xlsx/CSV/print) inside the
+                        exported HTML viewer. Also hand-editable after export
+                        via the "allow_exports" flag near the top of the HTML.
 
     Returns:
-        dict with keys: excel_path, images_dir, total_components, captured_count
+        dict with keys: excel_path, images_dir, total_components, captured_count,
+        html_path, html_mode, sidecar_path, html_projected_mb, warnings, timing.
 
     Raises:
         PictureBOMError: On fatal errors (file not found, SolidWorks not running, etc.)
@@ -1322,6 +1385,12 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     status("Connecting to SolidWorks...")
     sw_app = connect_to_solidworks()
+
+    if output_html:
+        sw_year = get_solidworks_year(sw_app)
+        if sw_year is not None and sw_year < 2024:
+            status(f"Note: the 3D interactive BOM needs SolidWorks 2024 or newer "
+                   f"(this looks like {sw_year}) — will attempt anyway")
 
     assy_name = os.path.basename(assembly_path)
     status(f"Opening assembly: {assy_name}")
@@ -1372,48 +1441,146 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             "images_dir": img_dir,
             "total_components": total,
             "captured_count": captured_count,
+            "html_path": None,
+            "html_mode": None,
+            "sidecar_path": None,
+            "html_projected_mb": None,
+            "warnings": [],
             "timing": {
                 "capture_seconds": round(capture_elapsed, 2),
                 "excel_seconds": 0,
+                "glb_seconds": 0,
+                "html_seconds": 0,
                 "per_component_avg": round(capture_elapsed / total, 2) if total > 0 else 0,
             },
         }
 
     # Generate Excel BOM
-    status("Generating Excel BOM...")
-    excel_start = time.time()
+    excel_elapsed = 0.0
+    if output_excel:
+        status("Generating Excel BOM...")
+        excel_start = time.time()
 
-    if csv_columns:
-        # CSV mode — flat sheet with CSV data
-        generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns=csv_columns)
-    elif bom_mode == "linked":
-        flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
-        _generate_linked_excel_bom(flat_parts, hierarchical_rows, img_dir, excel_path)
-    elif bom_mode == "nested":
-        generate_excel_bom(hierarchical_rows, img_dir, excel_path, hierarchical=True)
+        if csv_columns:
+            # CSV mode — flat sheet with CSV data
+            generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns=csv_columns)
+        elif bom_mode == "linked":
+            flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
+            _generate_linked_excel_bom(flat_parts, hierarchical_rows, img_dir, excel_path)
+        elif bom_mode == "nested":
+            generate_excel_bom(hierarchical_rows, img_dir, excel_path, hierarchical=True)
+        else:
+            # Flat mode — build flat parts from hierarchical data for Where Used
+            flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
+            generate_excel_bom(flat_parts, img_dir, excel_path)
+
+        excel_elapsed = time.time() - excel_start
+        status(f"Excel BOM saved to: {excel_path}")
     else:
-        # Flat mode — build flat parts from hierarchical data for Where Used
-        flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
-        generate_excel_bom(flat_parts, img_dir, excel_path)
+        excel_path = None
 
-    excel_elapsed = time.time() - excel_start
-    status(f"Done! BOM saved to: {excel_path}")
+    # Interactive 3D BOM (BomDom). Runs after Excel so a 3D failure can never
+    # cost the user their workbook; every failure here degrades to a warning.
+    warnings = []
+    html_result = {"html_path": None, "html_mode": None, "sidecar_path": None,
+                   "html_projected_mb": None}
+    glb_elapsed = html_elapsed = 0.0
+    if output_html and hierarchical_rows:
+        status("Exporting 3D model (single step — may take a few minutes)...")
+        glb_start = time.time()
+        raw_glb = os.path.join(output_dir, f"{root_name}_{timestamp}_raw.glb")
+        glb_ok, glb_err = export_assembly_glb(sw_app, assy_doc, raw_glb)
+        glb_elapsed = time.time() - glb_start
+
+        if not glb_ok:
+            sw_year = get_solidworks_year(sw_app)
+            hint = (f" 3D export needs SolidWorks 2024 or newer (detected {sw_year})."
+                    if sw_year is not None and sw_year < 2024 else "")
+            msg = f"3D export skipped: {glb_err}.{hint}"
+            if output_excel:
+                msg += " The Excel BOM was still generated."
+            warnings.append(msg)
+            status(msg)
+        else:
+            status(f"3D model exported ({os.path.getsize(raw_glb) / 1e6:.1f} MB)")
+            try:
+                active_config = ""
+                try:
+                    active_config = assy_doc.ConfigurationManager.ActiveConfiguration.Name
+                except Exception:
+                    pass
+                try:
+                    from importlib.metadata import version as _pkg_version
+                    app_version = _pkg_version("picturebom")
+                except Exception:
+                    app_version = ""
+
+                from . import bomdom  # lazy: keeps module import light
+
+                html_start = time.time()
+                res = bomdom.export_bomdom_html(
+                    raw_glb, output_dir, root_name, timestamp,
+                    hierarchical_rows=hierarchical_rows,
+                    flat_parts=_build_flat_from_hierarchical(hierarchical_rows, root_name),
+                    bom_names=[c["name"] for c in components.values()],
+                    bom_mode=bom_mode,
+                    images_dir=img_dir,
+                    assembly_file=assy_name,
+                    active_config=active_config,
+                    app_version=app_version,
+                    generated=datetime.now().isoformat(timespec="seconds"),
+                    on_status=on_status,
+                    size_limit_mb=html_size_limit_mb,
+                    viewer_exports=viewer_exports,
+                )
+                html_elapsed = time.time() - html_start
+                warnings.extend(res.pop("warnings", []))
+                res.pop("reconciliation", None)
+                res.pop("stats", None)
+                html_result.update(res)
+                status(f"Interactive 3D BOM saved to: {html_result['html_path']}")
+                if not keep_raw_glb:
+                    try:
+                        os.remove(raw_glb)
+                    except OSError:
+                        pass
+            except Exception as e:
+                log.exception("BomDom HTML build failed")
+                msg = f"3D interactive BOM failed: {e}."
+                if output_excel:
+                    msg += " The Excel BOM was still generated."
+                msg += f" The raw 3D export was kept for diagnosis: {raw_glb}"
+                warnings.append(msg)
+                status(msg)
 
     if completion_popup:
-        show_completion_popup(
-            "Your visual BOM is ready.\n\n"
-            "Switch to the pictureBOM tab in your browser to see it, "
-            "or find the Excel file in your output folder."
-        )
+        outputs = []
+        if excel_path:
+            outputs.append("the Excel file")
+        if html_result["html_path"]:
+            outputs.append("the interactive 3D BOM (.html)")
+        popup_msg = ("Your visual BOM is ready.\n\n"
+                     "Switch to the pictureBOM tab in your browser to see it, "
+                     f"or find {' and '.join(outputs) or 'the output'} in your output folder.")
+        if output_html and not html_result["html_path"]:
+            popup_msg += "\n\nNote: the 3D export did not complete — see the log."
+        show_completion_popup(popup_msg)
 
     return {
         "excel_path": excel_path,
         "images_dir": img_dir,
         "total_components": total,
         "captured_count": captured_count,
+        "html_path": html_result["html_path"],
+        "html_mode": html_result["html_mode"],
+        "sidecar_path": html_result["sidecar_path"],
+        "html_projected_mb": html_result["html_projected_mb"],
+        "warnings": warnings,
         "timing": {
             "capture_seconds": round(capture_elapsed, 2),
             "excel_seconds": round(excel_elapsed, 2),
+            "glb_seconds": round(glb_elapsed, 2),
+            "html_seconds": round(html_elapsed, 2),
             "per_component_avg": round(capture_elapsed / total, 2) if total > 0 else 0,
         },
     }

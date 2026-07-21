@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BomDom</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232b9187' stroke-width='1.9' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M8 4.5 13.5 7.5V13.5L8 16.5 2.5 13.5V7.5Z'/%3E%3Cpath d='M2.5 7.5 8 10.5 13.5 7.5M8 10.5V16.5'/%3E%3Cpath d='M16.5 8.5H21.5M16.5 12.5H21.5M16.5 16.5H21.5'/%3E%3C/svg%3E">
+<script>
+(function () {
+    var t = null;
+    try { t = localStorage.getItem("picturebom-theme"); } catch (e) {}
+    if (t !== "light" && t !== "dark") {
+        t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
+<style>%%VIEWER_CSS%%</style>
+</head>
+<body>
+
+<!-- Payload slots. Python (picturebom.bomdom.build_html) fills the three
+     sentinels below; the single-quoted id attributes are a contract with
+     scripts/smoke_bomdom.py. Removed from the DOM after decode. -->
+<script type='text/plain' id='bomdom-mode'>__BOMDOM_MODE__</script>
+<!-- BomDom options (hand-editable): set "allow_exports" to false to hide the
+     Export menu in this file, or back to true to show it again. A missing or
+     unparseable value falls back to true. -->
+<script type='text/plain' id='bomdom-config'>__BOMDOM_CONFIG__</script>
+<script type='text/plain' id='bomdom-meta'>__BOMDOM_PAYLOAD_JSON__</script>
+<script type='text/plain' id='bomdom-glb'>__BOMDOM_GLB_GZ_B64__</script>
+
+<div id="app">
+    <header class="appbar">
+        <div class="appbar-left">
+            <svg class="mark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                <path d="M8 4.5 13.5 7.5V13.5L8 16.5 2.5 13.5V7.5Z"/>
+                <path d="M2.5 7.5 8 10.5 13.5 7.5M8 10.5V16.5"/>
+                <path d="M16.5 8.5H21.5M16.5 12.5H21.5M16.5 16.5H21.5"/>
+            </svg>
+            <h1 class="wordmark"><span class="wm-a">Bom</span><span class="wm-b">Dom</span></h1>
+            <span id="asmName" class="asm-name mono"></span>
+            <span id="genChip" class="gen-chip"></span>
+        </div>
+        <div class="appbar-center">
+            <input id="searchInput" class="input search-input" type="search" placeholder="Filter parts, vendors, descriptions&hellip;" autocomplete="off" spellcheck="false">
+            <span id="searchCount" class="search-count"></span>
+        </div>
+        <div class="appbar-right">
+            <div class="toolbar">
+                <div class="menu-anchor">
+                    <button type="button" id="btnExplode" class="tb-btn" title="Explode view setup">Explode &#9662;</button>
+                    <div id="explodeMenu" class="dropdown explode-pop hidden"></div>
+                </div>
+                <input id="explodeSlider" class="explode-slider" type="range" min="0" max="1" step="0.01" value="0" title="Explode amount">
+                <button type="button" id="btnMove" class="tb-btn" title="Move mode — drag parts (M)">Move</button>
+                <button type="button" id="btnReset" class="tb-btn" title="Reset appearance, positions and explode">Reset</button>
+                <div class="menu-anchor">
+                    <button type="button" id="btnExport" class="tb-btn tb-primary" title="Export BOM">Export &#9662;</button>
+                    <div id="exportMenu" class="dropdown hidden"></div>
+                </div>
+                <button type="button" id="btnHelp" class="tb-btn tb-icon" title="Mouse and keyboard help (?)">?</button>
+            </div>
+            <button type="button" id="themeToggle" class="icon-btn" title="Switch between light and dark theme" aria-label="Switch theme">
+                <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4"/>
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+                </svg>
+                <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <div id="warnBanner" class="warn-banner hidden">
+        <span id="warnText"></span>
+        <button type="button" id="warnDetailBtn" class="linklike">details</button>
+        <button type="button" id="warnClose" class="banner-close" aria-label="Dismiss">&#10005;</button>
+    </div>
+    <div id="warnDetail" class="warn-detail hidden"></div>
+
+    <main id="main">
+        <section id="viewport">
+            <canvas id="gl" tabindex="0"></canvas>
+            <div id="marquee" class="marquee hidden"></div>
+            <div id="scopeChip" class="scope-chip hidden">
+                <span id="scopeLabel"></span>
+                <button type="button" id="scopeClose" title="Back to full assembly">&#10005; back</button>
+            </div>
+            <div id="viewportCard" class="viewport-card hidden"></div>
+            <div id="dropZone" class="drop-zone hidden">
+                <div class="drop-inner">
+                    <div class="drop-title">3D data is in a separate file</div>
+                    <div class="drop-msg">Drop <span id="dropFileName" class="mono"></span> here</div>
+                    <button type="button" id="btnBrowseGlb" class="btn btn-secondary">Browse&hellip;</button>
+                    <input type="file" id="glbFileInput" accept=".glb" class="visually-hidden">
+                </div>
+            </div>
+        </section>
+        <div id="splitter" title="Drag to resize panel"></div>
+        <aside id="panel">
+            <div class="panel-tabs seg">
+                <button type="button" class="seg-btn is-active" id="tabParts" data-tab="parts">Parts</button>
+                <button type="button" class="seg-btn" id="tabStructure" data-tab="structure">Structure</button>
+            </div>
+            <div id="partsList" class="panel-body" data-tab-body="parts"></div>
+            <div id="structureTree" class="panel-body hidden" data-tab-body="structure"></div>
+        </aside>
+    </main>
+
+    <footer id="statusbar">
+        <span id="statusStats" class="status-stats"></span>
+        <span class="status-spacer"></span>
+        <button type="button" id="btnDiag" class="diag-btn" title="Diagnostics">&#9432;</button>
+    </footer>
+    <div id="diagLine" class="diag-line mono hidden"></div>
+</div>
+
+<div id="ctxMenu" class="dropdown ctx-menu hidden"></div>
+<div id="toast" class="toast hidden"></div>
+
+<div id="helpOverlay" class="overlay hidden">
+    <div class="overlay-card">
+        <div class="overlay-head">
+            <span class="overlay-title">Mouse &amp; keyboard</span>
+            <button type="button" id="helpClose" class="banner-close" aria-label="Close">&#10005;</button>
+        </div>
+        <div class="help-grid">
+            <span class="help-k">Left drag</span><span>Orbit</span>
+            <span class="help-k">Right / middle drag</span><span>Pan</span>
+            <span class="help-k">Wheel</span><span>Zoom</span>
+            <span class="help-k">Click</span><span>Select (Ctrl adds)</span>
+            <span class="help-k">Ctrl + drag</span><span>Box select (adds to selection)</span>
+            <span class="help-k">Double-click</span><span>Frame part</span>
+            <span class="help-k">Right-click</span><span>Context menu (acts on selection)</span>
+            <span class="help-k">Shift + drag part</span><span>Move part / selection</span>
+            <span class="help-k">M</span><span>Move mode on/off</span>
+            <span class="help-k">H</span><span>Hide hovered / selected</span>
+            <span class="help-k">I</span><span>Isolate hovered / selected</span>
+            <span class="help-k">F</span><span>Frame selection (or all)</span>
+            <span class="help-k">Esc</span><span>Clear selection / close</span>
+            <span class="help-k">?</span><span>This help</span>
+        </div>
+    </div>
+</div>
+
+<div id="printSheet"></div>
+
+<script>%%VIEWER_JS%%</script>
+%%LICENSES%%
+</body>
+</html>

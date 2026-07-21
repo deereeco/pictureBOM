@@ -19,6 +19,36 @@ The output Excel file is named after the assembly with a timestamp (e.g. `MainFr
 
 It can also **compare two BOMs** to show which parts you still need to order.
 
+### 3D interactive BOM (BomDom)
+
+Check **3D interactive BOM (.html)** under *Outputs* and the same run also produces a
+**single HTML file** containing an interactive 3D view of your assembly with a synced
+parts list. Send that one file to a teammate — they double-click it and can:
+
+- Rotate, pan and zoom the assembly; hover or click a part to highlight its BOM row
+  (and vice versa)
+- Hide, isolate, or make transparent any part or subassembly — for one instance or
+  **all instances at once**
+- Drag parts aside and snap them back; explode the whole assembly with a slider
+- Export their own parts list straight from the viewer (Excel with thumbnails, CSV,
+  or a printable order sheet) — scoped to what they have selected or visible.
+  Don't want recipients re-exporting? Uncheck *Allow exporting parts lists from
+  the 3D viewer* before running — and you can change your mind later by opening
+  the HTML in a text editor and flipping the `allow_exports` value near the top
+
+The file works completely offline (nothing is downloaded or uploaded), in any modern
+browser. Requirements and notes:
+
+- **Exporting** the 3D BOM needs **SolidWorks 2024 or newer** (the Extended Reality
+  .glb exporter). Viewing needs only a browser — any machine, no SolidWorks.
+- Only components **visible** in the model at export time get 3D geometry; hidden
+  parts still appear in the list, badged "not in 3D view".
+- Very large assemblies (over ~25 MB projected) are split into an `.html` plus a
+  `.glb` data file — keep the two together; the page asks for the `.glb` when opened.
+- To share just part of a machine, run pictureBOM on the subassembly's `.sldasm`.
+- Emailed HTML files carry Windows' mark-of-the-web; if SmartScreen interposes on
+  first open, choose "Keep" / "Run anyway" — the file is inert HTML + JavaScript.
+
 ## Requirements
 
 - **Windows** (SolidWorks is Windows-only)
@@ -114,8 +144,14 @@ pictureBOM/
     app.py        -- Flask web GUI (entry point: picturebom-gui)
     cli.py        -- Command-line interface (entry point: picturebom)
     core.py       -- Core library (SolidWorks COM, image capture, Excel generation)
-    templates/    -- HTML template
+    bomdom.py     -- 3D interactive BOM: GLB post-processing + HTML assembly
+    templates/    -- HTML template (Flask GUI)
     static/       -- JavaScript, CSS
+    assets/bomdom/viewer_template.html -- committed viewer build artifact
+  web/            -- BomDom viewer source (Node needed only to rebuild the template:
+                     cd web && npm install && npm run build)
+  scripts/        -- smoke tests (smoke_excel.py, smoke_bomdom.py), viewer build,
+                     preview harness (preview_bomdom.py, no SolidWorks needed)
   install.ps1     -- One-line installer for end users
 ```
 

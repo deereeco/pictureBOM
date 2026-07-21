@@ -182,6 +182,9 @@ def run_job():
                 on_status=on_status,
                 overwrite=True,
                 completion_popup=True,
+                output_excel=bool(params.get("output_excel", True)),
+                output_html=bool(params.get("output_html", False)),
+                viewer_exports=bool(params.get("viewer_exports", True)),
             )
             # Persist timing history for future estimates (skip if no capture data)
             timing = result.get("timing", {})
