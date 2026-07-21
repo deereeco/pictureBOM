@@ -2,13 +2,20 @@
 
 Automatically capture isometric images of every part in a SolidWorks assembly and generate an Excel Bill of Materials with embedded thumbnails — plus an interactive **3D BOM in a single HTML file** anyone can open in a browser.
 
-<p align="center">
-  <img src="docs/media/bomdom-demo.gif" alt="BomDom: interactive 3D BOM — hover-synced parts list, selection, guided explode" width="800">
-</p>
+**The Excel picture BOM** — a thumbnail of every part embedded in its row, with quantities, vendors, tracking dropdowns and product links:
 
 <p align="center">
-  <img src="docs/media/bomdom-exploded.jpg" alt="Plane-constrained radial explode with the parts list alongside" width="800">
+  <img src="docs/media/picturebom-excel.png" alt="Excel picture BOM: in-cell part thumbnails with part numbers, descriptions, quantities and where-used" width="900">
 </p>
+
+**The 3D interactive BOM (BomDom)** — one HTML file with a live 3D view synced to the parts list; here mid-explode with all 16 cage rods selected:
+
+<p align="center">
+  <img src="docs/media/bomdom-exploded.jpg" alt="BomDom viewer: plane-constrained radial explode with the parts list alongside" width="900">
+</p>
+
+<!-- TODO: demo video of the BomDom viewer (recorded walkthrough) -->
+
 
 **Try the real thing** (generated from the example cage assembly, no install needed):
 [**⬇ Cage2-sjm_BomDom.html**](docs/samples/Cage2-sjm_BomDom.html) — download the raw file and double-click it (works fully offline) · [**⬇ Cage2-sjm_pictureBOM.xlsx**](docs/samples/Cage2-sjm_pictureBOM.xlsx) — the matching Excel picture BOM (Microsoft 365 Excel shows the in-cell pictures).
