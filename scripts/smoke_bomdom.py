@@ -372,6 +372,24 @@ def test_export_orchestrator(big_glb_path, out_dir):
           payload2["geometry"]["sidecar_filename"] == Path(res2["sidecar_path"]).name)
 
 
+def test_color_sampling():
+    print("\ncapture-image color sampling:")
+    if not EXAMPLE_IMAGES.is_dir() or not any(EXAMPLE_IMAGES.glob("*.jpg")):
+        print(f"  [skip] example capture images not present: {EXAMPLE_IMAGES}")
+        return
+    colors = bomdom.sample_part_colors(str(EXAMPLE_IMAGES),
+                                       ["ER3-Solidworks", "CP33_M-Solidworks", "NOPE"])
+    check("colors sampled for existing images", set(colors) == {"ER3-Solidworks",
+                                                                "CP33_M-Solidworks"},
+          f"got {sorted(colors)}")
+    if "ER3-Solidworks" in colors:
+        check("steel rod samples light", colors["ER3-Solidworks"][0] > 0.6,
+              f"got {colors['ER3-Solidworks'][:3]}")
+    if "CP33_M-Solidworks" in colors:
+        check("anodized plate samples dark", colors["CP33_M-Solidworks"][0] < 0.25,
+              f"got {colors['CP33_M-Solidworks'][:3]}")
+
+
 def test_thumbnails():
     print("\nthumbnails (PowerShell System.Drawing):")
     if not EXAMPLE_IMAGES.is_dir() or not any(EXAMPLE_IMAGES.glob("*.jpg")):
@@ -469,6 +487,7 @@ def main():
     test_real_glb(COLOR_GLB, "asm color test", {"config": None})
 
     test_export_orchestrator(BIG_GLB, out_dir)
+    test_color_sampling()
     test_thumbnails()
 
     print(f"\n{'ALL CHECKS PASSED' if not failures else f'{len(failures)} FAILURE(S): {failures}'}")

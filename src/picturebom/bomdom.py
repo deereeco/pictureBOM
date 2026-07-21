@@ -623,6 +623,115 @@ def _emit_glb(gltf_dict, bin_chunk):
 # cannot be recovered this way.
 # ---------------------------------------------------------------------------
 
+_PS_SAMPLE = r"""
+Add-Type -AssemblyName System.Drawing
+$jobs = Get-Content -Raw -Path $args[0] | ConvertFrom-Json
+$result = @{}
+foreach ($j in $jobs) {
+  try {
+    $bmp = New-Object System.Drawing.Bitmap($j.src)
+    $w = $bmp.Width; $h = $bmp.Height
+    $sx = [Math]::Max(1, [int]($w / 64)); $sy = [Math]::Max(1, [int]($h / 48))
+    $inner = New-Object System.Collections.ArrayList
+    $bg = New-Object System.Collections.ArrayList
+    for ($y = 2; $y -lt $h - 2; $y += $sy) {
+      $l = $bmp.GetPixel(2, $y); $r = $bmp.GetPixel($w - 3, $y)
+      [void]$bg.Add(@($y, [int]$l.R, [int]$l.G, [int]$l.B, [int]$r.R, [int]$r.G, [int]$r.B))
+      for ($x = 2; $x -lt $w - 2; $x += $sx) {
+        $c = $bmp.GetPixel($x, $y)
+        [void]$inner.Add(@($y, [int]$c.R, [int]$c.G, [int]$c.B))
+      }
+    }
+    $result[$j.name] = @{ inner = $inner; bg = $bg }
+    $bmp.Dispose()
+  } catch { Write-Error "sample failed: $($j.src): $_" }
+}
+$result | ConvertTo-Json -Depth 6 -Compress | Set-Content -Path $args[1] -Encoding utf8
+"""
+
+
+def _dominant_color(inner, bg_rows):
+    """Dominant non-background color from row-sampled pixels.
+
+    The capture viewport background is a vertical gradient, so each sampled
+    pixel is compared against the edge colors of its own row — parts survive
+    even when their gray is close to some other part of the gradient.
+    """
+    bg_by_y = {row[0]: ((row[1], row[2], row[3]), (row[4], row[5], row[6]))
+               for row in bg_rows}
+    ys = sorted(bg_by_y)
+
+    def bg_for(y):
+        nearest = min(ys, key=lambda v: abs(v - y))
+        return bg_by_y[nearest]
+
+    def dist2(a, b):
+        return sum((a[i] - b[i]) ** 2 for i in range(3))
+
+    part_px = []
+    for y, r, g, b in inner:
+        px = (r, g, b)
+        if any(dist2(px, edge) < 40 ** 2 for edge in bg_for(y)):
+            continue
+        part_px.append(px)
+    if len(part_px) < 40:
+        return None
+
+    buckets = {}
+    for px in part_px:
+        buckets.setdefault((px[0] // 24, px[1] // 24, px[2] // 24), []).append(px)
+    dominant = max(buckets.values(), key=len)
+    n = len(dominant)
+    return (sum(p[0] for p in dominant) / n / 255.0,
+            sum(p[1] for p in dominant) / n / 255.0,
+            sum(p[2] for p in dominant) / n / 255.0,
+            1.0, 1.0, 0.3, 0.3, 0.0, 0.0)
+
+
+def sample_part_colors(images_dir, part_names, timeout=120):
+    """{part name: MaterialPropertyValues-shaped tuple} from capture images.
+
+    Mechanism-agnostic color source: the JPGs show each part exactly as
+    SolidWorks renders it, whatever appearance system produced the look.
+    """
+    jobs = []
+    for name in part_names:
+        src = _find_part_image(images_dir, name)
+        if src:
+            jobs.append({"name": name, "src": src})
+    if not jobs:
+        return {}
+
+    with tempfile.TemporaryDirectory(prefix="picturebom_colors_") as tmp:
+        jobs_path = os.path.join(tmp, "jobs.json")
+        out_path = os.path.join(tmp, "out.json")
+        script_path = os.path.join(tmp, "sample.ps1")
+        with open(jobs_path, "w", encoding="utf-8") as f:
+            json.dump(jobs, f)
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(_PS_SAMPLE)
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", script_path, jobs_path, out_path],
+                capture_output=True, timeout=timeout, check=False)
+            with open(out_path, encoding="utf-8-sig") as f:
+                sampled = json.load(f)
+        except (subprocess.SubprocessError, OSError, ValueError) as e:
+            log.warning("Part color sampling failed: %s", e)
+            return {}
+
+    colors = {}
+    for name, data in sampled.items():
+        try:
+            color = _dominant_color(data["inner"], data["bg"])
+        except Exception:
+            continue
+        if color:
+            colors[name] = color
+    return colors
+
+
 def _appearance_dropped(gltf):
     """True when every primitive shares one identical material — the
     exporter's no-appearances signature. A real assembly with legitimate
@@ -633,19 +742,33 @@ def _appearance_dropped(gltf):
     return len({_content_key(m) for m in mats}) == 1
 
 
-def inject_component_colors(glb_bytes, parts, component_colors):
+def inject_component_colors(glb_bytes, parts, component_colors, sample_fallback=None):
     """Recolor a single-material GLB per part from COM appearance tuples.
 
     parts: repack result parts list (id == mesh index in the repacked GLB).
-    component_colors: {BOM part name: 9-double MaterialPropertyValues}.
+    component_colors: {BOM part name: 9-double MaterialPropertyValues} —
+    exact assembly-context overrides read over COM.
+    sample_fallback: optional callable(part_names) -> same-shaped dict, used
+    for parts without an override (capture-image sampling). Only invoked when
+    the GLB actually shows the dropped-appearances signature.
     Returns (new_glb_bytes, recolored_part_count); (glb_bytes, 0) when the
     GLB has real materials or no colors are available.
     """
-    if not component_colors:
-        return glb_bytes, 0
     glb = parse_glb(glb_bytes)
     g = glb.gltf
     if not _appearance_dropped(g):
+        return glb_bytes, 0
+
+    component_colors = dict(component_colors or {})
+    if sample_fallback is not None:
+        missing = [p.get("bom_name") or p.get("name") or "" for p in parts
+                   if not ((p.get("bom_name") and p["bom_name"] in component_colors)
+                           or (p.get("name") and p["name"] in component_colors))]
+        missing = [n for n in missing if n]
+        if missing:
+            for name, vals in (sample_fallback(missing) or {}).items():
+                component_colors.setdefault(name, vals)
+    if not component_colors:
         return glb_bytes, 0
 
     def material_for(vals):
@@ -988,8 +1111,10 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
     # exporter dropped them (matching must run first — it links parts to the
     # BOM names the color map is keyed by).
     if repack["parts"]:
+        sampler = ((lambda names: sample_part_colors(images_dir, names))
+                   if images_dir else None)
         glb_bytes, recolored = inject_component_colors(
-            glb_bytes, repack["parts"], component_colors or {})
+            glb_bytes, repack["parts"], component_colors or {}, sampler)
         if recolored:
             msg = (f"SolidWorks exported no appearances (all parts default gray); "
                    f"recovered per-part colors from the model for {recolored} part(s). "

@@ -210,32 +210,31 @@ def get_custom_property(cpm, prop_name, debug=False):
 
 
 def get_component_color(comp, comp_doc):
-    """Best-effort appearance color for a component, read over COM.
+    """Assembly-context color override for a component, read over COM, or None.
 
     Returns the 9-double MaterialPropertyValues tuple
-    (R, G, B, ambient, diffuse, specular, shininess, transparency, emission)
-    or None. Checked in appearance-resolution order: the component's
-    assembly-context override first, then the part document's own color.
-    This is the fallback color source for the 3D export — the SolidWorks
-    GLB exporter sometimes drops appearances entirely (all parts come out
-    default gray) while the same session displays and captures them fine.
+    (R, G, B, ambient, diffuse, specular, shininess, transparency, emission).
+    Deliberately reads ONLY the component-level override: it is exact when an
+    engineer colors an instance in the assembly. Part-document colors are NOT
+    consulted — modern appearances (how most parts get their look) don't show
+    up there, and the property returns the misleading default color instead.
+    Parts without an override are colored from their capture image in the
+    3D-export fallback (see bomdom.sample_part_colors).
     """
-    for source in (comp, comp_doc):
-        if source is None:
-            continue
-        try:
-            vals = source.MaterialPropertyValues
-        except Exception:
-            continue
-        if vals is None:
-            continue
-        try:
-            vals = tuple(float(v) for v in vals)
-        except (TypeError, ValueError):
-            continue
-        # SolidWorks reports "no color assigned" as an all -1 tuple sometimes
-        if len(vals) >= 3 and all(0.0 <= v <= 1.0 for v in vals[:3]):
-            return vals
+    if comp is None:
+        return None
+    try:
+        vals = comp.MaterialPropertyValues
+    except Exception:
+        return None
+    if vals is None:
+        return None
+    try:
+        vals = tuple(float(v) for v in vals)
+    except (TypeError, ValueError):
+        return None
+    if len(vals) >= 3 and all(0.0 <= v <= 1.0 for v in vals[:3]):
+        return vals
     return None
 
 
