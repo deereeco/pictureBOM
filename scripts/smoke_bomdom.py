@@ -374,8 +374,8 @@ def test_export_orchestrator(big_glb_path, out_dir):
 
 def test_thumbnails():
     print("\nthumbnails (PowerShell System.Drawing):")
-    if not EXAMPLE_IMAGES.is_dir():
-        print(f"  [skip] example images not present: {EXAMPLE_IMAGES}")
+    if not EXAMPLE_IMAGES.is_dir() or not any(EXAMPLE_IMAGES.glob("*.jpg")):
+        print(f"  [skip] example capture images not present: {EXAMPLE_IMAGES}")
         return
     thumbs = bomdom.make_thumbnails(str(EXAMPLE_IMAGES),
                                     ["CP33_M-Solidworks", "ER3-Solidworks", "MISSING-PART"])

@@ -24,9 +24,11 @@ from picturebom.core import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 IMAGES_DIR = REPO_ROOT / "Example 3d models" / "Cage Stack Assembly" / "BOM"
-# Newest generated workbook in the example folder (timestamps change on re-runs)
+# Newest generated workbook in the (machine-local) example folder, else the
+# committed showcase workbook — same content, always present in a clone.
 _workbooks = sorted(IMAGES_DIR.glob("Cage2-sjm_*.xlsx"))
-OLD_WORKBOOK = _workbooks[-1] if _workbooks else IMAGES_DIR / "Cage2-sjm_missing.xlsx"
+OLD_WORKBOOK = (_workbooks[-1] if _workbooks
+                else REPO_ROOT / "docs" / "samples" / "Cage2-sjm_pictureBOM.xlsx")
 
 # Mimics traverse_assembly_hierarchical() output for a small assembly:
 # one subassembly (x2) containing two parts, plus two top-level parts.

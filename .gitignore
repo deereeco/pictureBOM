@@ -10,3 +10,6 @@ build/
 **/~$*
 # Machine-local test fixture paths (never commit local paths)
 scripts/fixtures.local.json
+# Local test assets (CAD files and captures stay on dev machines; the
+# showcase artifacts live in docs/samples)
+Example 3d models/
