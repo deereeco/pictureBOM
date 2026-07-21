@@ -423,9 +423,13 @@ def test_color_injection():
     re = parse_glb(injected)
     validate_glb(re)
     check("recolored GLB validates", True)
+    def srgb_to_linear(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    expected = [round(srgb_to_linear(v), 5) for v in (0.1, 0.2, 0.8)]
     new_mat = re.gltf["materials"][-1]["pbrMetallicRoughness"]
-    check("COM color applied", new_mat["baseColorFactor"][:3] == [0.1, 0.2, 0.8],
-          f"got {new_mat['baseColorFactor']}")
+    check("COM color applied in linear space",
+          new_mat["baseColorFactor"][:3] == expected,
+          f"got {new_mat['baseColorFactor']} want {expected}")
     check("primitives remapped to the new material",
           all(p["material"] == len(re.gltf["materials"]) - 1
               for m in re.gltf["meshes"] for p in m["primitives"]))

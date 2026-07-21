@@ -771,8 +771,15 @@ def inject_component_colors(glb_bytes, parts, component_colors, sample_fallback=
     if not component_colors:
         return glb_bytes, 0
 
+    def srgb_to_linear(c):
+        # Sampled pixels and SolidWorks color values are sRGB (display) space;
+        # glTF baseColorFactor is linear. Writing sRGB numbers unconverted
+        # renders everything several stops too bright (washed out).
+        c = min(max(c, 0.0), 1.0)
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
     def material_for(vals):
-        r, gr, b = vals[0], vals[1], vals[2]
+        r, gr, b = (srgb_to_linear(v) for v in vals[:3])
         shininess = vals[6] if len(vals) > 6 else 0.3
         transparency = vals[7] if len(vals) > 7 else 0.0
         mat = {"pbrMetallicRoughness": {
