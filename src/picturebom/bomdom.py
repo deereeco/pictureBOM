@@ -615,6 +615,80 @@ def _emit_glb(gltf_dict, bin_chunk):
 
 
 # ---------------------------------------------------------------------------
+# Appearance fallback: the SolidWorks GLB exporter sometimes drops all
+# appearances (every part comes out one default gray) even while the same
+# session displays and JPG-captures them correctly. When the repacked GLB
+# shows that signature, recolor per part from appearance data read over COM
+# during traversal. Per-part color only — face-level detail and textures
+# cannot be recovered this way.
+# ---------------------------------------------------------------------------
+
+def _appearance_dropped(gltf):
+    """True when every primitive shares one identical material — the
+    exporter's no-appearances signature. A real assembly with legitimate
+    appearances always carries at least a handful of distinct materials."""
+    mats = gltf.get("materials", [])
+    if not mats:
+        return True
+    return len({_content_key(m) for m in mats}) == 1
+
+
+def inject_component_colors(glb_bytes, parts, component_colors):
+    """Recolor a single-material GLB per part from COM appearance tuples.
+
+    parts: repack result parts list (id == mesh index in the repacked GLB).
+    component_colors: {BOM part name: 9-double MaterialPropertyValues}.
+    Returns (new_glb_bytes, recolored_part_count); (glb_bytes, 0) when the
+    GLB has real materials or no colors are available.
+    """
+    if not component_colors:
+        return glb_bytes, 0
+    glb = parse_glb(glb_bytes)
+    g = glb.gltf
+    if not _appearance_dropped(g):
+        return glb_bytes, 0
+
+    def material_for(vals):
+        r, gr, b = vals[0], vals[1], vals[2]
+        shininess = vals[6] if len(vals) > 6 else 0.3
+        transparency = vals[7] if len(vals) > 7 else 0.0
+        mat = {"pbrMetallicRoughness": {
+            "baseColorFactor": [round(r, 5), round(gr, 5), round(b, 5),
+                                round(1.0 - min(max(transparency, 0.0), 0.95), 5)],
+            "metallicFactor": 0,
+            "roughnessFactor": round(min(max(1.0 - 0.8 * shininess, 0.05), 1.0), 5),
+        }}
+        if transparency > 0.01:
+            mat["alphaMode"] = "BLEND"
+        return mat
+
+    by_part_id = {}
+    for part in parts:
+        vals = (component_colors.get(part.get("bom_name") or "")
+                or component_colors.get(part.get("name") or ""))
+        if vals:
+            by_part_id[part["id"]] = vals
+
+    if not by_part_id:
+        return glb_bytes, 0
+
+    mat_cache = {}
+    recolored = set()
+    for part_id, vals in by_part_id.items():
+        if part_id >= len(g.get("meshes", [])):
+            continue
+        key = tuple(round(v, 5) for v in vals)
+        if key not in mat_cache:
+            g.setdefault("materials", []).append(material_for(vals))
+            mat_cache[key] = len(g["materials"]) - 1
+        for prim in g["meshes"][part_id].get("primitives", []):
+            prim["material"] = mat_cache[key]
+        recolored.add(part_id)
+
+    return _emit_glb(g, glb.bin), len(recolored)
+
+
+# ---------------------------------------------------------------------------
 # BOM matching (linking only — a wrong match highlights the wrong row,
 # it can never corrupt geometry)
 # ---------------------------------------------------------------------------
@@ -864,7 +938,8 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
                        hierarchical_rows, flat_parts, bom_names, bom_mode,
                        images_dir, assembly_file, active_config="",
                        app_version="", generated="", on_status=None,
-                       size_limit_mb=25, template_text=None, viewer_exports=True):
+                       size_limit_mb=25, template_text=None, viewer_exports=True,
+                       component_colors=None):
     """Post-process a raw SolidWorks GLB into a BomDom HTML (plus sidecar if huge).
 
     Never raises past this function for repack-stage problems: falls back to
@@ -908,6 +983,19 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
         repack["parts"], repack["empty_node_names"], list(bom_names),
         repack["group_node_names"])
     warnings.extend(match_warnings)
+
+    # Appearance fallback: recolor per part from COM-read appearances when the
+    # exporter dropped them (matching must run first — it links parts to the
+    # BOM names the color map is keyed by).
+    if repack["parts"]:
+        glb_bytes, recolored = inject_component_colors(
+            glb_bytes, repack["parts"], component_colors or {})
+        if recolored:
+            msg = (f"SolidWorks exported no appearances (all parts default gray); "
+                   f"recovered per-part colors from the model for {recolored} part(s). "
+                   f"Face-level colors and textures are not available in this mode.")
+            warnings.append(msg)
+            status(msg)
 
     thumbs = {}
     if images_dir and repack["parts"]:

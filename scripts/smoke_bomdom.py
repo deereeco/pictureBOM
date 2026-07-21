@@ -387,6 +387,40 @@ def test_thumbnails():
         check("thumbnail under 60 KB", len(raw) < 60_000, f"got {len(raw)}")
 
 
+def test_color_injection():
+    print("\nappearance fallback (COM color injection):")
+    glb = parse_glb(_make_uncompressed_glb())
+    scene_info = index_scene(glb, select_scene(glb.gltf, "Fixture"))
+    out_bytes, result = repack_glb(glb, scene_info, "0.0-test")
+    # The fixture's two identical-content materials dedup to one — exactly the
+    # exporter's dropped-appearances signature.
+    check("fixture shows the single-material signature",
+          bomdom._appearance_dropped(parse_glb(out_bytes).gltf))
+
+    colors = {"TRI": (0.1, 0.2, 0.8, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0)}
+    for part in result["parts"]:
+        part.setdefault("bom_name", None)
+    injected, n = bomdom.inject_component_colors(out_bytes, result["parts"], colors)
+    check("one part recolored", n == 1, f"got {n}")
+    re = parse_glb(injected)
+    validate_glb(re)
+    check("recolored GLB validates", True)
+    new_mat = re.gltf["materials"][-1]["pbrMetallicRoughness"]
+    check("COM color applied", new_mat["baseColorFactor"][:3] == [0.1, 0.2, 0.8],
+          f"got {new_mat['baseColorFactor']}")
+    check("primitives remapped to the new material",
+          all(p["material"] == len(re.gltf["materials"]) - 1
+              for m in re.gltf["meshes"] for p in m["primitives"]))
+    check("signature cleared after injection",
+          not bomdom._appearance_dropped(re.gltf))
+
+    again, n2 = bomdom.inject_component_colors(injected, result["parts"], colors)
+    check("injection is a no-op on already-colored GLBs",
+          n2 == 0 and again == injected)
+    same, n3 = bomdom.inject_component_colors(out_bytes, result["parts"], {})
+    check("no colors -> untouched", n3 == 0 and same == out_bytes)
+
+
 def test_bad_inputs():
     print("\nbad inputs:")
     try:
@@ -423,6 +457,7 @@ def main():
     test_clean_node_name()
     test_matching()
     test_non_draco_and_mirrored()
+    test_color_injection()
     test_bad_inputs()
 
     # "kept" is 277, not the raw 278: the scene's camera root node ("current")

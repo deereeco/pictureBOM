@@ -209,6 +209,36 @@ def get_custom_property(cpm, prop_name, debug=False):
     return ""
 
 
+def get_component_color(comp, comp_doc):
+    """Best-effort appearance color for a component, read over COM.
+
+    Returns the 9-double MaterialPropertyValues tuple
+    (R, G, B, ambient, diffuse, specular, shininess, transparency, emission)
+    or None. Checked in appearance-resolution order: the component's
+    assembly-context override first, then the part document's own color.
+    This is the fallback color source for the 3D export — the SolidWorks
+    GLB exporter sometimes drops appearances entirely (all parts come out
+    default gray) while the same session displays and captures them fine.
+    """
+    for source in (comp, comp_doc):
+        if source is None:
+            continue
+        try:
+            vals = source.MaterialPropertyValues
+        except Exception:
+            continue
+        if vals is None:
+            continue
+        try:
+            vals = tuple(float(v) for v in vals)
+        except (TypeError, ValueError):
+            continue
+        # SolidWorks reports "no color assigned" as an all -1 tuple sometimes
+        if len(vals) >= 3 and all(0.0 <= v <= 1.0 for v in vals[:3]):
+            return vals
+    return None
+
+
 def get_all_property_names(comp_doc):
     """Get all custom property names from a component. Returns a list of strings."""
     try:
@@ -360,6 +390,7 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
 
         comp_doc = comp.GetModelDoc2
         props = get_part_properties(comp_doc, debug=debug)
+        color = get_component_color(comp, comp_doc)
 
         row = {
             "level": level,
@@ -384,6 +415,7 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
                 "description": props["description"],
                 "vendor": props["vendor"],
                 "vendor_part_no": props["vendor_part_no"],
+                "color": color,
             }
 
         # Recurse into sub-assembly children
@@ -1523,6 +1555,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     hierarchical_rows=hierarchical_rows,
                     flat_parts=_build_flat_from_hierarchical(hierarchical_rows, root_name),
                     bom_names=[c["name"] for c in components.values()],
+                    component_colors={c["name"]: c.get("color")
+                                      for c in components.values() if c.get("color")},
                     bom_mode=bom_mode,
                     images_dir=img_dir,
                     assembly_file=assy_name,
