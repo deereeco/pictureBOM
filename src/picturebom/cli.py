@@ -21,7 +21,11 @@ def main():
     )
     parser.add_argument(
         "assembly",
-        help="Path to the SolidWorks assembly file (.sldasm).",
+        nargs="?",
+        default=None,
+        help="Path to the SolidWorks assembly file (.sldasm). May be omitted "
+             "when --csv, --images and (for --html) --glb are all provided — "
+             "that combination runs without SolidWorks.",
     )
     parser.add_argument(
         "-o", "--output-dir",
@@ -55,6 +59,12 @@ def main():
         help="Path to a folder of existing part images. Skips SolidWorks image capture.",
     )
     parser.add_argument(
+        "--glb",
+        default=None,
+        help="Path to a .glb exported from the same assembly by an earlier "
+             "run. Skips the slow SolidWorks 3D export for --html.",
+    )
+    parser.add_argument(
         "--html",
         action="store_true",
         help="Also export an interactive 3D BOM as a single .html file "
@@ -66,9 +76,16 @@ def main():
         help="Skip the Excel BOM (only valid together with --html).",
     )
     parser.add_argument(
-        "--keep-glb",
+        "--discard-glb",
         action="store_true",
-        help="Keep the intermediate SolidWorks .glb export next to the outputs.",
+        help="Delete the raw SolidWorks .glb export after the HTML is built "
+             "(kept by default so --glb can reuse it on a later run).",
+    )
+    parser.add_argument(
+        "--sidecar",
+        action="store_true",
+        help="Always write the 3D data as a separate .glb next to the HTML "
+             "instead of embedding it (keep the two files together).",
     )
     parser.add_argument(
         "--no-viewer-exports",
@@ -81,6 +98,17 @@ def main():
 
     if args.no_excel and not args.html:
         parser.error("--no-excel requires --html (nothing would be produced)")
+    if not args.html:
+        for flag, present in [("--glb", args.glb is not None),
+                              ("--sidecar", args.sidecar),
+                              ("--discard-glb", args.discard_glb)]:
+            if present:
+                parser.error(f"{flag} requires --html "
+                             "(it only affects the 3D interactive BOM)")
+    if args.assembly is None and not (
+            args.csv and args.images and (args.glb or not args.html)):
+        parser.error("assembly is required unless --csv, --images and "
+                     "(for --html) --glb are all provided")
 
     # Set up logging for CLI output
     level = logging.DEBUG if args.debug else logging.INFO
@@ -121,12 +149,14 @@ def main():
             bom_mode=bom_mode,
             csv_path=args.csv,
             images_dir=args.images,
+            glb_path=args.glb,
             debug=args.debug,
             on_progress=on_progress,
             overwrite=overwrite,
             output_excel=not args.no_excel,
             output_html=args.html,
-            keep_raw_glb=args.keep_glb,
+            keep_raw_glb=not args.discard_glb,
+            html_sidecar=args.sidecar,
             viewer_exports=not args.no_viewer_exports,
         )
         if result["excel_path"]:

@@ -126,6 +126,11 @@ def browse():
             title="Select BOM Excel File",
             filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
         )
+    elif mode == "glb":
+        path = filedialog.askopenfilename(
+            title="Select 3D Model File",
+            filetypes=[("3D model (glTF binary)", "*.glb"), ("All files", "*.*")],
+        )
     else:
         path = filedialog.askopenfilename(
             title="Select SolidWorks Assembly",
@@ -170,13 +175,14 @@ def run_job():
                 _job["events"].put({"type": "status", "message": message})
 
             result = picturebom.run_pipeline(
-                assembly_path=params["assembly_path"],
+                assembly_path=params.get("assembly_path") or None,
                 output_dir=output_dir,
                 width=int(params.get("width", 1920)),
                 height=int(params.get("height", 1080)),
                 bom_mode=params.get("bom_mode", "flat"),
                 csv_path=params.get("csv_path") or None,
                 images_dir=params.get("images_dir") or None,
+                glb_path=params.get("glb_path") or None,
                 debug=False,
                 on_progress=on_progress,
                 on_status=on_status,
@@ -185,6 +191,8 @@ def run_job():
                 output_excel=bool(params.get("output_excel", True)),
                 output_html=bool(params.get("output_html", False)),
                 viewer_exports=bool(params.get("viewer_exports", True)),
+                keep_raw_glb=bool(params.get("keep_raw_glb", True)),
+                html_sidecar=bool(params.get("html_sidecar", False)),
             )
             # Persist timing history for future estimates (skip if no capture data)
             timing = result.get("timing", {})

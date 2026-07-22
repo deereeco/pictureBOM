@@ -732,6 +732,123 @@ def sample_part_colors(images_dir, part_names, timeout=120):
     return colors
 
 
+def _srgb_to_linear(c):
+    # Sampled pixels and SolidWorks color values are sRGB (display) space;
+    # glTF baseColorFactor is linear. Writing sRGB numbers unconverted
+    # renders everything several stops too bright (washed out).
+    c = min(max(c, 0.0), 1.0)
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _material_from_mpv(vals):
+    """glTF material from a 9-double MaterialPropertyValues tuple."""
+    r, gr, b = (_srgb_to_linear(v) for v in vals[:3])
+    shininess = vals[6] if len(vals) > 6 else 0.3
+    transparency = vals[7] if len(vals) > 7 else 0.0
+    mat = {"pbrMetallicRoughness": {
+        "baseColorFactor": [round(r, 5), round(gr, 5), round(b, 5),
+                            round(1.0 - min(max(transparency, 0.0), 0.95), 5)],
+        "metallicFactor": 0,
+        "roughnessFactor": round(min(max(1.0 - 0.8 * shininess, 0.05), 1.0), 5),
+    }}
+    if transparency > 0.01:
+        mat["alphaMode"] = "BLEND"
+    return mat
+
+
+def inject_surface_meshes(glb_path_or_bytes, meshes, colors=None):
+    """Attach recovered surface tessellations to empty component nodes.
+
+    SolidWorks' glTF exporter only writes solid bodies — surface-only parts
+    (unknitted imports, zero-thickness models) come out as empty nodes even
+    though SolidWorks renders them fine. Their display tessellation is
+    readable over COM, in part-local meters — the exact convention the
+    exporter uses for sibling solid meshes — so the triangles can be
+    grafted onto the already-placed empty nodes.
+
+    meshes: {BOM part name: (positions, normals)} — float32 triangle-soup
+    bytes (9 floats per triangle), equal lengths.
+    colors: optional {name: 9-double MaterialPropertyValues}.
+
+    Returns (new_glb_bytes, {name: nodes_injected}); the input bytes are
+    returned unchanged when nothing matches.
+    """
+    glb = parse_glb(glb_path_or_bytes)
+    g = glb.gltf
+    binbuf = bytearray(glb.bin)
+    nodes = g.get("nodes", [])
+
+    # Empty leaf nodes by cleaned name — same matching the empty-node
+    # classification in match_parts_to_bom uses.
+    by_name = {}
+    for i, n in enumerate(nodes):
+        if "mesh" in n or n.get("children") or "camera" in n:
+            continue
+        key = clean_node_name(n.get("name", "")).casefold()
+        by_name.setdefault(key, []).append(i)
+
+    def append_view(data):
+        while len(binbuf) % 4:
+            binbuf.append(0)
+        offset = len(binbuf)
+        binbuf.extend(data)
+        g.setdefault("bufferViews", []).append(
+            {"buffer": 0, "byteOffset": offset, "byteLength": len(data),
+             "target": 34962})  # ARRAY_BUFFER
+        return len(g["bufferViews"]) - 1
+
+    injected = {}
+    for name, (pos_bytes, nrm_bytes) in meshes.items():
+        node_ids = by_name.get(clean_node_name(name).casefold(), [])
+        count = len(pos_bytes) // 12
+        if not node_ids or count < 3 or len(nrm_bytes) != len(pos_bytes):
+            continue
+        pos = struct.unpack(f"<{count * 3}f", pos_bytes[:count * 12])
+        accessors = g.setdefault("accessors", [])
+        accessors.append({
+            "bufferView": append_view(pos_bytes), "componentType": 5126,
+            "count": count, "type": "VEC3",
+            "min": [min(pos[i::3]) for i in range(3)],
+            "max": [max(pos[i::3]) for i in range(3)],
+        })
+        pos_acc = len(accessors) - 1
+        accessors.append({
+            "bufferView": append_view(nrm_bytes), "componentType": 5126,
+            "count": count, "type": "VEC3",
+        })
+        nrm_acc = len(accessors) - 1
+
+        vals = (colors or {}).get(name)
+        mat = _material_from_mpv(vals) if vals else {
+            "pbrMetallicRoughness": {"baseColorFactor": [0.5, 0.5, 0.5, 1.0],
+                                     "metallicFactor": 0,
+                                     "roughnessFactor": 0.6}}
+        mat["doubleSided"] = True  # open shells render from both sides
+        g.setdefault("materials", []).append(mat)
+        g.setdefault("meshes", []).append({
+            "name": f"{name} (recovered)",
+            "primitives": [{"attributes": {"POSITION": pos_acc,
+                                           "NORMAL": nrm_acc},
+                            "material": len(g["materials"]) - 1,
+                            "mode": 4}],  # TRIANGLES
+        })
+        mesh_idx = len(g["meshes"]) - 1
+        for i in node_ids:
+            nodes[i]["mesh"] = mesh_idx
+        injected[name] = len(node_ids)
+
+    if not injected:
+        raw = (glb_path_or_bytes
+               if isinstance(glb_path_or_bytes, (bytes, bytearray))
+               else _emit_glb(g, bytes(binbuf)))
+        return raw, {}
+    if g.get("buffers"):
+        g["buffers"][0]["byteLength"] = len(binbuf)
+    else:
+        g["buffers"] = [{"byteLength": len(binbuf)}]
+    return _emit_glb(g, bytes(binbuf)), injected
+
+
 def _appearance_dropped(gltf):
     """True when every primitive shares one identical material — the
     exporter's no-appearances signature. A real assembly with legitimate
@@ -771,26 +888,7 @@ def inject_component_colors(glb_bytes, parts, component_colors, sample_fallback=
     if not component_colors:
         return glb_bytes, 0
 
-    def srgb_to_linear(c):
-        # Sampled pixels and SolidWorks color values are sRGB (display) space;
-        # glTF baseColorFactor is linear. Writing sRGB numbers unconverted
-        # renders everything several stops too bright (washed out).
-        c = min(max(c, 0.0), 1.0)
-        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-    def material_for(vals):
-        r, gr, b = (srgb_to_linear(v) for v in vals[:3])
-        shininess = vals[6] if len(vals) > 6 else 0.3
-        transparency = vals[7] if len(vals) > 7 else 0.0
-        mat = {"pbrMetallicRoughness": {
-            "baseColorFactor": [round(r, 5), round(gr, 5), round(b, 5),
-                                round(1.0 - min(max(transparency, 0.0), 0.95), 5)],
-            "metallicFactor": 0,
-            "roughnessFactor": round(min(max(1.0 - 0.8 * shininess, 0.05), 1.0), 5),
-        }}
-        if transparency > 0.01:
-            mat["alphaMode"] = "BLEND"
-        return mat
+    material_for = _material_from_mpv
 
     by_part_id = {}
     for part in parts:
@@ -823,14 +921,23 @@ def inject_component_colors(glb_bytes, parts, component_colors, sample_fallback=
 # it can never corrupt geometry)
 # ---------------------------------------------------------------------------
 
-def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=()):
+def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=(),
+                       no_geometry_names=(), census_complete=None):
     """Link repacked parts to BOM row names.
 
     parts: repack result 'parts' list (mutated: gains bom_name/matched).
-    empty_node_names: names of meshless leaf nodes (hidden components).
+    empty_node_names: names of meshless leaf nodes — components SolidWorks
+    exported without geometry (hidden at export, or surface-only parts the
+    exporter skips: it only writes solid bodies).
     bom_names: iterable of BOM part names (file basenames from traversal).
     group_node_names: names of subassembly grouping nodes (have 3D geometry
     through their children — their rows count as matched).
+    no_geometry_names: BOM names known (from a body census during traversal)
+    to contain no solid bodies — lets the warning say WHY a part is missing
+    instead of mislabeling it as hidden.
+    census_complete: True when the body census covered every part (only then
+    may a geometry-less row be confidently called "hidden"); False/None means
+    some or all parts have unknown body counts, so the wording stays hedged.
 
     Returns a reconciliation dict for the payload plus warning strings.
     """
@@ -882,18 +989,40 @@ def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=()):
         warnings.append(
             f"{len(unmatched_parts)} 3D part(s) could not be linked to a BOM row "
             f"(first: {unmatched_parts[0]['raw_name']!r})")
-    if hidden_rows:
+
+    def _list(names):
+        return ", ".join(names[:5]) + ("…" if len(names) > 5 else "")
+
+    # Split the geometry-less rows by cause when a body census is available;
+    # SolidWorks' glTF exporter only writes solid bodies, so surface-only
+    # parts come out as empty nodes exactly like hidden ones do.
+    no_geo_folds = {str(n).casefold() for n in no_geometry_names}
+    surface_only_rows = [n for n in hidden_rows if n.casefold() in no_geo_folds]
+    truly_hidden = [n for n in hidden_rows if n.casefold() not in no_geo_folds]
+    if surface_only_rows:
         warnings.append(
-            f"{len(hidden_rows)} BOM row(s) are hidden in the model and have no 3D geometry: "
-            + ", ".join(hidden_rows[:5]) + ("…" if len(hidden_rows) > 5 else ""))
+            f"{len(surface_only_rows)} BOM row(s) contain no solid bodies, and "
+            f"SolidWorks' 3D exporter only exports solids — they are missing "
+            f"from the 3D view: " + _list(surface_only_rows) +
+            ". Knitting their surfaces into solids in SolidWorks would fix this.")
+    if truly_hidden:
+        if census_complete is True:
+            msg = (f"{len(truly_hidden)} BOM row(s) were exported without 3D "
+                   f"geometry (hidden at export time): ")
+        else:
+            msg = (f"{len(truly_hidden)} BOM row(s) were exported without 3D "
+                   f"geometry (hidden at export time, or surface-only parts "
+                   f"the exporter skips): ")
+        warnings.append(msg + _list(truly_hidden))
     if unmatched_rows:
         warnings.append(
             f"{len(unmatched_rows)} BOM row(s) have no matching 3D node: "
-            + ", ".join(unmatched_rows[:5]) + ("…" if len(unmatched_rows) > 5 else ""))
+            + _list(unmatched_rows))
 
     return {
         "unmatched_nodes": unmatched_parts,
         "hidden_rows": hidden_rows,
+        "no_geometry_rows": surface_only_rows,
         "unmatched_rows": unmatched_rows,
     }, warnings
 
@@ -1069,8 +1198,13 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
                        images_dir, assembly_file, active_config="",
                        app_version="", generated="", on_status=None,
                        size_limit_mb=25, template_text=None, viewer_exports=True,
-                       component_colors=None):
+                       component_colors=None, no_geometry_names=(),
+                       census_complete=None):
     """Post-process a raw SolidWorks GLB into a BomDom HTML (plus sidecar if huge).
+
+    size_limit_mb <= 0 forces sidecar mode (HTML + separate .glb) regardless
+    of size. no_geometry_names: BOM names known to contain no solid bodies,
+    for accurate missing-part warnings (see match_parts_to_bom).
 
     Never raises past this function for repack-stage problems: falls back to
     embedding the unmodified single-scene GLB, and ultimately returns
@@ -1111,7 +1245,8 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
 
     reconciliation, match_warnings = match_parts_to_bom(
         repack["parts"], repack["empty_node_names"], list(bom_names),
-        repack["group_node_names"])
+        repack["group_node_names"], no_geometry_names=no_geometry_names,
+        census_complete=census_complete)
     warnings.extend(match_warnings)
 
     # Appearance fallback: recolor per part from COM-read appearances when the
@@ -1160,20 +1295,28 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
     payload = build_payload(assembly, repack, reconciliation, warnings, bom,
                             thumbs, geometry, generated, app_version)
 
-    html = build_html(template, payload, glb_bytes, "embedded", viewer_exports)
-    projected_mb = len(html) / 1e6
     mode = "embedded"
     sidecar_path = None
+    force_sidecar = size_limit_mb is not None and size_limit_mb <= 0
+    projected_mb = 0.0
+    if not force_sidecar:
+        html = build_html(template, payload, glb_bytes, "embedded", viewer_exports)
+        projected_mb = len(html) / 1e6
 
-    if projected_mb > size_limit_mb:
-        status(f"Projected HTML {projected_mb:.1f} MB exceeds {size_limit_mb} MB — "
-               "writing HTML + separate 3D data file")
+    if force_sidecar or projected_mb > size_limit_mb:
+        if force_sidecar:
+            status("Writing HTML + separate 3D data file (as requested)")
+        else:
+            status(f"Projected HTML {projected_mb:.1f} MB exceeds {size_limit_mb} MB — "
+                   "writing HTML + separate 3D data file")
         mode = "sidecar"
         geometry["mode"] = "sidecar"
         geometry["sidecar_filename"] = sidecar_name
         payload = build_payload(assembly, repack, reconciliation, warnings, bom,
                                 thumbs, geometry, generated, app_version)
         html = build_html(template, payload, b"", "sidecar", viewer_exports)
+        if force_sidecar:
+            projected_mb = len(html) / 1e6
         sidecar_path = os.path.join(output_dir, sidecar_name)
         with open(sidecar_path, "wb") as f:
             f.write(glb_bytes)

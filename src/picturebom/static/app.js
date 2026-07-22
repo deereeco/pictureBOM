@@ -36,6 +36,7 @@
     let componentTimes = [];
     let preRunEstimate = null;
     let jobRunning = false;
+    let lastRunSidecar = false; // was sidecar explicitly requested this run?
 
     // -----------------------------------------------------------------------
     // Theme toggle — persisted per browser, defaults to the OS preference
@@ -198,13 +199,17 @@
             excel: document.getElementById("output_excel").checked,
             html: document.getElementById("output_html").checked,
             viewerExports: document.getElementById("viewer_exports").checked,
+            keepRawGlb: document.getElementById("keep_raw_glb").checked,
+            htmlSidecar: document.getElementById("html_sidecar").checked,
         };
     }
 
-    // The viewer-exports sub-option only means something when the 3D output is on
+    // The 3D sub-options only mean something when the 3D output is on
     function refreshViewerExportsState() {
-        document.getElementById("viewer_exports").disabled =
-            !document.getElementById("output_html").checked;
+        const noHtml = !document.getElementById("output_html").checked;
+        document.getElementById("viewer_exports").disabled = noHtml;
+        document.getElementById("keep_raw_glb").disabled = noHtml;
+        document.getElementById("html_sidecar").disabled = noHtml;
     }
 
     function outputsLabel() {
@@ -245,8 +250,11 @@
     // Settings — load on init, auto-save on change
     // -----------------------------------------------------------------------
 
+    // The Advanced fields (csv_path, images_dir, glb_path) are deliberately
+    // not persisted: they're hidden by default, and a stale path from a past
+    // run silently changing this run's behavior is worse than retyping it.
     const settingsFields = [
-        "assembly_path", "output_dir", "csv_path", "images_dir",
+        "assembly_path", "output_dir",
     ];
 
     function loadSettings() {
@@ -287,6 +295,12 @@
                 if (data.viewer_exports !== undefined) {
                     document.getElementById("viewer_exports").checked = !!data.viewer_exports;
                 }
+                if (data.keep_raw_glb !== undefined) {
+                    document.getElementById("keep_raw_glb").checked = !!data.keep_raw_glb;
+                }
+                if (data.html_sidecar !== undefined) {
+                    document.getElementById("html_sidecar").checked = !!data.html_sidecar;
+                }
                 refreshViewerExportsState();
 
                 // Update preview + chips + node states with loaded settings
@@ -316,6 +330,8 @@
         data.output_excel = outputs.excel;
         data.output_html = outputs.html;
         data.viewer_exports = outputs.viewerExports;
+        data.keep_raw_glb = outputs.keepRawGlb;
+        data.html_sidecar = outputs.htmlSidecar;
 
         postJson("/api/settings", data).catch(() => {});
     }
@@ -328,7 +344,7 @@
     document.querySelectorAll('input[name="quality"], input[name="assembly_mode"]').forEach(radio => {
         radio.addEventListener("change", saveSettings);
     });
-    ["output_excel", "output_html", "viewer_exports"].forEach(id => {
+    ["output_excel", "output_html", "viewer_exports", "keep_raw_glb", "html_sidecar"].forEach(id => {
         document.getElementById(id).addEventListener("change", saveSettings);
     });
     document.getElementById("output_html").addEventListener("change", refreshViewerExportsState);
@@ -469,7 +485,11 @@
     });
 
     function populateStrip() {
-        const assemblyPath = assemblyInput.value.trim();
+        // Offline runs may leave the assembly blank — show the 3D model or
+        // CSV that is actually driving the run instead
+        const assemblyPath = assemblyInput.value.trim()
+            || document.getElementById("glb_path").value.trim()
+            || document.getElementById("csv_path").value.trim();
         const stripAssembly = document.getElementById("stripAssembly");
         stripAssembly.textContent = basename(assemblyPath);
         stripAssembly.title = assemblyPath;
@@ -505,15 +525,23 @@
         e.preventDefault();
 
         const assemblyPath = assemblyInput.value.trim();
-        if (!assemblyPath) {
+        const csvPath = document.getElementById("csv_path").value.trim();
+        const imagesDir = document.getElementById("images_dir").value.trim();
+        const glbPath = document.getElementById("glb_path").value.trim();
+        const outputs = getOutputs();
+
+        // The Advanced inputs can replace SolidWorks entirely — only then may
+        // the assembly file stay blank (it would just name the outputs).
+        const offlineReady = csvPath && imagesDir && (glbPath || !outputs.html);
+        if (!assemblyPath && !offlineReady) {
             showFieldMsg(assemblyMsg, "err",
-                "Choose your assembly file first — click Browse to find the .sldasm.");
+                "Choose your assembly file first — click Browse to find the .sldasm. " +
+                "(Or fill in every Advanced field to rebuild a BOM without SolidWorks.)");
             assemblyInput.focus();
             assemblyInput.scrollIntoView({ block: "center", behavior: "smooth" });
             return;
         }
 
-        const outputs = getOutputs();
         if (!outputs.excel && !outputs.html) {
             showFieldMsg(assemblyMsg, "err",
                 "Pick at least one output in Export options (Excel or 3D interactive BOM).");
@@ -545,6 +573,7 @@
         // Start timing
         if (estimateInfo) estimateInfo.textContent = "";
         componentTimes = [];
+        lastRunSidecar = outputs.html && outputs.htmlSidecar;
         runStartTime = Date.now();
         if (timingInfo) timingInfo.classList.remove("hidden");
         if (elapsedTimeEl) elapsedTimeEl.textContent = "Elapsed: 0s";
@@ -556,14 +585,17 @@
         const params = {
             assembly_path: assemblyPath,
             output_dir: document.getElementById("output_dir").value.trim(),
-            csv_path: document.getElementById("csv_path").value.trim(),
-            images_dir: document.getElementById("images_dir").value.trim(),
+            csv_path: csvPath,
+            images_dir: imagesDir,
+            glb_path: glbPath,
             width: wh.w,
             height: wh.h,
             bom_mode: getModeValue(),
             output_excel: outputs.excel,
             output_html: outputs.html,
             viewer_exports: outputs.viewerExports,
+            keep_raw_glb: outputs.keepRawGlb,
+            html_sidecar: outputs.htmlSidecar,
         };
 
         postJson("/api/run", params)
@@ -704,8 +736,10 @@
 
                 const warnings = (r.warnings || []).slice();
                 if (r.html_mode === "sidecar" && r.sidecar_path) {
-                    warnings.unshift(
-                        "The 3D BOM was too large for a single file, so it was split: " +
+                    const reason = lastRunSidecar
+                        ? "The 3D data was written as a separate file (as requested): "
+                        : "The 3D BOM was too large for a single file, so it was split: ";
+                    warnings.unshift(reason +
                         "keep the .html and " + basename(r.sidecar_path) +
                         " together — the page asks for the .glb when opened.");
                 }

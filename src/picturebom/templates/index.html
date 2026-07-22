@@ -98,7 +98,7 @@
                             <details class="adv">
                                 <summary>
                                     <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5 7 5 3.5 8.5"/></svg>
-                                    Advanced &mdash; reuse an existing CSV or part images
+                                    Advanced &mdash; reuse an existing CSV, part images or 3D model
                                 </summary>
                                 <div class="adv-body">
                                     <div class="field">
@@ -116,6 +116,14 @@
                                             <button type="button" class="btn btn-neutral btn-browse" data-target="images_dir" data-mode="folder">Browse&hellip;</button>
                                         </div>
                                         <p class="hint">Skip capturing &mdash; reuse part images from a previous run</p>
+                                    </div>
+                                    <div class="field">
+                                        <label class="label" for="glb_path">Existing 3D model (.glb)</label>
+                                        <div class="row">
+                                            <input class="input" type="text" id="glb_path" name="glb_path" placeholder="C:\path\to\model.glb">
+                                            <button type="button" class="btn btn-neutral btn-browse" data-target="glb_path" data-mode="glb">Browse&hellip;</button>
+                                        </div>
+                                        <p class="hint">Skip the slow 3D export &mdash; reuse the <span class="mono">_raw.glb</span> an earlier run kept (or a .glb saved from SolidWorks via File &gt; Save As). With CSV + images + 3D model all filled in, the run doesn't need SolidWorks at all.</p>
                                     </div>
                                 </div>
                             </details>
@@ -199,6 +207,10 @@
                                             3D interactive BOM (.html) &mdash; a single file teammates open in any browser; needs SolidWorks 2024+</label>
                                         <label class="check check-sub"><input type="checkbox" id="viewer_exports" checked>
                                             Allow exporting parts lists from the 3D viewer <span class="hint-inline">&mdash; uncheck so recipients can view but not re-export; hand-editable in the HTML afterwards ("allow_exports")</span></label>
+                                        <label class="check check-sub"><input type="checkbox" id="html_sidecar">
+                                            Write the 3D data as a separate .glb next to the HTML <span class="hint-inline">&mdash; smaller HTML; keep both files together (the page asks for the .glb when opened)</span></label>
+                                        <label class="check check-sub"><input type="checkbox" id="keep_raw_glb" checked>
+                                            Keep the raw 3D model (.glb) next to the outputs <span class="hint-inline">&mdash; it takes minutes to export; reuse it under Advanced to rebuild the 3D BOM without waiting on SolidWorks</span></label>
                                     </div>
                                 </div>
                             </div>

@@ -7,9 +7,11 @@ This module provides reusable functions with no CLI or GUI side effects.
 Use cli.py for the command-line interface or app.py for the web GUI.
 """
 
+import array
 import csv
 from datetime import datetime
 import logging
+import math
 import os
 import re
 import time
@@ -391,6 +393,18 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
         props = get_part_properties(comp_doc, debug=debug)
         color = get_component_color(comp, comp_doc)
 
+        # Body census for the 3D export: SolidWorks' glTF exporter only
+        # writes solid bodies, so surface-only parts (unknitted imports)
+        # silently come out as empty nodes. Count both so the export can
+        # name the parts that will be missing. None = census unavailable.
+        solid_bodies = surface_bodies = None
+        if comp_doc is not None and not is_assembly:
+            try:
+                solid_bodies = len(comp_doc.GetBodies2(0, False) or ())    # swSolidBody
+                surface_bodies = len(comp_doc.GetBodies2(1, False) or ())  # swSheetBody
+            except Exception:
+                pass
+
         row = {
             "level": level,
             "type": "Assembly" if is_assembly else "Part",
@@ -415,6 +429,8 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
                 "vendor": props["vendor"],
                 "vendor_part_no": props["vendor_part_no"],
                 "color": color,
+                "solid_bodies": solid_bodies,
+                "surface_bodies": surface_bodies,
             }
 
         # Recurse into sub-assembly children
@@ -593,6 +609,14 @@ def export_assembly_glb(sw_app, assy_doc, glb_path):
         # exporter — trust only a real glTF file on disk.
         if not success:
             return False, f"SolidWorks refused the .glb export (error code {save_errors.value})"
+        if not os.path.isfile(glb_path):
+            # The glTF exporter rewrites its target filename (lowercased,
+            # spaces -> underscores). Reclaim the file if it landed there.
+            mangled = os.path.join(
+                os.path.dirname(glb_path),
+                os.path.basename(glb_path).lower().replace(" ", "_"))
+            if mangled != glb_path and os.path.isfile(mangled):
+                os.replace(mangled, glb_path)
         if not os.path.isfile(glb_path) or os.path.getsize(glb_path) <= 12:
             return False, "SolidWorks wrote no 3D data (.glb file missing or empty)"
         with open(glb_path, "rb") as f:
@@ -601,6 +625,137 @@ def export_assembly_glb(sw_app, assy_doc, glb_path):
         return True, ""
     except Exception as e:
         return False, f"3D export failed: {e}"
+
+
+def _flat_normals(tris):
+    """Per-vertex flat normals for a float triangle soup (9 floats/tri)."""
+    out = array.array("f")
+    for i in range(0, len(tris) - 8, 9):
+        ax, ay, az = tris[i], tris[i + 1], tris[i + 2]
+        ux, uy, uz = tris[i + 3] - ax, tris[i + 4] - ay, tris[i + 5] - az
+        vx, vy, vz = tris[i + 6] - ax, tris[i + 7] - ay, tris[i + 8] - az
+        nx = uy * vz - uz * vy
+        ny = uz * vx - ux * vz
+        nz = ux * vy - uy * vx
+        ln = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+        n = (nx / ln, ny / ln, nz / ln)
+        out.extend(n)
+        out.extend(n)
+        out.extend(n)
+    return out
+
+
+def collect_surface_tessellations(assy_doc, target_names):
+    """Read the display tessellation of surface-body-only parts over COM.
+
+    SolidWorks' glTF exporter only writes solid bodies; this reads the
+    triangles SolidWorks itself renders (Face2.GetTessTriangles, part-local
+    meters — the same convention the exporter uses for solid meshes) so
+    they can be injected into the GLB afterwards. Strictly read-only.
+
+    Returns {part name: (positions_bytes, normals_bytes)} — float32
+    triangle soup, only for parts that produced at least one triangle.
+    """
+    wanted = set(target_names)
+    out = {}
+
+    def walk(components):
+        for comp in components or []:
+            yield comp
+            try:
+                children = comp.GetChildren
+            except Exception:
+                children = None
+            if children:
+                yield from walk(children)
+
+    for comp in walk(assy_doc.GetComponents(True)):
+        try:
+            path = comp.GetPathName or ""
+        except Exception:
+            continue
+        base = os.path.splitext(os.path.basename(path))[0]
+        if base not in wanted or base in out:
+            continue
+        try:
+            model_doc = comp.GetModelDoc2
+        except Exception:
+            model_doc = None
+        if model_doc is None:
+            continue
+        pos = array.array("f")
+        nrm = array.array("f")
+        try:
+            for body in (model_doc.GetBodies2(1, False) or ()):  # swSheetBody
+                faces = body.GetFaces
+                if callable(faces):
+                    faces = faces()
+                for face in faces or ():
+                    tris = face.GetTessTriangles(True)  # meters, part space
+                    if not tris:
+                        continue
+                    norms = face.GetTessNorms
+                    if callable(norms):
+                        norms = norms()
+                    pos.extend(tris)
+                    if norms and len(norms) == len(tris):
+                        nrm.extend(norms)
+                    else:
+                        nrm.extend(_flat_normals(tris))
+        except Exception:
+            log.warning("Tessellation read failed for %s", base, exc_info=True)
+            continue
+        if len(pos) >= 9:
+            out[base] = (pos.tobytes(), nrm.tobytes())
+    return out
+
+
+def validate_glb_file(glb_path):
+    """Raise PictureBOMError unless glb_path is a real binary-glTF file."""
+    if not os.path.isfile(glb_path):
+        raise PictureBOMError(f"3D model file not found: {glb_path}")
+    with open(glb_path, "rb") as f:
+        magic = f.read(4)
+    if magic != b"glTF":
+        raise PictureBOMError(
+            f"Not a .glb file (expected binary glTF): {glb_path}")
+
+
+def _flat_parts_from_csv(bom_rows):
+    """Adapt CSV BOM rows to the flat_parts shape the 3D viewer expects.
+
+    Used when the pipeline runs without SolidWorks (user-supplied GLB +
+    CSV + images), where no traversal data exists. Column matching is
+    case-insensitive and lenient — a missing column just leaves that
+    field blank in the viewer's parts panel.
+    """
+    def pick(row, *wanted):
+        # Argument order is the priority order — a CSV whose "Name" column
+        # precedes "Part Number" must still yield the part number.
+        for want in wanted:
+            for key, value in row.items():
+                if key and str(key).strip().lower() == want \
+                        and value not in (None, ""):
+                    return str(value)
+        return ""
+
+    parts = []
+    for row in bom_rows:
+        name = pick(row, "part number", "part_number", "name")
+        if not name:
+            continue
+        parts.append({
+            "name": name,
+            "total_quantity": pick(row, "qty", "quantity", "total qty",
+                                   "total quantity"),
+            "description": pick(row, "description"),
+            "vendor": pick(row, "vendor"),
+            "vendor_part_no": pick(row, "vendor part no",
+                                   "vendor part number", "vendor pn"),
+            "where_used": pick(row, "where used",
+                               "where used (sub-asm qty)"),
+        })
+    return parts
 
 
 def get_solidworks_year(sw_app):
@@ -1334,10 +1489,11 @@ def generate_comparison_excel(comparison, output_path):
 
 def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  include_subassemblies=False, bom_mode=None, csv_path=None,
-                 images_dir=None, debug=False, on_progress=None,
+                 images_dir=None, glb_path=None, debug=False, on_progress=None,
                  on_status=None, overwrite=False, completion_popup=False,
                  output_excel=True, output_html=False,
-                 html_size_limit_mb=25, keep_raw_glb=False, viewer_exports=True):
+                 html_size_limit_mb=25, keep_raw_glb=True, viewer_exports=True,
+                 html_sidecar=False):
     """
     Run the full pictureBOM pipeline.
 
@@ -1351,6 +1507,12 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                   include_subassemblies for backward compatibility.
         csv_path: Optional CSV file for BOM data instead of SolidWorks properties.
         images_dir: Optional folder of existing images (skips capture).
+        glb_path: Optional .glb from an earlier run (skips the slow SolidWorks
+                  3D export). When csv_path, images_dir and glb_path are all
+                  provided (glb_path only matters if output_html), SolidWorks
+                  is not needed at all — the run is fully offline and
+                  assembly_path is only used to name the outputs (it may be
+                  blank or point to a file that isn't on this machine).
         debug: Enable verbose property logging.
         on_progress: Optional callable(current, total, part_name, success, image_path).
         on_status: Optional callable(message) for stage updates.
@@ -1364,10 +1526,16 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                      block the Excel output — they surface as warnings.
         html_size_limit_mb: Above this projected HTML size, geometry is written
                             as a sidecar .glb next to the HTML instead of embedded.
-        keep_raw_glb: Keep the intermediate SolidWorks .glb export on disk.
+        keep_raw_glb: Keep the raw SolidWorks .glb export on disk (default:
+                      it took minutes to make, and it feeds glb_path on a
+                      later run). False deletes it after the HTML is built.
         viewer_exports: Show the Export menu (xlsx/CSV/print) inside the
                         exported HTML viewer. Also hand-editable after export
                         via the "allow_exports" flag near the top of the HTML.
+        html_sidecar: Always write the 3D data as a separate .glb next to the
+                      HTML instead of embedding it (the page asks for the .glb
+                      when opened). Default: embed unless html_size_limit_mb
+                      is exceeded.
 
     Returns:
         dict with keys: excel_path, images_dir, total_components, captured_count,
@@ -1387,21 +1555,55 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     has_csv = csv_path is not None
     has_images = images_dir is not None
+    has_glb = glb_path is not None
 
-    assembly_path = os.path.abspath(assembly_path)
+    warnings = []
+
+    # A reused GLB only matters for the 3D output, and a bad one must never
+    # cost the user their Excel (the same rule the in-SolidWorks 3D export
+    # follows): degrade to a warning instead of dying.
+    if has_glb:
+        glb_path = os.path.abspath(glb_path)
+        if output_html:
+            try:
+                validate_glb_file(glb_path)
+            except PictureBOMError as e:
+                has_glb = False
+                if has_csv and has_images:
+                    # Would-be offline run — no SolidWorks to fall back on:
+                    # drop the 3D output, keep the Excel.
+                    output_html = False
+                    msg = (f"3D export skipped: {e}. The Excel BOM is still "
+                           "generated from the CSV and images.")
+                else:
+                    msg = (f"Provided 3D model not usable ({e}) — falling "
+                           "back to a fresh SolidWorks 3D export.")
+                warnings.append(msg)
+                status(msg)
+
+    # SolidWorks is only needed for what the user hasn't already provided:
+    # BOM data (CSV), part images (images folder) and the 3D model (GLB).
+    # With all of those in hand the run is fully offline.
+    use_solidworks = not (has_csv and has_images
+                          and (has_glb or not output_html))
+
+    assembly_path = os.path.abspath(assembly_path) if assembly_path else None
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    if not os.path.isfile(assembly_path):
-        raise PictureBOMError(f"File not found: {assembly_path}")
-    if not assembly_path.lower().endswith(".sldasm"):
-        raise PictureBOMError("Input file must be a SolidWorks assembly (.sldasm)")
+    if use_solidworks:
+        if not assembly_path or not os.path.isfile(assembly_path):
+            raise PictureBOMError(f"File not found: {assembly_path}")
+        if not assembly_path.lower().endswith(".sldasm"):
+            raise PictureBOMError("Input file must be a SolidWorks assembly (.sldasm)")
 
     # Where images live
     img_dir = os.path.abspath(images_dir) if has_images else output_dir
 
-    # Build Excel filename from assembly name + timestamp
-    root_name = os.path.splitext(os.path.basename(assembly_path))[0]
+    # Build Excel filename from assembly name + timestamp. Offline runs may
+    # have no assembly path — fall back to the GLB (then CSV) for naming.
+    name_source = assembly_path or glb_path or csv_path
+    root_name = os.path.splitext(os.path.basename(name_source))[0]
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     excel_name = f"{root_name}_{timestamp}.xlsx"
     excel_path = os.path.join(output_dir, excel_name)
@@ -1414,26 +1616,33 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     f"Output folder already contains {len(existing)} image(s): {output_dir}"
                 )
 
-    status("Connecting to SolidWorks...")
-    sw_app = connect_to_solidworks()
+    assy_name = os.path.basename(name_source)
+    sw_app = None
+    assy_doc = None
+    hierarchical_rows, components = [], {}
+    if use_solidworks:
+        status("Connecting to SolidWorks...")
+        sw_app = connect_to_solidworks()
 
-    if output_html:
-        sw_year = get_solidworks_year(sw_app)
-        if sw_year is not None and sw_year < 2024:
-            status(f"Note: the 3D interactive BOM needs SolidWorks 2024 or newer "
-                   f"(this looks like {sw_year}) — will attempt anyway")
+        if output_html and not has_glb:
+            sw_year = get_solidworks_year(sw_app)
+            if sw_year is not None and sw_year < 2024:
+                status(f"Note: the 3D interactive BOM needs SolidWorks 2024 or newer "
+                       f"(this looks like {sw_year}) — will attempt anyway")
 
-    assy_name = os.path.basename(assembly_path)
-    status(f"Opening assembly: {assy_name}")
-    assy_doc = open_document(sw_app, assembly_path, SW_DOC_ASSEMBLY)
-    if assy_doc is None:
-        raise PictureBOMError("Failed to open assembly file.")
+        status(f"Opening assembly: {assy_name}")
+        assy_doc = open_document(sw_app, assembly_path, SW_DOC_ASSEMBLY)
+        if assy_doc is None:
+            raise PictureBOMError("Failed to open assembly file.")
 
-    status("Traversing assembly components...")
-    # All modes use hierarchical traversal (flat/linked need it for Where Used)
-    hierarchical_rows, components = traverse_assembly_hierarchical(assy_doc, debug=debug)
+        status("Traversing assembly components...")
+        # All modes use hierarchical traversal (flat/linked need it for Where Used)
+        hierarchical_rows, components = traverse_assembly_hierarchical(assy_doc, debug=debug)
+        status(f"Found {len(components)} unique component(s)")
+    else:
+        status("SolidWorks not needed — using the provided CSV, images"
+               + (" and 3D model" if has_glb else ""))
     total = len(components)
-    status(f"Found {total} unique component(s)")
 
     # BOM data comes from CSV if provided, otherwise from SolidWorks traversal
     csv_columns = None
@@ -1446,6 +1655,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         bom_rows, csv_columns = load_csv_bom(csv_path)
         bom_mode = "flat"  # CSV overrides mode
         status(f"Loaded {len(bom_rows)} rows from CSV")
+        if not use_solidworks:
+            total = len(bom_rows)
 
     # Capture images (skip if user provided existing images)
     captured_count = 0
@@ -1463,7 +1674,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     # Leave the assembly open and bring it back to the front — ending on a
     # blank SolidWorks screen reads as "something went wrong". Re-runs are
     # fine: OpenDoc6 returns the already-open document.
-    activate_document(sw_app, assy_doc)
+    if use_solidworks:
+        activate_document(sw_app, assy_doc)
 
     if not hierarchical_rows and not bom_rows:
         log.warning("No BOM data to write.")
@@ -1476,7 +1688,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             "html_mode": None,
             "sidecar_path": None,
             "html_projected_mb": None,
-            "warnings": [],
+            "warnings": warnings,
             "timing": {
                 "capture_seconds": round(capture_elapsed, 2),
                 "excel_seconds": 0,
@@ -1512,15 +1724,33 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     # Interactive 3D BOM (BomDom). Runs after Excel so a 3D failure can never
     # cost the user their workbook; every failure here degrades to a warning.
-    warnings = []
     html_result = {"html_path": None, "html_mode": None, "sidecar_path": None,
                    "html_projected_mb": None}
     glb_elapsed = html_elapsed = 0.0
-    if output_html and hierarchical_rows:
-        status("Exporting 3D model (single step — may take a few minutes)...")
+    if output_html and (hierarchical_rows or bom_rows):
         glb_start = time.time()
-        raw_glb = os.path.join(output_dir, f"{root_name}_{timestamp}_raw.glb")
-        glb_ok, glb_err = export_assembly_glb(sw_app, assy_doc, raw_glb)
+        if has_glb:
+            raw_glb = glb_path
+            glb_ok, glb_err = True, ""
+            status(f"Using the provided 3D model: {os.path.basename(raw_glb)}")
+        else:
+            status("Exporting 3D model (single step — may take a few minutes)...")
+            # SolidWorks' glTF exporter rewrites its target filename
+            # (lowercased, spaces -> underscores) — hand it a name that
+            # survives the rewrite unchanged.
+            safe_root = re.sub(r"[^a-z0-9._-]+", "_", root_name.lower())
+            raw_glb = os.path.join(output_dir, f"{safe_root}_{timestamp}_raw.glb")
+            glb_ok, glb_err = export_assembly_glb(sw_app, assy_doc, raw_glb)
+            if glb_ok:
+                # The export target used a sanitized name (see above); give
+                # the kept file the same naming as the other outputs.
+                pretty = os.path.join(output_dir, f"{root_name}_{timestamp}_raw.glb")
+                if pretty != raw_glb:
+                    try:
+                        os.replace(raw_glb, pretty)
+                        raw_glb = pretty
+                    except OSError:
+                        pass
         glb_elapsed = time.time() - glb_start
 
         if not glb_ok:
@@ -1533,13 +1763,15 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             warnings.append(msg)
             status(msg)
         else:
-            status(f"3D model exported ({os.path.getsize(raw_glb) / 1e6:.1f} MB)")
+            if not has_glb:
+                status(f"3D model exported ({os.path.getsize(raw_glb) / 1e6:.1f} MB)")
             try:
                 active_config = ""
-                try:
-                    active_config = assy_doc.ConfigurationManager.ActiveConfiguration.Name
-                except Exception:
-                    pass
+                if assy_doc is not None:
+                    try:
+                        active_config = assy_doc.ConfigurationManager.ActiveConfiguration.Name
+                    except Exception:
+                        pass
                 try:
                     from importlib.metadata import version as _pkg_version
                     app_version = _pkg_version("picturebom")
@@ -1548,14 +1780,80 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
                 from . import bomdom  # lazy: keeps module import light
 
+                if hierarchical_rows:
+                    html_rows = hierarchical_rows
+                    html_flat = _build_flat_from_hierarchical(hierarchical_rows, root_name)
+                    bom_names = [c["name"] for c in components.values()]
+                    part_colors = {c["name"]: c.get("color")
+                                   for c in components.values() if c.get("color")}
+                    # Parts with zero solid bodies come out of the exporter
+                    # as empty nodes — name them so the warning says why.
+                    # A part whose census failed (None) has UNKNOWN bodies:
+                    # it must not be called "hidden" with confidence.
+                    no_geometry = [c["name"] for c in components.values()
+                                   if c.get("doc_type") == SW_DOC_PART
+                                   and c.get("solid_bodies") == 0]
+                    census_complete = all(
+                        c.get("solid_bodies") is not None
+                        for c in components.values()
+                        if c.get("doc_type") == SW_DOC_PART)
+                    # Recover surface-only parts by grafting SolidWorks' own
+                    # display tessellation onto their empty nodes. Fresh
+                    # exports only — a user-supplied GLB is never rewritten.
+                    recoverable = [c["name"] for c in components.values()
+                                   if c["name"] in set(no_geometry)
+                                   and (c.get("surface_bodies") or 0) > 0]
+                    if recoverable and not has_glb:
+                        status(f"Recovering {len(recoverable)} surface-only "
+                               "part(s) from SolidWorks' display tessellation...")
+                        try:
+                            tess = collect_surface_tessellations(
+                                assy_doc, recoverable)
+                            rec_colors = {}
+                            need_sample = []
+                            for c in components.values():
+                                if c["name"] in tess:
+                                    if c.get("color"):
+                                        rec_colors[c["name"]] = c["color"]
+                                    else:
+                                        need_sample.append(c["name"])
+                            if need_sample:
+                                rec_colors.update(bomdom.sample_part_colors(
+                                    img_dir, need_sample))
+                            new_bytes, injected = bomdom.inject_surface_meshes(
+                                raw_glb, tess, rec_colors)
+                            if injected:
+                                tmp_glb = raw_glb + ".tmp"
+                                with open(tmp_glb, "wb") as f:
+                                    f.write(new_bytes)
+                                os.replace(tmp_glb, raw_glb)
+                                no_geometry = [n for n in no_geometry
+                                               if n not in injected]
+                                status("Recovered 3D geometry for "
+                                       f"{len(injected)} part(s): "
+                                       + ", ".join(sorted(injected)))
+                        except Exception:
+                            log.exception("Surface-geometry recovery failed")
+                            warnings.append(
+                                "Surface-geometry recovery failed — "
+                                "surface-only parts stay missing from the "
+                                "3D view (see the log)")
+                else:
+                    # Offline run — the viewer's BOM panel comes from the CSV
+                    html_rows = []
+                    html_flat = _flat_parts_from_csv(bom_rows)
+                    bom_names = [p["name"] for p in html_flat]
+                    part_colors = {}
+                    no_geometry = []
+                    census_complete = None  # offline: no body data at all
+
                 html_start = time.time()
                 res = bomdom.export_bomdom_html(
                     raw_glb, output_dir, root_name, timestamp,
-                    hierarchical_rows=hierarchical_rows,
-                    flat_parts=_build_flat_from_hierarchical(hierarchical_rows, root_name),
-                    bom_names=[c["name"] for c in components.values()],
-                    component_colors={c["name"]: c.get("color")
-                                      for c in components.values() if c.get("color")},
+                    hierarchical_rows=html_rows,
+                    flat_parts=html_flat,
+                    bom_names=bom_names,
+                    component_colors=part_colors,
                     bom_mode=bom_mode,
                     images_dir=img_dir,
                     assembly_file=assy_name,
@@ -1563,8 +1861,10 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     app_version=app_version,
                     generated=datetime.now().isoformat(timespec="seconds"),
                     on_status=on_status,
-                    size_limit_mb=html_size_limit_mb,
+                    size_limit_mb=0 if html_sidecar else html_size_limit_mb,
                     viewer_exports=viewer_exports,
+                    no_geometry_names=no_geometry,
+                    census_complete=census_complete,
                 )
                 html_elapsed = time.time() - html_start
                 warnings.extend(res.pop("warnings", []))
@@ -1572,7 +1872,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                 res.pop("stats", None)
                 html_result.update(res)
                 status(f"Interactive 3D BOM saved to: {html_result['html_path']}")
-                if not keep_raw_glb:
+                # Never delete a user-supplied GLB — only our own raw export.
+                if not keep_raw_glb and not has_glb:
                     try:
                         os.remove(raw_glb)
                     except OSError:
@@ -1582,7 +1883,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                 msg = f"3D interactive BOM failed: {e}."
                 if output_excel:
                     msg += " The Excel BOM was still generated."
-                msg += f" The raw 3D export was kept for diagnosis: {raw_glb}"
+                if not has_glb:
+                    msg += f" The raw 3D export was kept for diagnosis: {raw_glb}"
                 warnings.append(msg)
                 status(msg)
 
