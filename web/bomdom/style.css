@@ -36,6 +36,13 @@
     --log-bg: #171b26;
     --log-text: #d6dae4;
     --shadow: 0 1px 3px rgba(28, 36, 48, 0.08);
+    /* Axis identity — one colour per model axis, used by the corner gizmo,
+       the View popover and the explode direction radios so X/Y/Z always
+       means the same thing wherever it appears. */
+    --axis-x: #cf3b40;
+    --axis-y: #2f9e63;
+    --axis-z: #3a72d4;
+    --axis-on: #ffffff;
 }
 :root[data-theme="dark"] {
     color-scheme: dark;
@@ -68,6 +75,10 @@
     --log-bg: #10131b;
     --log-text: #c2c8d4;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+    --axis-x: #ef7b6d;
+    --axis-y: #57b98a;
+    --axis-z: #6fa8f5;
+    --axis-on: #101720;
 }
 
 /* ---------- base ---------- */
@@ -350,6 +361,57 @@ html.theme-transition *::after {
     white-space: nowrap;
 }
 .scope-chip button:hover { background: var(--accent); color: var(--on-accent); }
+
+/* ---------- axis triad gizmo ---------- */
+.axis-gizmo {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    user-select: none;
+}
+.axis-svg { overflow: visible; }
+.axis-arm { cursor: pointer; }
+.axis-line { stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; opacity: 0.85; }
+.axis-ball { fill: currentColor; stroke: none; }
+.axis-ball.is-neg { fill: var(--bg); stroke: currentColor; stroke-width: 2; }
+.axis-label {
+    fill: var(--axis-on);
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    pointer-events: none;
+}
+.axis-arm:hover .axis-ball { stroke: var(--text); stroke-width: 2; }
+.axis-arm:focus-visible { outline: none; }
+.axis-arm:focus-visible .axis-ball { stroke: var(--text); stroke-width: 2.5; }
+.axis-upring { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-dasharray: 3 2.6; opacity: 0.9; }
+/* One colour per axis, inherited by every child through currentColor. */
+.ax-x { color: var(--axis-x); }
+.ax-y { color: var(--axis-y); }
+.ax-z { color: var(--axis-z); }
+.ax-text { font-weight: 700; }
+.ax-text.ax-x { color: var(--axis-x); }
+.ax-text.ax-y { color: var(--axis-y); }
+.ax-text.ax-z { color: var(--axis-z); }
+.axis-caption {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    padding: 2px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    white-space: nowrap;
+}
+.axis-caption:hover { border-color: var(--accent); color: var(--text); }
 
 /* ---------- panel ---------- */
 .seg { display: flex; gap: 2px; padding: 3px; background: var(--btn-neutral-bg); border-radius: 8px; }
@@ -643,6 +705,26 @@ html.theme-transition *::after {
 .pop-btn:hover { background: var(--btn-neutral-hover); color: var(--text); }
 .pop-btn-primary { background: var(--accent); color: var(--on-accent); }
 .pop-btn-primary:hover { background: var(--accent-hover); color: var(--on-accent); }
+
+/* ---------- view / up-axis popover ---------- */
+.view-pop { min-width: 244px; }
+.view-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 4px 8px 2px;
+}
+.view-grid .pop-btn { padding: 4px 2px; font-size: 11.5px; }
+.pop-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    font-size: 12.5px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+.pop-check:hover { background: var(--surface-sunken); }
 
 /* ---------- marquee box select ---------- */
 .marquee {

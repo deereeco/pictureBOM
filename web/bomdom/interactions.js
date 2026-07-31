@@ -4,8 +4,32 @@
 
 import * as THREE from 'three';
 import * as M from './model.js';
+import { normalizeUp, DEFAULT_UP } from './scene.js';
 
 const $ = (id) => document.getElementById(id);
+
+// Up axis is remembered per assembly: the same viewer template opens many
+// different models, and "Z is up" is a property of the model, not the reader.
+const UP_KEY_PREFIX = 'picturebom-bomdom-up:';
+
+function upStorageKey(meta) {
+  const name = (meta && meta.assembly && meta.assembly.name) || 'assembly';
+  return UP_KEY_PREFIX + String(name).toLowerCase();
+}
+
+export function readStoredUpAxis(meta) {
+  try {
+    return normalizeUp(localStorage.getItem(upStorageKey(meta)));
+  } catch {
+    return null; // private mode / file:// with storage blocked
+  }
+}
+
+function storeUpAxis(meta, axis) {
+  try {
+    localStorage.setItem(upStorageKey(meta), axis);
+  } catch { /* ignore */ }
+}
 
 export function initInteractions(app) {
   const sel = app.sel;
@@ -81,6 +105,19 @@ export function initInteractions(app) {
       $('btnMove').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-move', on);
     },
+    // name ('iso', 'top', ...) or a world direction from the axis gizmo.
+    setView(nameOrDir) {
+      if (!app.viewer) return;
+      app.viewer.setView(nameOrDir);
+      actions.frame(selectedRecs()); // no selection -> refits the assembly
+    },
+    setUpAxis(axis, opts) {
+      if (!app.viewer) return;
+      const applied = app.viewer.setUpAxis(axis, opts);
+      storeUpAxis(app.meta, applied);
+      if (app.ui.syncAxisGizmo) app.ui.syncAxisGizmo();
+      actions.frame(selectedRecs());
+    },
   };
   app.actions = actions;
 
@@ -121,6 +158,7 @@ export function initInteractions(app) {
     return part ? (part.bom_name || part.name) : (M.cleanName(rec.name) || rec.name);
   }
 
+  // text: a string, or a Node for the colour-coded axis labels.
   function popRadio(name, value, checked, text, onChange, disabled) {
     const lab = document.createElement('label');
     lab.className = 'menu-radio';
@@ -132,20 +170,50 @@ export function initInteractions(app) {
     r.disabled = !!disabled;
     r.addEventListener('change', onChange);
     lab.appendChild(r);
-    lab.appendChild(document.createTextNode(' ' + text));
+    if (text instanceof Node) lab.appendChild(text);
+    else lab.appendChild(document.createTextNode(' ' + text));
     return lab;
+  }
+
+  function popHead(container, text) {
+    const h = document.createElement('div');
+    h.className = 'menu-head';
+    h.textContent = text;
+    container.appendChild(h);
+  }
+
+  function popNote(container, text) {
+    const n = document.createElement('div');
+    n.className = 'pop-note';
+    n.textContent = text;
+    n.title = text;
+    container.appendChild(n);
+    return n;
+  }
+
+  // The one place X/Y/Z gets rendered: same colour as the corner gizmo, with
+  // an arrow on whichever axis is currently pointing up on screen.
+  function axisLabel(letter, { markUp = true } = {}) {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(document.createTextNode(' '));
+    const s = document.createElement('span');
+    s.className = 'ax-text ax-' + letter;
+    s.textContent = letter.toUpperCase();
+    frag.appendChild(s);
+    if (markUp && app.viewer && app.viewer.upAxis[1] === letter) {
+      const arrow = document.createElement('span');
+      arrow.textContent = app.viewer.upAxis[0] === '-' ? ' ↓' : ' ↑';
+      arrow.title = 'currently up on screen';
+      frag.appendChild(arrow);
+    }
+    return frag;
   }
 
   function buildExplodePopover() {
     const cfg = app.explodeCfg;
     const mode = cfg.mode || (app.model ? app.model.defaultExplodeMode : 'radial');
     explodeMenu.innerHTML = '';
-    const head = (t) => {
-      const h = document.createElement('div');
-      h.className = 'menu-head';
-      h.textContent = t;
-      explodeMenu.appendChild(h);
-    };
+    const head = (t) => popHead(explodeMenu, t);
 
     head('Anchor (stays fixed)');
     const aRow = document.createElement('div');
@@ -158,20 +226,18 @@ export function initInteractions(app) {
     pickBtn.addEventListener('click', enterAnchorPick);
     aRow.appendChild(pickBtn);
     explodeMenu.appendChild(aRow);
-    const note = document.createElement('div');
-    note.className = 'pop-note';
-    note.textContent = cfg.anchorRecId == null
+    popNote(explodeMenu, cfg.anchorRecId == null
       ? 'Auto: largest part (usually the base plate)'
-      : 'Anchor: ' + anchorName();
-    note.title = note.textContent;
-    explodeMenu.appendChild(note);
+      : 'Anchor: ' + anchorName());
 
-    head('Direction');
+    head('Direction (model axes)');
     const dRow = document.createElement('div');
     dRow.className = 'pop-inline';
-    for (const [value, text] of [['radial', 'Radial'], ['x', 'X'], ['y', 'Y'], ['z', 'Z']]) {
-      dRow.appendChild(popRadio('bdExDir', value, mode === value, text,
-        () => { cfg.mode = value; buildExplodePopover(); }));
+    dRow.appendChild(popRadio('bdExDir', 'radial', mode === 'radial', 'Radial',
+      () => { cfg.mode = 'radial'; buildExplodePopover(); }));
+    for (const letter of ['x', 'y', 'z']) {
+      dRow.appendChild(popRadio('bdExDir', letter, mode === letter, axisLabel(letter),
+        () => { cfg.mode = letter; buildExplodePopover(); }));
     }
     explodeMenu.appendChild(dRow);
 
@@ -254,6 +320,77 @@ export function initInteractions(app) {
     closeMenus();
     buildExplodePopover();
     explodeMenu.classList.remove('hidden');
+  });
+
+  // ---- view (up axis + standard views) ---------------------------------
+  const viewMenu = $('viewMenu');
+  const VIEW_BUTTONS = [
+    ['iso', 'Iso'], ['top', 'Top'], ['front', 'Front'], ['right', 'Right'],
+    ['fit', 'Fit'], ['bottom', 'Bottom'], ['back', 'Back'], ['left', 'Left'],
+  ];
+
+  function buildViewPopover() {
+    const up = app.viewer ? app.viewer.upAxis : DEFAULT_UP;
+    viewMenu.innerHTML = '';
+    popHead(viewMenu, 'Which way is up');
+
+    const uRow = document.createElement('div');
+    uRow.className = 'pop-inline';
+    for (const letter of ['x', 'y', 'z']) {
+      uRow.appendChild(popRadio('bdUpAxis', letter, up[1] === letter,
+        axisLabel(letter, { markUp: false }),
+        () => { actions.setUpAxis(up[0] + letter); buildViewPopover(); }));
+    }
+    viewMenu.appendChild(uRow);
+
+    const flip = document.createElement('label');
+    flip.className = 'pop-check';
+    const flipBox = document.createElement('input');
+    flipBox.type = 'checkbox';
+    flipBox.checked = up[0] === '-';
+    flipBox.addEventListener('change', () => {
+      actions.setUpAxis((flipBox.checked ? '-' : '+') + up[1]);
+      buildViewPopover();
+    });
+    flip.appendChild(flipBox);
+    flip.appendChild(document.createTextNode(' Flip (model is upside down)'));
+    viewMenu.appendChild(flip);
+
+    popNote(viewMenu, `Orbit spins around ${up[0] === '-' ? '−' : ''}${up[1].toUpperCase()}`);
+    popNote(viewMenu, 'X/Y/Z always mean the model’s own axes');
+
+    popHead(viewMenu, 'Standard views');
+    const grid = document.createElement('div');
+    grid.className = 'view-grid';
+    for (const [name, text] of VIEW_BUTTONS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pop-btn';
+      b.textContent = text;
+      b.addEventListener('click', () => {
+        if (name === 'fit') actions.frame(selectedRecs());
+        else actions.setView(name);
+      });
+      grid.appendChild(b);
+    }
+    viewMenu.appendChild(grid);
+  }
+
+  function openViewMenu() {
+    if (!app.viewer) return;
+    closeMenus();
+    buildViewPopover();
+    viewMenu.classList.remove('hidden');
+  }
+  app.ui.openViewMenu = openViewMenu;
+
+  $('btnView').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (!viewMenu.classList.contains('hidden')) {
+      viewMenu.classList.add('hidden');
+      return;
+    }
+    openViewMenu();
   });
 
   $('btnMove').addEventListener('click', () => actions.setMoveMode(!app.moveMode));
@@ -415,6 +552,7 @@ export function initInteractions(app) {
     ctxMenu.classList.add('hidden');
     $('exportMenu').classList.add('hidden');
     $('explodeMenu').classList.add('hidden');
+    viewMenu.classList.add('hidden');
   }
   app.ui.closeMenus = closeMenus;
   document.addEventListener('pointerdown', (ev) => {
@@ -518,6 +656,9 @@ export function initInteractions(app) {
     if (inField) return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return; // never shadow browser shortcuts
     const key = ev.key.toLowerCase();
+    // CAD-style number keys for the standard views.
+    const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 5: 'top', 6: 'bottom', 0: 'iso' };
+    if (VIEW_KEYS[ev.key]) { actions.setView(VIEW_KEYS[ev.key]); return; }
     if (key === 'm') actions.setMoveMode(!app.moveMode);
     else if (key === 'h') { const t = hoverOrSelected(); if (t.length) { actions.hide(t); sel.setHover(null); } }
     else if (key === 'i') { const t = hoverOrSelected(); if (t.length) actions.isolate(t, false); }

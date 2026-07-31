@@ -6,11 +6,12 @@
 import { diag, diagText, stage, timed } from './diag.js';
 import { readMode, readConfig, decodeMeta, decodeGlb, dropRemainingSlots } from './payload.js';
 import { createEmitter, SelectionModel } from './state.js';
-import { createViewer } from './scene.js';
+import { createViewer, normalizeUp, DEFAULT_UP } from './scene.js';
 import * as M from './model.js';
 import { buildBomJoin } from './bom.js';
 import { initPicking } from './picking.js';
-import { initInteractions } from './interactions.js';
+import { initInteractions, readStoredUpAxis } from './interactions.js';
+import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
 import { initExports } from './exports.js';
 
@@ -94,6 +95,17 @@ async function boot() {
   }
   initPicking(app);
 
+  // Which way is up: this reader's remembered choice for this assembly wins,
+  // then the exported default (hand-editable "up_axis" in bomdom-config),
+  // then glTF's own +Y. Set before the first framing so the model comes up
+  // the right way round rather than being righted after the fact.
+  const upAxis = readStoredUpAxis(app.meta) || normalizeUp(app.config.up_axis) || DEFAULT_UP;
+  // snapView: nothing is framed yet, so start from the canonical isometric
+  // for this up axis rather than re-rolling the +Y one.
+  app.viewer.setUpAxis(upAxis, { snapView: true });
+  initAxisGizmo(app);
+  stage('up axis: ' + upAxis);
+
   if (app.mode === 'embedded') {
     let buf;
     try {
@@ -157,6 +169,7 @@ async function loadModel(buf, sourceLabel) {
   };
   hideViewportCard();
   $('dropZone').classList.add('hidden');
+  $('axisGizmo').classList.remove('hidden');
   updateFooter();
   updateDiagLine();
   app.events.emit('model');

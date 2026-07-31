@@ -45,6 +45,11 @@ parts list. Send that one file to a teammate — they double-click it and can:
 
 - Rotate, pan and zoom the assembly; hover or click a part to highlight its BOM row
   (and vice versa)
+- Set **which way is up** (View menu, or the colour-coded X/Y/Z gizmo in the corner)
+  and snap to standard views — Iso, Top, Front, Right and the rest. Pick the default
+  for recipients with *Which way is up in the 3D view* before running (`--up-axis` on
+  the CLI); it is hand-editable afterwards via the `up_axis` value near the top of the
+  HTML. Only the camera turns — X/Y/Z always mean the model's own axes
 - Hide, isolate, or make transparent any part or subassembly — for one instance or
   **all instances at once**
 - Drag parts aside and snap them back; explode the whole assembly with a slider

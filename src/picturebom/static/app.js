@@ -194,6 +194,12 @@
         return radio ? radio.value : "flat";
     }
 
+    function getUpAxis() {
+        const radio = document.querySelector('input[name="viewer_up_axis"]:checked');
+        const letter = radio ? radio.value : "y";
+        return (document.getElementById("up_axis_flip").checked ? "-" : "+") + letter;
+    }
+
     function getOutputs() {
         return {
             excel: document.getElementById("output_excel").checked,
@@ -201,6 +207,7 @@
             viewerExports: document.getElementById("viewer_exports").checked,
             keepRawGlb: document.getElementById("keep_raw_glb").checked,
             htmlSidecar: document.getElementById("html_sidecar").checked,
+            upAxis: getUpAxis(),
         };
     }
 
@@ -210,12 +217,124 @@
         document.getElementById("viewer_exports").disabled = noHtml;
         document.getElementById("keep_raw_glb").disabled = noHtml;
         document.getElementById("html_sidecar").disabled = noHtml;
+        document.getElementById("up_axis_flip").disabled = noHtml;
+        document.querySelectorAll('input[name="viewer_up_axis"]').forEach(r => {
+            r.disabled = noHtml;
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Up-axis preview — a triad drawn the way the exported viewer will show
+    // it, so "Z up" is something you can see rather than infer. Same colours
+    // and letters as the viewer's corner gizmo (web/bomdom/axes.js); the two
+    // are separate builds, so the projection maths is deliberately duplicated
+    // rather than shared.
+    // -----------------------------------------------------------------------
+
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const AXIS_UNIT = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+    // Camera position for the "front" view of each up axis — mirrors
+    // FRONT_FOR_UP in web/bomdom/scene.js.
+    const FRONT_FOR_UP = {
+        "+y": [0, 0, 1], "-y": [0, 0, -1],
+        "+z": [0, -1, 0], "-z": [0, 1, 0],
+        "+x": [0, 0, 1], "-x": [0, 0, 1],
+    };
+
+    const vScale = (v, k) => [v[0] * k, v[1] * k, v[2] * k];
+    const vAdd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const vDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const vCross = (a, b) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ];
+    function vNorm(v) {
+        const len = Math.hypot(v[0], v[1], v[2]) || 1;
+        return vScale(v, 1 / len);
+    }
+
+    function svgEl(name, attrs) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const k in attrs) node.setAttribute(k, attrs[k]);
+        return node;
+    }
+
+    function drawAxisPreview() {
+        const box = document.getElementById("upAxisPreview");
+        if (!box) return;
+        const up = getUpAxis();
+        const letter = up[1];
+        const upVec = vScale(AXIS_UNIT[letter], up[0] === "-" ? -1 : 1);
+        const front = FRONT_FOR_UP[up];
+        const right = vCross(upVec, front);
+        // Isometric eye, then the screen basis that eye implies.
+        const eye = vNorm(vAdd(vAdd(front, right), upVec));
+        const sx = vNorm(vCross(upVec, eye));
+        const sy = vCross(eye, sx);
+
+        const SIZE = 112, C = SIZE / 2, R = 34, BALL = 10;
+        const svg = svgEl("svg", {
+            width: SIZE, height: SIZE, viewBox: "0 0 " + SIZE + " " + SIZE,
+            role: "img",
+            "aria-label": (up[0] === "-" ? "Negative " : "") + letter.toUpperCase() +
+                " points up in the 3D view",
+        });
+
+        // Screen-up guide: a dashed arrow up the middle, so the triad is read
+        // against "this direction is up on your monitor".
+        svg.appendChild(svgEl("path", { class: "axis-svg-guide", d: "M" + C + " " + (C - 4) + " V10" }));
+        svg.appendChild(svgEl("path", {
+            class: "axis-svg-guide-head",
+            d: "M" + C + " 5 l4 6 h-8 z",
+        }));
+        const guideText = svgEl("text", {
+            class: "axis-svg-guide-text", x: C + 7, y: 15,
+        });
+        guideText.textContent = "up";
+        svg.appendChild(guideText);
+
+        const arms = ["x", "y", "z"].map(key => {
+            const v = AXIS_UNIT[key];
+            return { key, x: C + vDot(v, sx) * R, y: C - vDot(v, sy) * R, depth: vDot(v, eye) };
+        });
+        arms.sort((a, b) => a.depth - b.depth); // back to front
+        for (const arm of arms) {
+            const g = svgEl("g", { class: "ax-" + arm.key });
+            g.appendChild(svgEl("line", {
+                class: "axis-svg-line", x1: C, y1: C, x2: arm.x.toFixed(2), y2: arm.y.toFixed(2),
+            }));
+            g.appendChild(svgEl("circle", {
+                class: "axis-svg-ball", cx: arm.x.toFixed(2), cy: arm.y.toFixed(2), r: BALL,
+            }));
+            const label = svgEl("text", {
+                class: "axis-svg-label", x: arm.x.toFixed(2), y: arm.y.toFixed(2),
+                "text-anchor": "middle", dy: "0.35em",
+            });
+            label.textContent = arm.key.toUpperCase();
+            g.appendChild(label);
+            svg.appendChild(g);
+        }
+
+        box.innerHTML = "";
+        box.appendChild(svg);
+        const cap = document.getElementById("upAxisCaption");
+        if (cap) {
+            cap.innerHTML = "";
+            const strong = document.createElement("span");
+            strong.className = "ax-" + letter;
+            strong.style.fontWeight = "700";
+            strong.textContent = (up[0] === "-" ? "−" : "") + letter.toUpperCase();
+            cap.appendChild(strong);
+            cap.appendChild(document.createTextNode(" up when the file opens"));
+        }
     }
 
     function outputsLabel() {
         const o = getOutputs();
-        if (o.excel && o.html) return "Excel + 3D HTML";
-        if (o.html) return "3D HTML only";
+        const up = " (" + (o.upAxis[0] === "-" ? "−" : "") + o.upAxis[1].toUpperCase() + " up)";
+        if (o.excel && o.html) return "Excel + 3D HTML" + up;
+        if (o.html) return "3D HTML only" + up;
         return "Excel";
     }
 
@@ -301,7 +420,15 @@
                 if (data.html_sidecar !== undefined) {
                     document.getElementById("html_sidecar").checked = !!data.html_sidecar;
                 }
+                if (data.viewer_up_axis) {
+                    const stored = String(data.viewer_up_axis);
+                    const radio = document.querySelector(
+                        `input[name="viewer_up_axis"][value="${stored.slice(-1)}"]`);
+                    if (radio) radio.checked = true;
+                    document.getElementById("up_axis_flip").checked = stored[0] === "-";
+                }
                 refreshViewerExportsState();
+                drawAxisPreview();
 
                 // Update preview + chips + node states with loaded settings
                 refreshQualityUI();
@@ -332,6 +459,7 @@
         data.viewer_exports = outputs.viewerExports;
         data.keep_raw_glb = outputs.keepRawGlb;
         data.html_sidecar = outputs.htmlSidecar;
+        data.viewer_up_axis = outputs.upAxis;
 
         postJson("/api/settings", data).catch(() => {});
     }
@@ -344,11 +472,19 @@
     document.querySelectorAll('input[name="quality"], input[name="assembly_mode"]').forEach(radio => {
         radio.addEventListener("change", saveSettings);
     });
-    ["output_excel", "output_html", "viewer_exports", "keep_raw_glb", "html_sidecar"].forEach(id => {
+    ["output_excel", "output_html", "viewer_exports", "keep_raw_glb", "html_sidecar",
+     "up_axis_flip"].forEach(id => {
         document.getElementById(id).addEventListener("change", saveSettings);
     });
+    document.querySelectorAll('input[name="viewer_up_axis"]').forEach(radio => {
+        radio.addEventListener("change", saveSettings);
+    });
     document.getElementById("output_html").addEventListener("change", refreshViewerExportsState);
+    document.querySelectorAll('input[name="viewer_up_axis"], #up_axis_flip').forEach(el => {
+        el.addEventListener("change", drawAxisPreview);
+    });
     refreshViewerExportsState();
+    drawAxisPreview();
 
     // -----------------------------------------------------------------------
     // Time estimation
@@ -596,6 +732,7 @@
             viewer_exports: outputs.viewerExports,
             keep_raw_glb: outputs.keepRawGlb,
             html_sidecar: outputs.htmlSidecar,
+            viewer_up_axis: outputs.upAxis,
         };
 
         postJson("/api/run", params)

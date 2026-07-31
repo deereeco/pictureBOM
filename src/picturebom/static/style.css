@@ -37,6 +37,12 @@
     --log-bg: #171b26;
     --log-text: #d6dae4;
     --shadow: 0 1px 3px rgba(28, 36, 48, 0.08);
+    /* Axis identity — kept in sync with the BomDom viewer (web/bomdom/style.css)
+       so an axis is the same colour here and in the exported 3D BOM. */
+    --axis-x: #cf3b40;
+    --axis-y: #2f9e63;
+    --axis-z: #3a72d4;
+    --axis-on: #ffffff;
 }
 :root[data-theme="dark"] {
     color-scheme: dark;
@@ -69,6 +75,10 @@
     --log-bg: #10131b;
     --log-text: #c2c8d4;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+    --axis-x: #ef7b6d;
+    --axis-y: #57b98a;
+    --axis-z: #6fa8f5;
+    --axis-on: #101720;
 }
 
 /* ---------- base ---------- */
@@ -458,6 +468,71 @@ html.theme-transition .fill { transition: none !important; }
     font-size: 12px;
 }
 .input-num { flex: none; width: 84px; }
+
+/* ---------- up-axis picker (3D output sub-option) ---------- */
+.axis-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    padding: 6px 0 2px;
+}
+.axis-row:has(input:disabled) { opacity: 0.5; }
+.axis-choice { flex: 1; min-width: 0; }
+.axis-row-label { display: block; font-size: 13px; color: var(--text); }
+.radios-inline { flex-direction: row; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.radio-axis { align-items: center; gap: 7px; padding: 4px 10px 4px 6px; }
+.ax-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--axis-on);
+}
+/* Two classes deep so the chip keeps its readable label colour against the
+   plain .ax-* colour rules further down. */
+.ax-chip.ax-x { background: var(--axis-x); color: var(--axis-on); }
+.ax-chip.ax-y { background: var(--axis-y); color: var(--axis-on); }
+.ax-chip.ax-z { background: var(--axis-z); color: var(--axis-on); }
+.axis-note { font-size: 11.5px; color: var(--text-muted); }
+.axis-flip { padding: 2px 0 4px; font-size: 12.5px; }
+.axis-flip input { width: 14px; height: 14px; }
+.axis-preview {
+    flex: none;
+    width: 152px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+.axis-preview-box {
+    width: 112px;
+    height: 112px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.axis-preview-cap { font-size: 11.5px; color: var(--text-muted); text-align: center; }
+.axis-svg-line { stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.axis-svg-ball { fill: currentColor; }
+.axis-svg-label {
+    fill: var(--axis-on);
+    font-size: 10px;
+    font-weight: 700;
+    pointer-events: none;
+}
+.axis-svg-guide { stroke: var(--border-strong); stroke-width: 1.2; stroke-dasharray: 3 3; fill: none; }
+.axis-svg-guide-head { fill: var(--text-faint); }
+.axis-svg-guide-text { fill: var(--text-faint); font-size: 8.5px; font-weight: 600; }
+.ax-x { color: var(--axis-x); }
+.ax-y { color: var(--axis-y); }
+.ax-z { color: var(--axis-z); }
 
 /* ---------- viewport preview ---------- */
 .preview {

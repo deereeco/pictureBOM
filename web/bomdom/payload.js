@@ -52,7 +52,7 @@ export function readConfig() {
   // NOT removed — hand-editors should still find it in saved copies of a
   // loaded page. Anything unparseable falls back to defaults (fail open: a
   // typo while hand-editing must not silently brick the menu).
-  const defaults = { allow_exports: true };
+  const defaults = { allow_exports: true, up_axis: 'y' };
   const el = document.getElementById('bomdom-config');
   if (!el) return defaults;
   try {

@@ -1493,7 +1493,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  on_status=None, overwrite=False, completion_popup=False,
                  output_excel=True, output_html=False,
                  html_size_limit_mb=25, keep_raw_glb=True, viewer_exports=True,
-                 html_sidecar=False):
+                 html_sidecar=False, viewer_up_axis="+y"):
     """
     Run the full pictureBOM pipeline.
 
@@ -1536,6 +1536,14 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                       HTML instead of embedding it (the page asks for the .glb
                       when opened). Default: embed unless html_size_limit_mb
                       is exceeded.
+        viewer_up_axis: Model axis the 3D viewer points up when the HTML is
+                        first opened ("+y" glTF default, "+z" for most CAD
+                        assemblies; any of +/-x, +/-y, +/-z). Readers can
+                        change it in the viewer's View menu, and it is
+                        hand-editable after export via "up_axis" near the top
+                        of the HTML. Geometry is never rotated — only the
+                        camera — so X/Y/Z keep meaning the CAD axes.
+                        (Literal default here: bomdom is imported lazily.)
 
     Returns:
         dict with keys: excel_path, images_dir, total_components, captured_count,
@@ -1863,6 +1871,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     on_status=on_status,
                     size_limit_mb=0 if html_sidecar else html_size_limit_mb,
                     viewer_exports=viewer_exports,
+                    up_axis=viewer_up_axis,
                     no_geometry_names=no_geometry,
                     census_complete=census_complete,
                 )

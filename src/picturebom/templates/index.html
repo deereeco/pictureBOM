@@ -207,6 +207,28 @@
                                             3D interactive BOM (.html) &mdash; a single file teammates open in any browser; needs SolidWorks 2024+</label>
                                         <label class="check check-sub"><input type="checkbox" id="viewer_exports" checked>
                                             Allow exporting parts lists from the 3D viewer <span class="hint-inline">&mdash; uncheck so recipients can view but not re-export; hand-editable in the HTML afterwards ("allow_exports")</span></label>
+                                        <div class="check-sub axis-row" id="upAxisRow">
+                                            <div class="axis-choice">
+                                                <span class="axis-row-label">Which way is up in the 3D view</span>
+                                                <div class="radios radios-inline" role="radiogroup" aria-label="Up axis">
+                                                    <label class="radio radio-axis"><input type="radio" name="viewer_up_axis" value="x">
+                                                        <span class="ax-chip ax-x">X</span></label>
+                                                    <label class="radio radio-axis"><input type="radio" name="viewer_up_axis" value="y" checked>
+                                                        <span class="ax-chip ax-y">Y</span>
+                                                        <span class="axis-note">glTF default</span></label>
+                                                    <label class="radio radio-axis"><input type="radio" name="viewer_up_axis" value="z">
+                                                        <span class="ax-chip ax-z">Z</span>
+                                                        <span class="axis-note">most CAD</span></label>
+                                                </div>
+                                                <label class="check axis-flip"><input type="checkbox" id="up_axis_flip">
+                                                    Flip (model is upside down)</label>
+                                                <span class="hint-inline">Only the viewer camera turns &mdash; X/Y/Z always mean the model's own axes. Readers can change it in the viewer's View menu; hand-editable in the HTML afterwards ("up_axis").</span>
+                                            </div>
+                                            <figure class="axis-preview">
+                                                <div id="upAxisPreview" class="axis-preview-box"></div>
+                                                <figcaption id="upAxisCaption" class="axis-preview-cap"></figcaption>
+                                            </figure>
+                                        </div>
                                         <label class="check check-sub"><input type="checkbox" id="html_sidecar">
                                             Write the 3D data as a separate .glb next to the HTML <span class="hint-inline">&mdash; smaller HTML; keep both files together (the page asks for the .glb when opened)</span></label>
                                         <label class="check check-sub"><input type="checkbox" id="keep_raw_glb" checked>

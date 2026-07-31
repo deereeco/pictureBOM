@@ -88,6 +88,14 @@ def main():
              "instead of embedding it (keep the two files together).",
     )
     parser.add_argument(
+        "--up-axis",
+        choices=["x", "y", "z", "+x", "+y", "+z", "-x", "-y", "-z"],
+        default="+y",
+        help="Model axis the 3D viewer points up when the HTML is opened "
+             "(default +y, glTF's convention; most CAD assemblies want +z). "
+             "Readers can change it in the viewer's View menu.",
+    )
+    parser.add_argument(
         "--no-viewer-exports",
         action="store_true",
         help="Hide the Export menu inside the 3D BOM viewer (recipients can view "
@@ -101,6 +109,7 @@ def main():
     if not args.html:
         for flag, present in [("--glb", args.glb is not None),
                               ("--sidecar", args.sidecar),
+                              ("--up-axis", args.up_axis != "+y"),
                               ("--discard-glb", args.discard_glb)]:
             if present:
                 parser.error(f"{flag} requires --html "
@@ -158,6 +167,7 @@ def main():
             keep_raw_glb=not args.discard_glb,
             html_sidecar=args.sidecar,
             viewer_exports=not args.no_viewer_exports,
+            viewer_up_axis=args.up_axis,
         )
         if result["excel_path"]:
             print(f"\nDone! BOM saved to: {result['excel_path']}")

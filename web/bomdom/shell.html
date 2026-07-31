@@ -49,6 +49,10 @@
         <div class="appbar-right">
             <div class="toolbar">
                 <div class="menu-anchor">
+                    <button type="button" id="btnView" class="tb-btn" title="Which way is up, and standard views">View &#9662;</button>
+                    <div id="viewMenu" class="dropdown view-pop hidden"></div>
+                </div>
+                <div class="menu-anchor">
                     <button type="button" id="btnExplode" class="tb-btn" title="Explode view setup">Explode &#9662;</button>
                     <div id="explodeMenu" class="dropdown explode-pop hidden"></div>
                 </div>
@@ -88,6 +92,7 @@
                 <span id="scopeLabel"></span>
                 <button type="button" id="scopeClose" title="Back to full assembly">&#10005; back</button>
             </div>
+            <div id="axisGizmo" class="axis-gizmo hidden" title="Model axes — click an axis to look down it"></div>
             <div id="viewportCard" class="viewport-card hidden"></div>
             <div id="dropZone" class="drop-zone hidden">
                 <div class="drop-inner">
@@ -133,6 +138,8 @@
             <span class="help-k">Click</span><span>Select (Ctrl adds)</span>
             <span class="help-k">Ctrl + drag</span><span>Box select (adds to selection)</span>
             <span class="help-k">Double-click</span><span>Frame part</span>
+            <span class="help-k">Axis gizmo (bottom left)</span><span>Click an axis to look down it; caption shows which way is up</span>
+            <span class="help-k">1 &hellip; 6 / 0</span><span>Front, Back, Left, Right, Top, Bottom / Isometric</span>
             <span class="help-k">Right-click</span><span>Context menu (acts on selection)</span>
             <span class="help-k">Shift + drag part</span><span>Move part / selection</span>
             <span class="help-k">M</span><span>Move mode on/off</span>

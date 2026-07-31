@@ -349,14 +349,25 @@ def test_export_orchestrator(big_glb_path, out_dir):
     check("embedded GLB round-trips through gzip+b64 and validates", True)
     check("unmatched BOM row reconciled",
           "NOT-IN-3D-PART" in payload["reconciliation"]["unmatched_rows"])
-    check("viewer exports allowed by default (hand-editable plain JSON)",
-          json.loads(_extract(html, "config")) == {"allow_exports": True})
+    check("viewer exports allowed and +y up by default (hand-editable plain JSON)",
+          json.loads(_extract(html, "config")) == {"allow_exports": True, "up_axis": "+y"})
 
     res_noexp = export_bomdom_html(str(big_glb_path), str(out_dir), "smoke",
                                    "noexports-run", viewer_exports=False, **common)
     html_noexp = Path(res_noexp["html_path"]).read_text(encoding="utf-8")
     check("viewer_exports=False lands in the config block",
-          json.loads(_extract(html_noexp, "config")) == {"allow_exports": False})
+          json.loads(_extract(html_noexp, "config"))["allow_exports"] is False)
+
+    res_up = export_bomdom_html(str(big_glb_path), str(out_dir), "smoke",
+                                "upaxis-run", up_axis="Z", **common)
+    html_up = Path(res_up["html_path"]).read_text(encoding="utf-8")
+    check("up_axis is normalized into the config block",
+          json.loads(_extract(html_up, "config"))["up_axis"] == "+z")
+    res_bad = export_bomdom_html(str(big_glb_path), str(out_dir), "smoke",
+                                 "badaxis-run", up_axis="sideways", **common)
+    html_bad = Path(res_bad["html_path"]).read_text(encoding="utf-8")
+    check("a nonsense up_axis falls back to the default",
+          json.loads(_extract(html_bad, "config"))["up_axis"] == "+y")
 
     res2 = export_bomdom_html(str(big_glb_path), str(out_dir), "smoke", "sidecar-run",
                               size_limit_mb=1, **common)

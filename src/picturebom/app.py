@@ -191,6 +191,7 @@ def run_job():
                 output_excel=bool(params.get("output_excel", True)),
                 output_html=bool(params.get("output_html", False)),
                 viewer_exports=bool(params.get("viewer_exports", True)),
+                viewer_up_axis=params.get("viewer_up_axis") or "+y",
                 keep_raw_glb=bool(params.get("keep_raw_glb", True)),
                 html_sidecar=bool(params.get("html_sidecar", False)),
             )

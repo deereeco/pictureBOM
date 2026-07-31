@@ -62,6 +62,25 @@ _INSTANCE_SUFFIX_RE = re.compile(r"-\d+$")
 THUMBNAIL_MAX_PX = 256
 THUMBNAIL_JPEG_QUALITY = 70
 
+# Which model axis the viewer points up on screen. glTF's own convention is
+# +Y; CAD assemblies usually mean +Z, and one modelled sideways can need any
+# of the six. Only the viewer camera is affected -- geometry is never rotated,
+# so X/Y/Z keep meaning the CAD axes everywhere.
+UP_AXES = ("+x", "-x", "+y", "-y", "+z", "-z")
+DEFAULT_UP_AXIS = "+y"
+
+
+def normalize_up_axis(up_axis):
+    """'z' / '+Z' / '-y' -> a canonical signed axis; anything else -> default."""
+    if not isinstance(up_axis, str):
+        return DEFAULT_UP_AXIS
+    s = up_axis.strip().lower()
+    if not s:
+        return DEFAULT_UP_AXIS
+    if s[0] not in "+-":
+        s = "+" + s
+    return s if s in UP_AXES else DEFAULT_UP_AXIS
+
 
 class Glb:
     """A parsed GLB: the glTF JSON dict plus the binary chunk."""
@@ -1159,15 +1178,20 @@ def build_payload(assembly, repack_result, reconciliation, warnings, bom, thumbs
     }
 
 
-def build_html(template_text, payload, glb_bytes, mode, viewer_exports=True):
+def build_html(template_text, payload, glb_bytes, mode, viewer_exports=True,
+               up_axis=DEFAULT_UP_AXIS):
     """Substitute the four sentinels. base64 content is injection-safe.
 
     The config block stays plain JSON on purpose: the file owner can open the
-    exported HTML in a text editor and flip "allow_exports" after the fact.
+    exported HTML in a text editor and flip "allow_exports" or "up_axis"
+    after the fact.
     """
     meta_b64 = _gzip_b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     glb_b64 = _gzip_b64(glb_bytes) if mode == "embedded" else ""
-    config = json.dumps({"allow_exports": bool(viewer_exports)})
+    config = json.dumps({
+        "allow_exports": bool(viewer_exports),
+        "up_axis": normalize_up_axis(up_axis),
+    })
     for sentinel in (SENTINEL_META, SENTINEL_GLB, SENTINEL_MODE, SENTINEL_CONFIG):
         if sentinel not in template_text:
             raise PictureBOMError(f"Viewer template is missing the {sentinel} slot")
@@ -1199,12 +1223,13 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
                        app_version="", generated="", on_status=None,
                        size_limit_mb=25, template_text=None, viewer_exports=True,
                        component_colors=None, no_geometry_names=(),
-                       census_complete=None):
+                       census_complete=None, up_axis=DEFAULT_UP_AXIS):
     """Post-process a raw SolidWorks GLB into a BomDom HTML (plus sidecar if huge).
 
     size_limit_mb <= 0 forces sidecar mode (HTML + separate .glb) regardless
     of size. no_geometry_names: BOM names known to contain no solid bodies,
-    for accurate missing-part warnings (see match_parts_to_bom).
+    for accurate missing-part warnings (see match_parts_to_bom). up_axis is
+    the model axis the viewer points up when the file is first opened.
 
     Never raises past this function for repack-stage problems: falls back to
     embedding the unmodified single-scene GLB, and ultimately returns
@@ -1300,7 +1325,8 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
     force_sidecar = size_limit_mb is not None and size_limit_mb <= 0
     projected_mb = 0.0
     if not force_sidecar:
-        html = build_html(template, payload, glb_bytes, "embedded", viewer_exports)
+        html = build_html(template, payload, glb_bytes, "embedded", viewer_exports,
+                          up_axis=up_axis)
         projected_mb = len(html) / 1e6
 
     if force_sidecar or projected_mb > size_limit_mb:
@@ -1314,7 +1340,8 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
         geometry["sidecar_filename"] = sidecar_name
         payload = build_payload(assembly, repack, reconciliation, warnings, bom,
                                 thumbs, geometry, generated, app_version)
-        html = build_html(template, payload, b"", "sidecar", viewer_exports)
+        html = build_html(template, payload, b"", "sidecar", viewer_exports,
+                          up_axis=up_axis)
         if force_sidecar:
             projected_mb = len(html) / 1e6
         sidecar_path = os.path.join(output_dir, sidecar_name)
