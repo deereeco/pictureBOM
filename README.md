@@ -125,6 +125,17 @@ uv tool uninstall picturebom
 6. Click **Run pictureBOM**.
 7. When complete, use **Open Output Folder** to find your files or **Download Copy of BOM** to grab the Excel through the browser.
 
+### Rerunning without SolidWorks
+
+Every run writes a plain `.csv` of the parts list next to its `.xlsx`. To rebuild
+the outputs later — new image quality, the 3D BOM you skipped the first time, an
+edited parts list — fill in **Advanced**: *Existing BOM* (that `.csv`, **or the
+`.xlsx` itself**), *Existing images folder*, and for a 3D BOM the kept
+`_raw.glb`. With all three filled in the run never touches SolidWorks, so it
+takes seconds instead of minutes. Edit the CSV first and the rebuilt BOM picks up
+your changes; rerun from the `.xlsx` instead and anything you have marked in its
+**Status** column comes across too.
+
 ### Compare BOMs
 
 The **Compare BOMs** panel shows which parts you still need to order: pick the BOM for parts you already have and the BOM for the assembly you want to build, and it produces a shortage list (on screen and as an Excel file).

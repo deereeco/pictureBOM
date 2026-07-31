@@ -870,6 +870,14 @@
                 } else {
                     appendLog("\nDone! No BOM data to write.");
                 }
+                if (r.bom_csv_path) {
+                    // Not auto-filled into the Advanced field on purpose — a
+                    // path the user didn't type must never silently change the
+                    // next run.
+                    appendLog("Parts list also saved as " + basename(r.bom_csv_path) +
+                        " — put it (or the .xlsx) in Advanced > Existing BOM to rerun " +
+                        "without SolidWorks.");
+                }
 
                 const warnings = (r.warnings || []).slice();
                 if (r.html_mode === "sidecar" && r.sidecar_path) {

@@ -98,16 +98,16 @@
                             <details class="adv">
                                 <summary>
                                     <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5 7 5 3.5 8.5"/></svg>
-                                    Advanced &mdash; reuse an existing CSV, part images or 3D model
+                                    Advanced &mdash; reuse an existing BOM, part images or 3D model
                                 </summary>
                                 <div class="adv-body">
                                     <div class="field">
-                                        <label class="label" for="csv_path">CSV file</label>
+                                        <label class="label" for="csv_path">Existing BOM (.csv or .xlsx)</label>
                                         <div class="row">
-                                            <input class="input" type="text" id="csv_path" name="csv_path" placeholder="C:\path\to\bom.csv">
-                                            <button type="button" class="btn btn-neutral btn-browse" data-target="csv_path" data-mode="csv">Browse&hellip;</button>
+                                            <input class="input" type="text" id="csv_path" name="csv_path" placeholder="C:\path\to\bom.csv or ..._pictureBOM.xlsx">
+                                            <button type="button" class="btn btn-neutral btn-browse" data-target="csv_path" data-mode="bom">Browse&hellip;</button>
                                         </div>
-                                        <p class="hint">Use a CSV BOM instead of reading properties from SolidWorks</p>
+                                        <p class="hint">Use an existing parts list instead of reading properties from SolidWorks &mdash; a CSV, or a workbook from an earlier run (every run also writes a <span class="mono">.csv</span> next to its <span class="mono">.xlsx</span> for this)</p>
                                     </div>
                                     <div class="field">
                                         <label class="label" for="images_dir">Existing images folder</label>
@@ -123,7 +123,7 @@
                                             <input class="input" type="text" id="glb_path" name="glb_path" placeholder="C:\path\to\model.glb">
                                             <button type="button" class="btn btn-neutral btn-browse" data-target="glb_path" data-mode="glb">Browse&hellip;</button>
                                         </div>
-                                        <p class="hint">Skip the slow 3D export &mdash; reuse the <span class="mono">_raw.glb</span> an earlier run kept (or a .glb saved from SolidWorks via File &gt; Save As). With CSV + images + 3D model all filled in, the run doesn't need SolidWorks at all.</p>
+                                        <p class="hint">Skip the slow 3D export &mdash; reuse the <span class="mono">_raw.glb</span> an earlier run kept (or a .glb saved from SolidWorks via File &gt; Save As). With BOM + images + 3D model all filled in, the run doesn't need SolidWorks at all.</p>
                                     </div>
                                 </div>
                             </details>

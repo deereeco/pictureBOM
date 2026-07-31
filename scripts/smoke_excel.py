@@ -19,7 +19,9 @@ from picturebom.core import (
     compare_boms,
     generate_comparison_excel,
     generate_excel_bom,
+    load_bom_table,
     parse_bom_excel,
+    write_bom_csv,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -149,6 +151,64 @@ def main():
     check("Parts Only sheet parsed with totals",
           {pn: p["qty"] for pn, p in parsed.items()} == EXPECTED_TOTALS,
           f"got { {pn: p['qty'] for pn, p in parsed.items()} }")
+
+    print("\nrerun sources (CSV twin and the workbook itself):")
+    # Both must feed straight back into a run: same columns, same rows, in
+    # the same order — that is what makes a rerun need no SolidWorks.
+    for label, rows, kwargs, book in [
+        ("flat", flat_parts, {}, flat_path),
+        ("nested", HIER_ROWS, {"hierarchical": True}, nested_path),
+        ("linked", flat_parts, {}, linked_path),
+    ]:
+        twin = out_dir / f"{label}.csv"
+        write_bom_csv(rows, str(twin), **kwargs)
+        csv_rows, csv_cols = load_bom_table(str(twin))
+        xlsx_rows, xlsx_cols = load_bom_table(str(book))
+        # The workbook carries a Status column (empty on a fresh run) that the
+        # CSV twin has no data for; everything else must match exactly.
+        check(f"{label}: CSV twin and workbook agree on columns",
+              csv_cols == [c for c in xlsx_cols if c.lower() != "status"],
+              f"{csv_cols} vs {xlsx_cols}")
+        check(f"{label}: CSV twin and workbook agree on rows",
+              [{k: str(v) for k, v in r.items()} for r in csv_rows]
+              == [{k: str(v) for k, v in r.items() if k.lower() != "status"}
+                  for r in xlsx_rows],
+              f"{csv_rows[:1]} vs {xlsx_rows[:1]}")
+        check(f"{label}: the Picture column is never read back",
+              "picture" not in {c.lower() for c in csv_cols + xlsx_cols})
+        check(f"{label}: quantities come back as numbers",
+              all(isinstance(r[c], (int, float))
+                  for r in csv_rows
+                  for c in csv_cols if c.lower() in {"qty", "total qty"}),
+              f"got {csv_rows[0]}")
+
+    # A rebuild from the twin reproduces the same parts and totals.
+    rebuilt = out_dir / "rebuilt_from_csv.xlsx"
+    rows, cols = load_bom_table(str(out_dir / "flat.csv"))
+    generate_excel_bom(rows, images, str(rebuilt), csv_columns=cols)
+    parsed = parse_bom_excel(str(rebuilt))["parts"]
+    check("rebuild from the CSV twin matches the original totals",
+          {pn: p["qty"] for pn, p in parsed.items()} == EXPECTED_TOTALS,
+          f"got { {pn: p['qty'] for pn, p in parsed.items()} }")
+
+    # Rerunning from a workbook someone has been marking up keeps that
+    # markup, and must not grow a second Status column.
+    marked = load_workbook(str(flat_path))
+    marked.active.cell(row=2, column=8).value = "Ordered"
+    marked_path = out_dir / "marked.xlsx"
+    marked.save(str(marked_path))
+    marked.close()
+    rows, cols = load_bom_table(str(marked_path))
+    rebuilt_marked = out_dir / "rebuilt_from_marked.xlsx"
+    generate_excel_bom(rows, images, str(rebuilt_marked), csv_columns=cols)
+    wb = load_workbook(str(rebuilt_marked))
+    headers = [c.value for c in wb.active[1]]
+    check("rerun from a marked-up workbook keeps one Status column",
+          [h for h in headers].count("Status") == 1, f"got {headers}")
+    check("rerun from a marked-up workbook keeps the Status values",
+          wb.active.cell(row=2, column=headers.index("Status") + 1).value == "Ordered",
+          f"got {wb.active.cell(row=2, column=headers.index('Status') + 1).value!r}")
+    wb.close()
 
     print("\ncompare old (openpyxl) vs new (xlsxwriter), both directions:")
     cmp_ab = compare_boms(str(OLD_WORKBOOK), str(flat_path))

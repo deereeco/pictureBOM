@@ -116,10 +116,12 @@ def browse():
     mode = request.json.get("mode", "file")
     if mode == "folder":
         path = filedialog.askdirectory(title="Select Folder")
-    elif mode == "csv":
+    elif mode == "bom":
+        # An earlier run's workbook is as good a source as its CSV twin.
         path = filedialog.askopenfilename(
-            title="Select CSV File",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            title="Select BOM File",
+            filetypes=[("BOM files", "*.csv *.xlsx"), ("CSV files", "*.csv"),
+                       ("Excel files", "*.xlsx"), ("All files", "*.*")],
         )
     elif mode == "excel":
         path = filedialog.askopenfilename(

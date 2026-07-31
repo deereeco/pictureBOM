@@ -51,7 +51,9 @@ def main():
     parser.add_argument(
         "--csv",
         default=None,
-        help="Path to an existing CSV file to use as the BOM data source.",
+        help="Path to an existing BOM table to use as the data source instead "
+             "of SolidWorks properties: a .csv, or the .xlsx from an earlier "
+             "run (every run also writes a .csv twin of its workbook).",
     )
     parser.add_argument(
         "--images",
@@ -171,6 +173,8 @@ def main():
         )
         if result["excel_path"]:
             print(f"\nDone! BOM saved to: {result['excel_path']}")
+        if result.get("bom_csv_path"):
+            print(f"BOM data (feed back in with --csv): {result['bom_csv_path']}")
         if result.get("html_path"):
             print(f"3D interactive BOM: {result['html_path']}"
                   f" ({result.get('html_projected_mb')} MB)")

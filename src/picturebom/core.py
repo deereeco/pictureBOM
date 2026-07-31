@@ -47,6 +47,14 @@ BUFFER_ROWS = 200  # rows past the data that keep dropdowns/colors working
 # Columns where text should be left-aligned (description-like)
 LEFT_ALIGN_HEADERS = {"description", "where used (sub-asm qty)"}
 
+# The data columns of a generated BOM, between the leading Picture column and
+# the trailing Status dropdown. Shared with write_bom_csv so the CSV twin of a
+# workbook always has the same columns in the same order.
+FLAT_HEADERS = ["Part Number", "Description", "Total Qty", "Vendor",
+                "Vendor Part No", "Where Used (Sub-Asm Qty)"]
+HIERARCHICAL_HEADERS = ["Level", "Type", "Part Number", "Description", "Qty",
+                        "Vendor", "Vendor Part No"]
+
 STATUS_OPTIONS = ["To Order", "Ordered", "Received", "Installed"]
 COMMON_VENDORS = ["Thorlabs", "McMaster-Carr", "Newport", "Digi-Key", "Unknown"]
 
@@ -767,14 +775,132 @@ def get_solidworks_year(sw_app):
         return None
 
 
+QTY_HEADERS = {"qty", "quantity", "total qty", "total quantity"}
+
+
+def _as_number(value):
+    """'4' -> 4 for quantity cells; anything else is left alone.
+
+    CSV values are always strings, and a text "4" in the workbook sorts and
+    sums wrong. Only quantity columns are coerced — part numbers like
+    91290A115 or 0402 must survive as typed.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return value
+
+
 def load_csv_bom(csv_path):
     """Load a CSV file and return a list of row dicts. Expects a 'Part Number' column."""
     rows = []
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
+        qty_cols = {name for name in (reader.fieldnames or [])
+                    if str(name).strip().lower() in QTY_HEADERS}
         for row in reader:
+            for name in qty_cols:
+                row[name] = _as_number(row.get(name))
             rows.append(row)
     return rows, reader.fieldnames
+
+
+def load_excel_bom(excel_path):
+    """Load BOM rows out of a pictureBOM .xlsx, in the shape load_csv_bom returns.
+
+    Lets a finished export feed the next run directly — no save-as-CSV
+    detour. Headers are read from row 1 of the best sheet (linked workbooks
+    keep totals on "Parts Only"), so flat, nested and CSV-mode workbooks all
+    work. Picture is dropped (the images come from the images folder), but
+    Status is kept: whatever the user has marked Ordered/Received survives
+    into the rebuilt workbook instead of being reset.
+    """
+    wb = load_workbook(excel_path, data_only=True)
+    try:
+        ws = wb.active
+        for name in wb.sheetnames:
+            if name.lower().startswith("parts only"):
+                ws = wb[name]
+                break
+
+        columns = []       # header text, in sheet order
+        col_index = []     # matching 1-based column numbers
+        pn_col = None
+        for idx, cell in enumerate(ws[1], start=1):
+            header = str(cell.value).strip() if cell.value is not None else ""
+            if not header or header.lower() == "picture":
+                continue
+            columns.append(header)
+            col_index.append(idx)
+            if header.lower() == "part number":
+                pn_col = idx
+
+        if pn_col is None:
+            raise PictureBOMError(
+                f"No 'Part Number' column found in {os.path.basename(excel_path)} "
+                "— is this a pictureBOM workbook?")
+
+        rows = []
+        for row in ws.iter_rows(min_row=2):
+            if pn_col > len(row) or not row[pn_col - 1].value:
+                continue  # trailing buffer rows carry formatting but no part
+            rows.append({
+                name: ("" if row[idx - 1].value is None else row[idx - 1].value)
+                for name, idx in zip(columns, col_index)
+                if idx <= len(row)
+            })
+    finally:
+        wb.close()
+    return rows, columns
+
+
+def load_bom_table(path):
+    """Load BOM rows from a .csv or a pictureBOM .xlsx -> (rows, column names)."""
+    if str(path).lower().endswith((".xlsx", ".xlsm")):
+        return load_excel_bom(path)
+    return load_csv_bom(path)
+
+
+def write_bom_csv(bom_rows, output_path, csv_columns=None, hierarchical=False):
+    """Write the BOM as a plain CSV beside the workbook (same rows, same order).
+
+    The workbook is the deliverable; this is the machine-readable twin that
+    feeds a later rerun (--csv / the Advanced BOM field) without anyone
+    having to open Excel and save-as. Columns mirror the sheet minus Picture
+    (images live in the images folder) and, on a fresh run, the still-empty
+    Status dropdown — read back by load_bom_table as the same table.
+    """
+    if csv_columns:
+        headers = [str(c) for c in csv_columns]
+        def values(row):
+            return ["" if row.get(h) is None else row.get(h, "") for h in headers]
+    elif hierarchical:
+        headers = list(HIERARCHICAL_HEADERS)
+        def values(row):
+            return [row.get("level", ""), row.get("type", ""), row["name"],
+                    row.get("description", ""), row.get("quantity", 1),
+                    row.get("vendor", ""), row.get("vendor_part_no", "")]
+    else:
+        headers = list(FLAT_HEADERS)
+        def values(row):
+            return [row["name"], row.get("description", ""),
+                    row.get("total_quantity", 1), row.get("vendor", ""),
+                    row.get("vendor_part_no", ""), row.get("where_used", "")]
+
+    # utf-8-sig: Excel opens a plain utf-8 CSV as mojibake on Windows.
+    with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for row in bom_rows:
+            writer.writerow(values(row))
+    return output_path
 
 
 def _create_workbook(output_path):
@@ -1005,16 +1131,21 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
     wb, fmts = _create_workbook(output_path)
     ws = wb.add_worksheet("Visual BOM")
 
+    # A source table that already tracks Status keeps its own column (and the
+    # values in it) rather than gaining a second, empty one.
+    source_status = bool(csv_columns) and any(
+        str(c).strip().lower() == "status" for c in csv_columns)
+
     if csv_columns:
-        headers = ["Picture"] + [str(c) for c in csv_columns] + ["Status"]
+        headers = ["Picture"] + [str(c) for c in csv_columns] \
+            + ([] if source_status else ["Status"])
     elif hierarchical:
-        headers = ["Picture", "Level", "Type", "Part Number", "Description",
-                   "Qty", "Vendor", "Vendor Part No", "Status"]
+        headers = ["Picture"] + HIERARCHICAL_HEADERS + ["Status"]
     else:
-        headers = ["Picture", "Part Number", "Description", "Total Qty",
-                   "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)",
-                   "Status"]
-    status_col = len(headers) - 1
+        headers = ["Picture"] + FLAT_HEADERS + ["Status"]
+    status_col = (next(i for i, h in enumerate(headers)
+                       if h.strip().lower() == "status")
+                  if source_status else len(headers) - 1)
 
     widths = _ColWidths(headers)
     ws.set_row(0, HEADER_ROW_HEIGHT)
@@ -1062,7 +1193,8 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
                 else:
                     ws.write(r, col_idx, value, cell_fmt)
                 widths.track(col_idx, value)
-            ws.write_blank(r, status_col, None, fmts["center"])
+            if not source_status:  # the loop already filled the source's own
+                ws.write_blank(r, status_col, None, fmts["center"])
 
         vendor_source = (_add_vendor_list_sheet(wb, _vendor_options(vendors))
                          if vendor_col else None)
@@ -1148,9 +1280,7 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
     # prefers it). Status must remain the LAST column: the Assemblies sheet
     # references $B/$C/$E/$F by letter.
     ws1 = wb.add_worksheet("Parts Only (Editable)")
-    headers1 = ["Picture", "Part Number", "Description", "Total Qty",
-                "Vendor", "Vendor Part No", "Where Used (Sub-Asm Qty)",
-                "Status"]
+    headers1 = ["Picture"] + FLAT_HEADERS + ["Status"]
     widths1 = _ColWidths(headers1)
     ws1.set_row(0, HEADER_ROW_HEIGHT)
     for col, header in enumerate(headers1):
@@ -1166,8 +1296,7 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
 
     # ---- Sheet 2: Assemblies (Read-Only) ----
     ws2 = wb.add_worksheet("Assemblies (Read-Only)")
-    headers2 = ["Picture", "Level", "Type", "Part Number", "Description",
-                "Qty", "Vendor", "Vendor Part No"]
+    headers2 = ["Picture"] + HIERARCHICAL_HEADERS
     widths2 = _ColWidths(headers2)
     ws2.set_row(0, HEADER_ROW_HEIGHT)
     for col, header in enumerate(headers2):
@@ -1505,7 +1634,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         include_subassemblies: Legacy flag; use bom_mode instead.
         bom_mode: "flat", "nested", or "linked". If None, derived from
                   include_subassemblies for backward compatibility.
-        csv_path: Optional CSV file for BOM data instead of SolidWorks properties.
+        csv_path: Optional BOM table to use instead of SolidWorks properties —
+                  a .csv, or the .xlsx from an earlier run (every run writes a
+                  .csv twin of its workbook for exactly this).
         images_dir: Optional folder of existing images (skips capture).
         glb_path: Optional .glb from an earlier run (skips the slow SolidWorks
                   3D export). When csv_path, images_dir and glb_path are all
@@ -1546,8 +1677,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                         (Literal default here: bomdom is imported lazily.)
 
     Returns:
-        dict with keys: excel_path, images_dir, total_components, captured_count,
-        html_path, html_mode, sidecar_path, html_projected_mb, warnings, timing.
+        dict with keys: excel_path, bom_csv_path, images_dir, total_components,
+        captured_count, html_path, html_mode, sidecar_path, html_projected_mb,
+        warnings, timing.
 
     Raises:
         PictureBOMError: On fatal errors (file not found, SolidWorks not running, etc.)
@@ -1652,17 +1784,18 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                + (" and 3D model" if has_glb else ""))
     total = len(components)
 
-    # BOM data comes from CSV if provided, otherwise from SolidWorks traversal
+    # BOM data comes from the supplied table if provided (.csv or a previous
+    # run's .xlsx), otherwise from SolidWorks traversal
     csv_columns = None
     bom_rows = None
     if has_csv:
         csv_path = os.path.abspath(csv_path)
         if not os.path.isfile(csv_path):
-            raise PictureBOMError(f"CSV file not found: {csv_path}")
-        status(f"Loading CSV: {os.path.basename(csv_path)}")
-        bom_rows, csv_columns = load_csv_bom(csv_path)
-        bom_mode = "flat"  # CSV overrides mode
-        status(f"Loaded {len(bom_rows)} rows from CSV")
+            raise PictureBOMError(f"BOM file not found: {csv_path}")
+        status(f"Loading BOM: {os.path.basename(csv_path)}")
+        bom_rows, csv_columns = load_bom_table(csv_path)
+        bom_mode = "flat"  # an imported table overrides the mode
+        status(f"Loaded {len(bom_rows)} rows from {os.path.basename(csv_path)}")
         if not use_solidworks:
             total = len(bom_rows)
 
@@ -1689,6 +1822,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         log.warning("No BOM data to write.")
         return {
             "excel_path": None,
+            "bom_csv_path": None,
             "images_dir": img_dir,
             "total_components": total,
             "captured_count": captured_count,
@@ -1708,25 +1842,42 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     # Generate Excel BOM
     excel_elapsed = 0.0
+    bom_csv_path = None
     if output_excel:
         status("Generating Excel BOM...")
         excel_start = time.time()
 
+        # csv_rows/csv_kwargs mirror whatever the workbook shows, so the CSV
+        # twin written below is the same table in the same order.
         if csv_columns:
-            # CSV mode — flat sheet with CSV data
+            # Imported-table mode — flat sheet with the source's own columns
             generate_excel_bom(bom_rows, img_dir, excel_path, csv_columns=csv_columns)
+            csv_rows, csv_kwargs = bom_rows, {"csv_columns": csv_columns}
         elif bom_mode == "linked":
             flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
             _generate_linked_excel_bom(flat_parts, hierarchical_rows, img_dir, excel_path)
+            csv_rows, csv_kwargs = flat_parts, {}  # the Parts Only sheet
         elif bom_mode == "nested":
             generate_excel_bom(hierarchical_rows, img_dir, excel_path, hierarchical=True)
+            csv_rows, csv_kwargs = hierarchical_rows, {"hierarchical": True}
         else:
             # Flat mode — build flat parts from hierarchical data for Where Used
             flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
             generate_excel_bom(flat_parts, img_dir, excel_path)
+            csv_rows, csv_kwargs = flat_parts, {}
 
         excel_elapsed = time.time() - excel_start
         status(f"Excel BOM saved to: {excel_path}")
+
+        # Plain-CSV twin of the workbook: what a later rerun feeds back in.
+        # Never worth failing the run over — the .xlsx reads back too.
+        try:
+            bom_csv_path = write_bom_csv(
+                csv_rows, os.path.splitext(excel_path)[0] + ".csv", **csv_kwargs)
+            status(f"BOM data (for reruns) saved to: {bom_csv_path}")
+        except OSError as e:
+            bom_csv_path = None
+            warnings.append(f"Could not write the CSV copy of the BOM: {e}")
     else:
         excel_path = None
 
@@ -1912,6 +2063,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
     return {
         "excel_path": excel_path,
+        "bom_csv_path": bom_csv_path,
         "images_dir": img_dir,
         "total_components": total,
         "captured_count": captured_count,
