@@ -93,6 +93,9 @@ export function initInteractions(app) {
       tweenExplodeTo(0);
     },
     resetAll() {
+      // Facet filters + color-by clear even with no model (they filter the
+      // panel list in degraded mode too).
+      if (app.ui.clearFilters) app.ui.clearFilters();
       if (!app.model) return;
       sel.setScope(null);
       sel.clearSelection();

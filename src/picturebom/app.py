@@ -196,6 +196,7 @@ def run_job():
                 viewer_up_axis=params.get("viewer_up_axis") or "+y",
                 keep_raw_glb=bool(params.get("keep_raw_glb", True)),
                 html_sidecar=bool(params.get("html_sidecar", False)),
+                part_properties=params.get("part_properties") or None,
             )
             # Persist timing history for future estimates (skip if no capture data)
             timing = result.get("timing", {})

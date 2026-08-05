@@ -9,7 +9,17 @@ export function buildBomJoin(meta) {
     if (!key) return;
     const cur = rowByName.get(key) || {};
     for (const [k, v] of Object.entries(data)) {
+      if (k === 'properties') continue; // merged per-key below
       if (cur[k] === undefined || cur[k] === null || cur[k] === '') cur[k] = v;
+    }
+    if (data.properties) {
+      // A plain first-writer-wins would drop the second source's dict whole.
+      cur.properties = cur.properties || {};
+      for (const [pk, pv] of Object.entries(data.properties)) {
+        if (cur.properties[pk] === undefined || cur.properties[pk] === '') {
+          cur.properties[pk] = pv;
+        }
+      }
     }
     rowByName.set(key, cur);
   };
@@ -23,6 +33,7 @@ export function buildBomJoin(meta) {
       vendor_url: r.vendor_url,
       quantity: r.quantity,
       type: r.type,
+      properties: r.properties,
     });
   }
   for (const r of meta.bom.flat_parts || []) {
@@ -34,6 +45,7 @@ export function buildBomJoin(meta) {
       vendor_url: r.vendor_url,
       quantity: r.total_quantity,
       where_used: r.where_used,
+      properties: r.properties,
     });
   }
 

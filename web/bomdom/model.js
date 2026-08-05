@@ -354,14 +354,17 @@ export function applyPositions(model, f) {
 const HL_NONE = 0, HL_SELECTED = 1, HL_HOVER = 2;
 const matCache = new Map();
 
-function derive(base, ghost, opacity, highlight, ds) {
+function derive(base, ghost, opacity, highlight, ds, tint = null) {
   if (!base) return base;
-  if (!ghost && opacity >= 1 && highlight === HL_NONE && !ds) return base;
-  const key = `${base.uuid}|${ghost ? 'g' : 'o' + opacity}|h${highlight}|${ds ? 'd' : ''}`;
+  if (!ghost && opacity >= 1 && highlight === HL_NONE && !ds && tint === null) return base;
+  const key = `${base.uuid}|${ghost ? 'g' : 'o' + opacity}|h${highlight}|${ds ? 'd' : ''}|t${tint === null ? '' : tint}`;
   let m = matCache.get(key);
   if (!m) {
     m = base.clone();
     if (ds) m.side = THREE.DoubleSide;
+    // Color-by-property tint replaces the albedo; the base material is never
+    // mutated, so clearing color-by restores the part's own appearance.
+    if (tint !== null && m.color) m.color = new THREE.Color(tint);
     if (ghost) {
       m.transparent = true;
       m.opacity = 0.15;
@@ -427,25 +430,33 @@ export function updateVisuals(model, sel) {
   const hoverSet = new Set(sel.hover ? sel.hover.ids : []);
   const selSet = sel.selected;
   const scopeSet = sel.scope ? sel.scope.recIds : null;
+  // Facet filter: parts outside the matching set are ghosted (context kept)
+  // or hidden, per the filter's hide flag. Scope stays the stronger cut.
+  const filterIds = sel.filter ? sel.filter.recIds : null;
+  const filterHide = !!(sel.filter && sel.filter.hide);
+  const recColor = sel.colorBy ? sel.colorBy.recColor : null;
   const pickables = [];
   let hiddenInstances = 0;
 
   const dfs = (rec, inhGhost, inhOpacity, inhHover, inhSel) => {
     const f = rec.flags;
-    const hidden = f.hidden || (scopeSet !== null && !scopeSet.has(rec.id));
+    const outsideFilter = filterIds !== null && !filterIds.has(rec.id);
+    const hidden = f.hidden || (scopeSet !== null && !scopeSet.has(rec.id))
+      || (filterHide && outsideFilter);
     rec.object.visible = !hidden;
     if (hidden) {
       hiddenInstances += countMeshRecs(rec);
       return;
     }
-    const ghost = inhGhost || f.ghost;
+    const ghost = inhGhost || f.ghost || (!filterHide && outsideFilter);
     const opacity = Math.min(inhOpacity, f.opacity);
     const hovered = inhHover || hoverSet.has(rec.id);
     const selected = inhSel || selSet.has(rec.id);
     const hl = hovered ? HL_HOVER : selected ? HL_SELECTED : HL_NONE;
+    const tint = recColor ? (recColor.has(rec.id) ? recColor.get(rec.id) : null) : null;
     for (const mesh of rec.meshes) {
       if (mesh.userData.__base) {
-        mesh.material = derive(mesh.userData.__base, ghost, opacity, hl, !!mesh.userData.__ds);
+        mesh.material = derive(mesh.userData.__base, ghost, opacity, hl, !!mesh.userData.__ds, tint);
       }
       setOverlay(mesh, hl);
       if (!ghost) pickables.push(mesh);
@@ -481,11 +492,15 @@ export function scopeSetFor(recs) {
   return ids;
 }
 
-export function isEffectivelyHidden(rec, scope) {
+export function isEffectivelyHidden(rec, scope, filter) {
   const scopeSet = scope ? scope.recIds : null;
+  // Only a hiding filter affects visibility; a ghosting filter keeps parts
+  // visible (and exportable), matching how manual ghosting behaves.
+  const filterIds = filter && filter.hide && filter.recIds ? filter.recIds : null;
   for (let r = rec; r; r = r.parent) {
     if (r.flags.hidden) return true;
     if (scopeSet !== null && !scopeSet.has(r.id)) return true;
+    if (filterIds !== null && !filterIds.has(r.id)) return true;
   }
   return false;
 }

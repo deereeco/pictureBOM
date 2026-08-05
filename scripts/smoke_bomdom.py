@@ -351,6 +351,30 @@ def test_export_orchestrator(big_glb_path, out_dir):
           "NOT-IN-3D-PART" in payload["reconciliation"]["unmatched_rows"])
     check("viewer exports allowed and +y up by default (hand-editable plain JSON)",
           json.loads(_extract(html, "config")) == {"allow_exports": True, "up_axis": "+y"})
+    check("no configured properties -> empty property_names",
+          payload["bom"]["property_names"] == [],
+          f"got {payload['bom'].get('property_names')!r}")
+
+    rows_props = [dict(r, properties={"Process": "Machined" if i % 2 else "COTS"})
+                  for i, r in enumerate(rows)]
+    res_props = export_bomdom_html(
+        str(big_glb_path), str(out_dir), "smoke", "props-run",
+        property_names=["Process"],
+        **{**common, "hierarchical_rows": rows_props})
+    html_props = Path(res_props["html_path"]).read_text(encoding="utf-8")
+    payload_props = _unpack_payload(html_props)
+    check("configured property names land in the payload",
+          payload_props["bom"]["property_names"] == ["Process"],
+          f"got {payload_props['bom'].get('property_names')!r}")
+    check("rows carry their properties dicts",
+          payload_props["bom"]["hierarchical_rows"]
+          and all(r.get("properties", {}).get("Process") in ("Machined", "COTS")
+                  for r in payload_props["bom"]["hierarchical_rows"]),
+          f"got {payload_props['bom']['hierarchical_rows'][:1]}")
+    check("config block stays behavior-only (no property list)",
+          set(json.loads(_extract(html_props, "config")))
+          == {"allow_exports", "up_axis"},
+          f"got {json.loads(_extract(html_props, 'config'))}")
 
     res_noexp = export_bomdom_html(str(big_glb_path), str(out_dir), "smoke",
                                    "noexports-run", viewer_exports=False, **common)

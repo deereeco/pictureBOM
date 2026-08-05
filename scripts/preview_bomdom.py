@@ -78,15 +78,22 @@ def synthesize_bom(glb_path):
     for i, (name, qty) in enumerate(sorted(counts.items())):
         vendor = "Sample Vendor" if i < 6 else ""
         part_no = f"SAMPLE-{1000 + i}" if vendor else ""
+        # Sample facet data for the filter panel / color-by QA: two
+        # properties, mixed values, some blanks (the "(none)" bucket).
+        properties = {
+            "Process": ["Machined", "COTS", ""][i % 3],
+            "Finish": "Anodized" if i % 4 == 0 else "",
+        }
         rows.append({
             "level": f"{i + 1}.0", "type": "Part", "name": name, "quantity": qty,
             "description": "Sample data (preview build — not from SolidWorks)",
-            "vendor": vendor, "vendor_part_no": part_no,
+            "vendor": vendor, "vendor_part_no": part_no, "properties": properties,
         })
         flat.append({
             "name": name, "total_quantity": qty,
             "description": "Sample data (preview build — not from SolidWorks)",
             "vendor": vendor, "vendor_part_no": part_no, "where_used": glb_path.stem,
+            "properties": properties,
         })
     return rows, flat, [r["name"] for r in rows]
 
@@ -112,6 +119,7 @@ def run_one(glb_path):
         assembly_file=glb_path.with_suffix(".SLDASM").name,
         active_config="Default", app_version="0.6.0-preview",
         generated="2026-07-20T00:00:00",
+        property_names=["Process", "Finish"],
         on_status=lambda m: print(f"    {m}"),
     )
     base = glb_path.stem

@@ -32,6 +32,12 @@ Pictures are embedded **in the cells** (Excel's "Place in Cell"), so they sort a
 - A **Status** column with a dropdown (To Order / Ordered / Received / Installed)
 - A **Vendor** dropdown seeded with the vendors found in your assembly plus common ones, with automatic color highlighting (McMaster-Carr yellow, Thorlabs red, Unknown gray)
 - **Clickable product links** on Vendor Part No for Thorlabs and McMaster-Carr parts
+- **Your own part properties as columns**: list SolidWorks custom property names
+  (e.g. `Process, Finish`) under *Advanced* in Export options (`--properties` on the
+  CLI) and each becomes a column. Every sheet also gets a **header autofilter**, so
+  the team can filter to just the machined parts right in Excel (on the nested
+  layout filtering hides the assembly context rows — the flat and linked Parts
+  sheets filter best)
 
 The output Excel file is named after the assembly with a timestamp (e.g. `MainFrame_2026-04-14_143025.xlsx`) so consecutive runs never overwrite each other.
 
@@ -52,6 +58,11 @@ parts list. Send that one file to a teammate — they double-click it and can:
   HTML. Only the camera turns — X/Y/Z always mean the model's own axes
 - Hide, isolate, or make transparent any part or subassembly — for one instance or
   **all instances at once**
+- **Filter by your part properties** (set them under *Advanced* before running):
+  click a value chip — say *Process: Machined* — and everything else ghosts out
+  (or hides, for clean screenshots). Filters stack, the search box matches
+  property values too, and a **color-by-property** mode paints the assembly by
+  value with a legend — instant "which parts are machined" for a design review
 - Drag parts aside and snap them back; explode the whole assembly with a slider
 - Export their own parts list straight from the viewer (Excel with thumbnails, CSV,
   or a printable order sheet) — scoped to what they have selected or visible.

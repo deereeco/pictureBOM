@@ -13,6 +13,7 @@ import { initPicking } from './picking.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
 import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
+import { initFilters } from './filter.js';
 import { initExports } from './exports.js';
 
 const $ = (id) => document.getElementById(id);
@@ -61,6 +62,7 @@ async function boot() {
   app.bom = buildBomJoin(app.meta);
   buildChrome();
   initPanel(app);
+  initFilters(app);
   initExports(app);
   initInteractions(app);
   if (!app.config.allow_exports) {
@@ -308,6 +310,7 @@ function wireStateToVisuals() {
   app.events.on('hover', refresh);
   app.events.on('selection', refresh);
   app.events.on('scope', refresh);
+  app.events.on('filter', refresh);
   app.events.on('appearance', refresh);
   app.events.on('positions', () => { updateFooter(); });
 }

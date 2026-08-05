@@ -177,10 +177,13 @@ export function initPanel(app) {
       }
 
       entry.el = el;
-      // Filter matches every part/vendor field a user might remember.
+      // Filter matches every part/vendor field a user might remember —
+      // including configured part-property values ("machined" finds parts).
       entry.searchText = [name, part && part.name, part && part.bom_name,
         row && row.description, row && row.vendor,
-        row && row.vendor_part_no].filter(Boolean).join(' ').toLowerCase();
+        row && row.vendor_part_no,
+        ...(row && row.properties ? Object.values(row.properties) : []),
+      ].filter(Boolean).join(' ').toLowerCase();
       partsList.appendChild(el);
     }
   }
@@ -252,7 +255,9 @@ export function initPanel(app) {
     node.holder = holder;
     node.kidsEl = null;
     node.searchText = [row.name, row.description, row.vendor,
-      row.vendor_part_no].filter(Boolean).join(' ').toLowerCase();
+      row.vendor_part_no,
+      ...(row.properties ? Object.values(row.properties) : []),
+    ].filter(Boolean).join(' ').toLowerCase();
     if (!nodeByName.has(row.name.toLowerCase())) nodeByName.set(row.name.toLowerCase(), node);
 
     if (node.children.length) {
@@ -317,22 +322,33 @@ export function initPanel(app) {
   const searchCount = $('searchCount');
   let query = '';
 
+  // Facet filters (filter.js) compose with the text query: a row must match
+  // both. matchesFacets is absent until filters initialize (or when the
+  // export has no configured properties) — treat that as "matches".
+  const facetHit = (entry) => !app.ui.matchesFacets || app.ui.matchesFacets(entry);
+
   function applySearchToParts() {
     let hits = 0, total = 0;
+    const filtering = query || (app.ui.matchesFacets && app.sel.filter);
     for (const entry of app.bom.entries) {
       if (!entry.el) continue;
       total += 1;
-      const hit = !query || entry.searchText.includes(query);
+      const hit = (!query || entry.searchText.includes(query)) && facetHit(entry);
       entry.el.style.display = hit ? '' : 'none';
       if (hit) hits += 1;
     }
-    searchCount.textContent = query ? `${hits} of ${total}` : '';
+    searchCount.textContent = filtering ? `${hits} of ${total}` : '';
   }
 
   function applySearchToTree() {
     const walk = (node) => {
       if (node.el) {
-        node.el.classList.toggle('is-dim', !!query && !node.searchText.includes(query));
+        // Assemblies are structure — facets only dim part rows.
+        const facetMiss = app.ui.rowMatchesFacets && app.sel.filter
+          && (node.row.type || '').toLowerCase() !== 'assembly'
+          && !app.ui.rowMatchesFacets(node.row);
+        node.el.classList.toggle('is-dim',
+          (!!query && !node.searchText.includes(query)) || !!facetMiss);
       }
       for (const c of node.children) walk(c);
     };
@@ -381,7 +397,7 @@ export function initPanel(app) {
       entry.el.classList.toggle('is-hover', hovered);
       entry.el.classList.toggle('is-selected', selected);
       const allHidden = !!recs.length && !!app.model &&
-        recs.every((r) => M.isEffectivelyHidden(r, app.sel.scope));
+        recs.every((r) => M.isEffectivelyHidden(r, app.sel.scope, app.sel.filter));
       entry.el.classList.toggle('is-off', allHidden);
       if (selected && !firstSelected) firstSelected = entry.el;
     }
@@ -397,6 +413,11 @@ export function initPanel(app) {
   app.events.on('appearance', () => syncRows());
   app.events.on('scope', () => syncRows());
   app.events.on('model', () => syncRows());
+  app.events.on('filter', () => {
+    applySearchToParts();
+    applySearchToTree();
+    syncRows();
+  });
 
   buildPartsList();
   buildTree();

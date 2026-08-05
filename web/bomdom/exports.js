@@ -10,6 +10,8 @@ import { decodeDataUri } from './payload.js';
 const $ = (id) => document.getElementById(id);
 const HEADER_BG = '#1F3864';
 const COLUMNS = ['Picture', 'Part Number', 'Description', 'Qty', 'Vendor', 'Vendor Part No'];
+// Configured part properties ride along as extra columns (Excel/CSV).
+const propNames = (app) => (app.meta.bom && app.meta.bom.property_names) || [];
 
 export function initExports(app) {
   const btn = $('btnExport');
@@ -64,6 +66,14 @@ export function initExports(app) {
       lab.appendChild(document.createTextNode(` ${label} (${n})`));
       menu.appendChild(lab);
     }
+    if (app.sel.filter && !app.sel.filter.hide) {
+      // A ghosting filter keeps non-matching parts "visible" (same rule as
+      // manual ghosting) — say so before someone exports more than they see.
+      const note = document.createElement('div');
+      note.className = 'menu-note';
+      note.textContent = 'Filter is ghosting parts — switch it to "Hide" to export only matching parts.';
+      menu.appendChild(note);
+    }
     const sep = document.createElement('div');
     sep.className = 'menu-sep';
     menu.appendChild(sep);
@@ -113,7 +123,7 @@ function instanceCounts(app, mode) {
   } else {
     for (const [partId, recs] of model.byPartId) {
       let n = 0;
-      for (const r of recs) if (!M.isEffectivelyHidden(r, app.sel.scope)) n += 1;
+      for (const r of recs) if (!M.isEffectivelyHidden(r, app.sel.scope, app.sel.filter)) n += 1;
       if (n) counts.set(partId, n);
     }
   }
@@ -131,6 +141,7 @@ function rowsForScope(app, scope) {
       vendor: r.vendor || '',
       vendorPartNo: r.vendor_part_no || '',
       vendorUrl: r.vendor_url || null,
+      properties: r.properties || {},
       thumbnail: entry.part ? entry.part.thumbnail : null,
     });
   };
@@ -163,10 +174,12 @@ const SCOPE_LABELS = {
 async function exportExcel(app, scope) {
   const rows = rowsForScope(app, scope);
   const asm = app.meta.assembly.name || 'assembly';
+  const props = propNames(app);
+  const columns = [...COLUMNS, ...props];
   const data = [];
-  data.push([{ value: `${asm} — BomDom — ${SCOPE_LABELS[scope]}`, fontWeight: 'bold', span: 6 },
-    null, null, null, null, null]);
-  data.push(COLUMNS.map((h) => ({
+  data.push([{ value: `${asm} — BomDom — ${SCOPE_LABELS[scope]}`, fontWeight: 'bold', span: columns.length },
+    ...Array(columns.length - 1).fill(null)]);
+  data.push(columns.map((h) => ({
     value: h, fontWeight: 'bold', color: '#FFFFFF', backgroundColor: HEADER_BG,
     height: 20, alignVertical: 'center',
   })));
@@ -180,6 +193,7 @@ async function exportExcel(app, scope) {
       { value: r.qty, alignVertical: 'center', align: 'center' },
       { value: r.vendor, alignVertical: 'center' },
       { value: r.vendorPartNo, alignVertical: 'center' },
+      ...props.map((n) => ({ value: r.properties[n] || '', alignVertical: 'center', align: 'center' })),
     ]);
     if (!r.thumbnail) return;
     const dec = decodeDataUri(r.thumbnail);
@@ -199,7 +213,8 @@ async function exportExcel(app, scope) {
   });
 
   const blob = await writeXlsxFile(data, {
-    columns: [{ width: 8 }, { width: 24 }, { width: 42 }, { width: 7 }, { width: 18 }, { width: 18 }],
+    columns: [{ width: 8 }, { width: 24 }, { width: 42 }, { width: 7 }, { width: 18 }, { width: 18 },
+      ...props.map(() => ({ width: 14 }))],
     images: images.length ? images : undefined, // no thumbnails -> data-only
     sheet: 'BOM',
     fontFamily: 'Calibri',
@@ -215,13 +230,15 @@ async function exportExcel(app, scope) {
 function exportCsv(app, scope) {
   const rows = rowsForScope(app, scope);
   const asm = app.meta.assembly.name || 'assembly';
+  const props = propNames(app);
   const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
   const lines = [
     q(`${asm} — BomDom export — ${SCOPE_LABELS[scope]} — ${new Date().toLocaleString()}`),
-    COLUMNS.slice(1).map(q).join(','),
+    [...COLUMNS.slice(1), ...props].map(q).join(','),
   ];
   for (const r of rows) {
-    lines.push([r.name, r.description, r.qty, r.vendor, r.vendorPartNo].map(q).join(','));
+    lines.push([r.name, r.description, r.qty, r.vendor, r.vendorPartNo,
+      ...props.map((n) => r.properties[n] || '')].map(q).join(','));
   }
   const blob = new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
   download(blob, `${sanitizeFile(asm)}_BomDom_${fileStamp()}.csv`);

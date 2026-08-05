@@ -25,6 +25,8 @@ export class SelectionModel {
     this.hover = null;           // {kind:'rec',id} | {kind:'part',partId} | null
     this.selected = new Set();   // record ids
     this.scope = null;           // {label, recIds:Set} — "Open" viewing scope
+    this.filter = null;          // {recIds:Set|null, hide:bool} — facet filter (filter.js)
+    this.colorBy = null;         // {prop, valueColor:Map, recColor:Map} — color-by-property
   }
 
   setHover(h) {
@@ -56,5 +58,15 @@ export class SelectionModel {
   setScope(scope) {
     this.scope = scope;
     this.events.emit('scope', scope);
+  }
+
+  setFilter(filter) {
+    this.filter = filter;
+    this.events.emit('filter');
+  }
+
+  setColorBy(colorBy) {
+    this.colorBy = colorBy;
+    this.events.emit('filter');
   }
 }

@@ -13,6 +13,9 @@ import tempfile
 from pathlib import Path
 
 from picturebom.core import (
+    BUFFER_ROWS,
+    FLAT_HEADERS,
+    HIERARCHICAL_HEADERS,
     _build_flat_from_hierarchical,
     _generate_linked_excel_bom,
     _vendor_url,
@@ -21,6 +24,7 @@ from picturebom.core import (
     generate_excel_bom,
     load_bom_table,
     parse_bom_excel,
+    parse_property_list,
     write_bom_csv,
 )
 
@@ -151,6 +155,105 @@ def main():
     check("Parts Only sheet parsed with totals",
           {pn: p["qty"] for pn, p in parsed.items()} == EXPECTED_TOTALS,
           f"got { {pn: p['qty'] for pn, p in parsed.items()} }")
+
+    print("\npart properties (configured extra columns + autofilter):")
+    prop_names, rejected = parse_property_list("Process, Finish, Description")
+    check("reserved names rejected",
+          (prop_names, rejected) == (["Process", "Finish"], ["Description"]),
+          f"got {(prop_names, rejected)}")
+
+    # Same assembly, now with a Process/Finish property on some parts.
+    prop_values = [("", ""), ("COTS", ""), ("Machined", "Anodize"),
+                   ("COTS", ""), ("COTS", "")]
+    props_rows = [dict(r, properties={"Process": proc, "Finish": fin})
+                  for r, (proc, fin) in zip(HIER_ROWS, prop_values)]
+    props_flat = _build_flat_from_hierarchical(props_rows, "Cage2-sjm")
+    check("flat build carries properties",
+          props_flat[1]["properties"] == {"Process": "Machined",
+                                          "Finish": "Anodize"},
+          f"got {props_flat[1]}")
+
+    pflat_path = out_dir / "props_flat.xlsx"
+    generate_excel_bom(props_flat, images, str(pflat_path),
+                       property_names=prop_names)
+    wb = load_workbook(str(pflat_path))
+    ws = wb.active
+    headers = [c.value for c in ws[1]]
+    check("flat: property columns sit before Status",
+          headers == ["Picture"] + FLAT_HEADERS + ["Process", "Finish",
+                                                   "Status"],
+          f"got {headers}")
+    check("flat: property value lands in its column",
+          ws.cell(row=3, column=8).value == "Machined",  # ER3, col H
+          f"got {ws.cell(row=3, column=8).value!r}")
+    check("flat: autofilter spans all columns and the buffer rows",
+          ws.auto_filter.ref == f"A1:J{len(props_flat) + BUFFER_ROWS + 1}",
+          f"got {ws.auto_filter.ref!r}")
+    wb.close()
+
+    pnested_path = out_dir / "props_nested.xlsx"
+    generate_excel_bom(props_rows, images, str(pnested_path),
+                       hierarchical=True, property_names=prop_names)
+    wb = load_workbook(str(pnested_path))
+    ws = wb.active
+    headers = [c.value for c in ws[1]]
+    check("nested: property columns sit before Status",
+          headers == ["Picture"] + HIERARCHICAL_HEADERS + ["Process",
+                                                           "Finish", "Status"],
+          f"got {headers}")
+    check("nested: autofilter stops at the data rows",
+          ws.auto_filter.ref == f"A1:K{len(props_rows) + 1}",
+          f"got {ws.auto_filter.ref!r}")
+    wb.close()
+
+    plinked_path = out_dir / "props_linked.xlsx"
+    _generate_linked_excel_bom(props_flat, props_rows, images,
+                               str(plinked_path), property_names=prop_names)
+    wb = load_workbook(str(plinked_path))  # formulas, not cached values
+    ws1, ws2 = wb["Parts Only (Editable)"], wb["Assemblies (Read-Only)"]
+    headers1 = [c.value for c in ws1[1]]
+    check("linked: Parts sheet property columns sit before Status",
+          headers1 == ["Picture"] + FLAT_HEADERS + ["Process", "Finish",
+                                                    "Status"],
+          f"got {headers1}")
+    check("linked: Parts sheet gets the autofilter, Assemblies doesn't",
+          ws1.auto_filter.ref is not None and ws2.auto_filter.ref is None,
+          f"got {ws1.auto_filter.ref!r} / {ws2.auto_filter.ref!r}")
+    status_dvs = [dv for dv in ws1.data_validations.dataValidation
+                  if dv.formula1 and "To Order" in str(dv.formula1)]
+    check("linked: Status dropdown followed Status to the last column "
+          "(hardcoded-column regression)",
+          status_dvs and all(str(dv.sqref).startswith("J")
+                             for dv in status_dvs),
+          f"got {[str(dv.sqref) for dv in status_dvs]}")
+    formula = ws2.cell(row=4, column=9).value  # ER3's Process on Sheet 2
+    check("linked: Assemblies property cell is a formula against col H",
+          isinstance(formula, str) and formula.startswith("=IFERROR(INDEX(")
+          and "$H$" in formula, f"got {formula!r}")
+    check("linked: assembly rows get static property cells",
+          ws2.cell(row=2, column=9).value in ("", None),
+          f"got {ws2.cell(row=2, column=9).value!r}")
+    wb.close()
+    wb = load_workbook(str(plinked_path), data_only=True)
+    cached = wb["Assemblies (Read-Only)"].cell(row=4, column=9).value
+    check("linked: property formula carries its cached value",
+          cached == "Machined", f"got {cached!r}")
+    wb.close()
+
+    ptwin = out_dir / "props_flat.csv"
+    write_bom_csv(props_flat, str(ptwin), property_names=prop_names)
+    rows, cols = load_bom_table(str(ptwin))
+    check("CSV twin carries the property columns",
+          cols == FLAT_HEADERS + ["Process", "Finish"], f"got {cols}")
+    check("CSV twin carries the property values",
+          rows[1]["Process"] == "Machined", f"got {rows[1]}")
+    prebuilt = out_dir / "props_rebuilt.xlsx"
+    generate_excel_bom(rows, images, str(prebuilt), csv_columns=cols)
+    wb = load_workbook(str(prebuilt))
+    headers = [c.value for c in wb.active[1]]
+    check("rebuild from the twin keeps the property columns",
+          "Process" in headers and headers[-1] == "Status", f"got {headers}")
+    wb.close()
 
     print("\nrerun sources (CSV twin and the workbook itself):")
     # Both must feed straight back into a run: same columns, same rows, in

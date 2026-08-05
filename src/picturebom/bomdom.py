@@ -1223,13 +1223,16 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
                        app_version="", generated="", on_status=None,
                        size_limit_mb=25, template_text=None, viewer_exports=True,
                        component_colors=None, no_geometry_names=(),
-                       census_complete=None, up_axis=DEFAULT_UP_AXIS):
+                       census_complete=None, up_axis=DEFAULT_UP_AXIS,
+                       property_names=None):
     """Post-process a raw SolidWorks GLB into a BomDom HTML (plus sidecar if huge).
 
     size_limit_mb <= 0 forces sidecar mode (HTML + separate .glb) regardless
     of size. no_geometry_names: BOM names known to contain no solid bodies,
     for accurate missing-part warnings (see match_parts_to_bom). up_axis is
     the model axis the viewer points up when the file is first opened.
+    property_names: configured part properties (ordered list) — the viewer
+    renders one filter facet per name from the rows' "properties" dicts.
 
     Never raises past this function for repack-stage problems: falls back to
     embedding the unmodified single-scene GLB, and ultimately returns
@@ -1314,6 +1317,7 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
     assembly = {"name": base_name, "file": assembly_file, "config": active_config,
                 "scene_name": scene_info["scene_name"]}
     bom = {"mode": bom_mode,
+           "property_names": list(property_names or []),
            "hierarchical_rows": _rows_with_vendor_urls(hierarchical_rows),
            "flat_parts": _rows_with_vendor_urls(flat_parts)}
 

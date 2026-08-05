@@ -56,6 +56,15 @@ def main():
              "run (every run also writes a .csv twin of its workbook).",
     )
     parser.add_argument(
+        "--properties",
+        default=None,
+        metavar="NAME[,NAME...]",
+        help="Extra SolidWorks custom properties to read per part, "
+             "comma-separated (e.g. \"Process,Finish\"). Each becomes a "
+             "column in the Excel/CSV and a filterable facet in the 3D "
+             "viewer. Ignored when --csv supplies the table.",
+    )
+    parser.add_argument(
         "--images",
         default=None,
         help="Path to a folder of existing part images. Skips SolidWorks image capture.",
@@ -170,6 +179,7 @@ def main():
             html_sidecar=args.sidecar,
             viewer_exports=not args.no_viewer_exports,
             viewer_up_axis=args.up_axis,
+            part_properties=args.properties,
         )
         if result["excel_path"]:
             print(f"\nDone! BOM saved to: {result['excel_path']}")

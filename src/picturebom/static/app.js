@@ -369,11 +369,14 @@
     // Settings — load on init, auto-save on change
     // -----------------------------------------------------------------------
 
-    // The Advanced fields (csv_path, images_dir, glb_path) are deliberately
-    // not persisted: they're hidden by default, and a stale path from a past
-    // run silently changing this run's behavior is worse than retyping it.
+    // The Advanced path fields (csv_path, images_dir, glb_path) are
+    // deliberately not persisted: they're hidden by default, and a stale path
+    // from a past run silently changing this run's behavior is worse than
+    // retyping it. part_properties IS persisted — it's configuration the user
+    // sets once (which custom properties their parts carry), not a stale-path
+    // hazard.
     const settingsFields = [
-        "assembly_path", "output_dir",
+        "assembly_path", "output_dir", "part_properties",
     ];
 
     function loadSettings() {
@@ -733,6 +736,7 @@
             keep_raw_glb: outputs.keepRawGlb,
             html_sidecar: outputs.htmlSidecar,
             viewer_up_axis: outputs.upAxis,
+            part_properties: document.getElementById("part_properties").value.trim(),
         };
 
         postJson("/api/run", params)

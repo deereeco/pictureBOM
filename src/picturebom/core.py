@@ -21,6 +21,7 @@ import pythoncom
 import win32com.client
 import win32com.client.dynamic
 import xlsxwriter
+from xlsxwriter.utility import xl_col_to_name
 from openpyxl import load_workbook
 
 log = logging.getLogger(__name__)
@@ -79,6 +80,40 @@ _THORLABS_PN_RE = re.compile(r"^[A-Z]{1,4}\d+[A-Z0-9]*(?:[/-][A-Z0-9]+)*$")  # e
 
 class PictureBOMError(Exception):
     """Raised when the pipeline encounters a fatal error."""
+
+
+def reserved_property_names():
+    """Column names a configured part property may not use: they'd collide
+    with the BOM's own columns and break header-based detection when the
+    CSV twin is read back for a rerun."""
+    reserved = {h.lower() for h in FLAT_HEADERS + HIERARCHICAL_HEADERS}
+    reserved |= QTY_HEADERS
+    reserved |= {"picture", "status", "name", "part_number",
+                 "vendor part number", "vendor pn", "where used"}
+    return reserved
+
+
+def parse_property_list(value):
+    """Normalize a configured list of SolidWorks custom property names.
+
+    Accepts the GUI/CLI comma-separated string or an already-split list.
+    Names are trimmed, de-duplicated case-insensitively (first casing wins),
+    and names colliding with the BOM's own columns are rejected.
+
+    Returns (names, rejected) so callers can surface the rejects as a
+    warning rather than silently writing a broken workbook.
+    """
+    items = value.split(",") if isinstance(value, str) else list(value or [])
+    names, rejected, seen = [], [], set()
+    reserved = reserved_property_names()
+    for raw in items:
+        name = str(raw).strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        (rejected if key in reserved else names).append(name)
+    return names, rejected
 
 
 def connect_to_solidworks():
@@ -260,9 +295,13 @@ def get_all_property_names(comp_doc):
         return []
 
 
-def get_part_properties(comp_doc, debug=False):
-    """Extract Description, Vendor, and Vendor Part No from a component's custom properties."""
-    props = {"description": "", "vendor": "", "vendor_part_no": ""}
+def get_part_properties(comp_doc, debug=False, extra_props=None):
+    """Extract Description, Vendor, and Vendor Part No from a component's
+    custom properties, plus any configured extra properties (extra_props,
+    a list of names) under the "properties" key — configured name -> value,
+    always present, "" when the part doesn't carry the property."""
+    props = {"description": "", "vendor": "", "vendor_part_no": "",
+             "properties": {name: "" for name in (extra_props or [])}}
     if comp_doc is None:
         return props
 
@@ -282,6 +321,12 @@ def get_part_properties(comp_doc, debug=False):
             actual_name = name_map.get(target)
             if actual_name:
                 props[key] = get_custom_property(cpm, actual_name, debug=debug)
+
+        for name in (extra_props or []):
+            actual_name = name_map.get(name.lower())
+            if actual_name:
+                props["properties"][name] = get_custom_property(
+                    cpm, actual_name, debug=debug)
     except Exception:
         pass
 
@@ -341,15 +386,19 @@ def traverse_assembly(assembly_doc, include_subassemblies=False, debug=False):
     return unique
 
 
-def traverse_assembly_hierarchical(assembly_doc, debug=False):
+def traverse_assembly_hierarchical(assembly_doc, debug=False, extra_props=None):
     """
     Walk the assembly tree preserving hierarchy. Returns an ordered list of
     rows with level numbering, type, and per-parent quantities.
 
+    extra_props: optional list of configured custom property names to read
+    per component (see parse_property_list); their values land in each
+    row's "properties" dict.
+
     Returns:
         tuple: (rows, unique_components)
             rows: list of dicts with keys: level, type, name, file_path, doc_type,
-                  quantity, description, vendor, vendor_part_no
+                  quantity, description, vendor, vendor_part_no, properties
             unique_components: dict keyed by normalized path (for image capture)
     """
     rows = []
@@ -359,11 +408,12 @@ def traverse_assembly_hierarchical(assembly_doc, debug=False):
     if top_components is None:
         return rows, unique
 
-    _traverse_level(top_components, "", rows, unique, debug)
+    _traverse_level(top_components, "", rows, unique, debug, extra_props)
     return rows, unique
 
 
-def _traverse_level(components, parent_prefix, rows, unique, debug):
+def _traverse_level(components, parent_prefix, rows, unique, debug,
+                    extra_props=None):
     """Recursively traverse a list of sibling components at one level."""
     # Group siblings by file path to count per-parent quantity
     seen_at_level = {}  # normalized_path -> {comp, count}
@@ -398,7 +448,8 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
             level = f"{parent_prefix}.{idx}"
 
         comp_doc = comp.GetModelDoc2
-        props = get_part_properties(comp_doc, debug=debug)
+        props = get_part_properties(comp_doc, debug=debug,
+                                    extra_props=extra_props)
         color = get_component_color(comp, comp_doc)
 
         # Body census for the 3D export: SolidWorks' glTF exporter only
@@ -423,6 +474,7 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
             "description": props["description"],
             "vendor": props["vendor"],
             "vendor_part_no": props["vendor_part_no"],
+            "properties": props["properties"],
         }
         rows.append(row)
 
@@ -436,6 +488,7 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
                 "description": props["description"],
                 "vendor": props["vendor"],
                 "vendor_part_no": props["vendor_part_no"],
+                "properties": props["properties"],
                 "color": color,
                 "solid_bodies": solid_bodies,
                 "surface_bodies": surface_bodies,
@@ -447,7 +500,8 @@ def _traverse_level(components, parent_prefix, rows, unique, debug):
             if children:
                 # Level prefix for children: "1" for top-level "1.0", "1.1" for "1.1", etc.
                 child_prefix = f"{idx}" if parent_prefix == "" else f"{parent_prefix}.{idx}"
-                _traverse_level(children, child_prefix, rows, unique, debug)
+                _traverse_level(children, child_prefix, rows, unique, debug,
+                                extra_props)
 
 
 def _level_depth(level_str):
@@ -499,6 +553,7 @@ def _build_flat_from_hierarchical(rows, root_assembly_name="Assembly"):
                     "description": row["description"],
                     "vendor": row["vendor"],
                     "vendor_part_no": row["vendor_part_no"],
+                    "properties": row.get("properties", {}),
                     "where_used_map": {},
                 }
                 part_order.append(normalized)
@@ -729,13 +784,27 @@ def validate_glb_file(glb_path):
             f"Not a .glb file (expected binary glTF): {glb_path}")
 
 
+# Columns _flat_parts_from_csv maps onto fixed viewer fields; anything
+# else in the table is treated as a part property.
+_CSV_KNOWN_COLUMNS = {
+    "part number", "part_number", "name", "qty", "quantity", "total qty",
+    "total quantity", "description", "vendor", "vendor part no",
+    "vendor part number", "vendor pn", "where used",
+    "where used (sub-asm qty)", "status", "level", "type", "picture",
+}
+
+
 def _flat_parts_from_csv(bom_rows):
     """Adapt CSV BOM rows to the flat_parts shape the 3D viewer expects.
 
     Used when the pipeline runs without SolidWorks (user-supplied GLB +
     CSV + images), where no traversal data exists. Column matching is
     case-insensitive and lenient — a missing column just leaves that
-    field blank in the viewer's parts panel.
+    field blank in the viewer's parts panel. Columns beyond the known set
+    become part properties (the CSV twin of a run with configured
+    properties carries them), so facets survive the offline path.
+
+    Returns (parts, property_names) — names in first-seen column order.
     """
     def pick(row, *wanted):
         # Argument order is the priority order — a CSV whose "Name" column
@@ -748,10 +817,21 @@ def _flat_parts_from_csv(bom_rows):
         return ""
 
     parts = []
+    prop_names = []
+    seen_props = set()
     for row in bom_rows:
         name = pick(row, "part number", "part_number", "name")
         if not name:
             continue
+        properties = {}
+        for key, value in row.items():
+            header = str(key).strip() if key else ""
+            if not header or header.lower() in _CSV_KNOWN_COLUMNS:
+                continue
+            properties[header] = "" if value is None else str(value)
+            if header.lower() not in seen_props:
+                seen_props.add(header.lower())
+                prop_names.append(header)
         parts.append({
             "name": name,
             "total_quantity": pick(row, "qty", "quantity", "total qty",
@@ -762,8 +842,9 @@ def _flat_parts_from_csv(bom_rows):
                                    "vendor part number", "vendor pn"),
             "where_used": pick(row, "where used",
                                "where used (sub-asm qty)"),
+            "properties": properties,
         })
-    return parts
+    return parts, prop_names
 
 
 def get_solidworks_year(sw_app):
@@ -868,7 +949,8 @@ def load_bom_table(path):
     return load_csv_bom(path)
 
 
-def write_bom_csv(bom_rows, output_path, csv_columns=None, hierarchical=False):
+def write_bom_csv(bom_rows, output_path, csv_columns=None, hierarchical=False,
+                  property_names=None):
     """Write the BOM as a plain CSV beside the workbook (same rows, same order).
 
     The workbook is the deliverable; this is the machine-readable twin that
@@ -876,23 +958,33 @@ def write_bom_csv(bom_rows, output_path, csv_columns=None, hierarchical=False):
     having to open Excel and save-as. Columns mirror the sheet minus Picture
     (images live in the images folder) and, on a fresh run, the still-empty
     Status dropdown — read back by load_bom_table as the same table.
+    Configured part properties (property_names) get one column each, same
+    as the workbook.
     """
+    prop_names = list(property_names or [])
+
+    def prop_values(row):
+        props = row.get("properties", {})
+        return [props.get(name, "") for name in prop_names]
+
     if csv_columns:
         headers = [str(c) for c in csv_columns]
         def values(row):
             return ["" if row.get(h) is None else row.get(h, "") for h in headers]
     elif hierarchical:
-        headers = list(HIERARCHICAL_HEADERS)
+        headers = list(HIERARCHICAL_HEADERS) + prop_names
         def values(row):
             return [row.get("level", ""), row.get("type", ""), row["name"],
                     row.get("description", ""), row.get("quantity", 1),
-                    row.get("vendor", ""), row.get("vendor_part_no", "")]
+                    row.get("vendor", ""), row.get("vendor_part_no", "")] \
+                + prop_values(row)
     else:
-        headers = list(FLAT_HEADERS)
+        headers = list(FLAT_HEADERS) + prop_names
         def values(row):
             return [row["name"], row.get("description", ""),
                     row.get("total_quantity", 1), row.get("vendor", ""),
-                    row.get("vendor_part_no", ""), row.get("where_used", "")]
+                    row.get("vendor_part_no", ""), row.get("where_used", "")] \
+                + prop_values(row)
 
     # utf-8-sig: Excel opens a plain utf-8 CSV as mojibake on Windows.
     with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
@@ -1070,9 +1162,12 @@ class _ColWidths:
                 ws.set_column(col, col, min(max_len + 4, MAX_COL_WIDTH))
 
 
-def _write_flat_rows(ws, fmts, widths, flat_parts, images_dir):
+def _write_flat_rows(ws, fmts, widths, flat_parts, images_dir,
+                     property_names=None):
     """Write flat-layout data rows (shared by flat mode and the linked
-    Parts sheet). Returns the set of vendor names seen."""
+    Parts sheet). Configured part-property columns (if any) sit between
+    Where Used and Status. Returns the set of vendor names seen."""
+    prop_names = list(property_names or [])
     vendors = set()
     for idx, part in enumerate(flat_parts):
         r = idx + 1
@@ -1087,6 +1182,7 @@ def _write_flat_rows(ws, fmts, widths, flat_parts, images_dir):
         vendor = part.get("vendor", "")
         vendors.add(vendor)
         vendor_pn = part.get("vendor_part_no", "")
+        props = part.get("properties", {})
         cells = [
             (1, part["name"], fmts["center"]),
             (2, part.get("description", ""), fmts["left"]),
@@ -1094,7 +1190,8 @@ def _write_flat_rows(ws, fmts, widths, flat_parts, images_dir):
              fmts["center"]),
             (4, vendor, fmts["center"]),
             (6, part.get("where_used", ""), fmts["left"]),
-        ]
+        ] + [(7 + i, props.get(name, ""), fmts["center"])
+             for i, name in enumerate(prop_names)]
         for col, value, cell_fmt in cells:
             ws.write(r, col, value, cell_fmt)
             widths.track(col, value)
@@ -1107,26 +1204,30 @@ def _write_flat_rows(ws, fmts, widths, flat_parts, images_dir):
             ws.write(r, 5, vendor_pn, fmts["center"])
         widths.track(5, vendor_pn)
 
-        ws.write_blank(r, 7, None, fmts["center"])  # Status
+        ws.write_blank(r, 7 + len(prop_names), None, fmts["center"])  # Status
     return vendors
 
 
 def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
-                       hierarchical=False):
+                       hierarchical=False, property_names=None):
     """
     Generate an Excel BOM with in-cell thumbnail images (Excel 365
     "Place in Cell": pictures sort/filter with their row and rescale with
-    row height). Every mode gains a Status dropdown column; sheets with a
-    Vendor column also get a vendor dropdown, vendor color highlighting,
-    and Thorlabs/McMaster product links on Vendor Part No.
+    row height). Every mode gains a Status dropdown column and a header
+    autofilter; sheets with a Vendor column also get a vendor dropdown,
+    vendor color highlighting, and Thorlabs/McMaster product links on
+    Vendor Part No.
 
     bom_rows: list of dicts with at least 'name' key. May also have
-              description, quantity, vendor, vendor_part_no.
+              description, quantity, vendor, vendor_part_no, properties.
               In hierarchical mode, also has 'level' and 'type'.
     images_dir: folder containing JPG images named <part_name>.jpg
     output_path: path to write the .xlsx file
     csv_columns: if provided, use these column names (from CSV import)
     hierarchical: if True, add Level and Type columns, highlight assembly rows
+    property_names: configured part properties (see parse_property_list);
+                    one column each between the data columns and Status.
+                    Ignored with csv_columns (the source's own columns win).
     """
     wb, fmts = _create_workbook(output_path)
     ws = wb.add_worksheet("Visual BOM")
@@ -1136,13 +1237,14 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
     source_status = bool(csv_columns) and any(
         str(c).strip().lower() == "status" for c in csv_columns)
 
+    prop_names = [] if csv_columns else list(property_names or [])
     if csv_columns:
         headers = ["Picture"] + [str(c) for c in csv_columns] \
             + ([] if source_status else ["Status"])
     elif hierarchical:
-        headers = ["Picture"] + HIERARCHICAL_HEADERS + ["Status"]
+        headers = ["Picture"] + HIERARCHICAL_HEADERS + prop_names + ["Status"]
     else:
-        headers = ["Picture"] + FLAT_HEADERS + ["Status"]
+        headers = ["Picture"] + FLAT_HEADERS + prop_names + ["Status"]
     status_col = (next(i for i, h in enumerate(headers)
                        if h.strip().lower() == "status")
                   if source_status else len(headers) - 1)
@@ -1243,6 +1345,12 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
                 ws.write(r, 7, vendor_pn, center)
             widths.track(7, vendor_pn)
 
+            props = row_data.get("properties", {})
+            for offset, pname in enumerate(prop_names):
+                value = props.get(pname, "")
+                ws.write(r, 8 + offset, value, center)
+                widths.track(8 + offset, value)
+
             ws.write_blank(r, status_col, None, center)
 
         vendor_source = _add_vendor_list_sheet(wb, _vendor_options(vendors))
@@ -1253,50 +1361,67 @@ def generate_excel_bom(bom_rows, images_dir, output_path, csv_columns=None,
                             vendor_source, fmts["cf"])
 
     else:
-        vendors = _write_flat_rows(ws, fmts, widths, bom_rows, images_dir)
+        vendors = _write_flat_rows(ws, fmts, widths, bom_rows, images_dir,
+                                   property_names=prop_names)
         vendor_source = _add_vendor_list_sheet(wb, _vendor_options(vendors))
         _add_row_extras(ws, 1, len(bom_rows) + BUFFER_ROWS, 4, status_col,
                         vendor_source, fmts["cf"])
 
     widths.apply(ws)
+    # Native header filtering. In-cell pictures follow their row, so the
+    # Picture column filters safely. Flat/CSV ranges cover the buffer rows
+    # (matching the dropdown validation) so user-added rows filter too;
+    # hierarchical stops at the data (buffer rows get no extras there).
+    filter_last = len(bom_rows) + (0 if hierarchical else BUFFER_ROWS)
+    ws.autofilter(0, 0, max(filter_last, 1), len(headers) - 1)
     ws.freeze_panes(1, 0)  # keep the header row visible when scrolling
     ws.activate()
     wb.close()
     return output_path
 
 
-def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output_path):
+def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir,
+                               output_path, property_names=None):
     """Generate a two-sheet Excel BOM with INDEX/MATCH formulas linking the
     Assemblies sheet back to the Parts sheet (INDEX/MATCH kept over XLOOKUP
     for compatibility with older Excel).
 
     flat_parts: list of dicts from _build_flat_from_hierarchical()
     hierarchical_rows: list of dicts from traverse_assembly_hierarchical()
+    property_names: configured part properties — one column each on both
+    sheets, between the data columns and Status (appending keeps the
+    letter-referenced columns below in place).
     """
     wb, fmts = _create_workbook(output_path)
+    prop_names = list(property_names or [])
 
     # ---- Sheet 1: Parts Only (Editable) ----
     # Added first so it stays the workbook's default sheet (parse_bom_excel
     # prefers it). Status must remain the LAST column: the Assemblies sheet
-    # references $B/$C/$E/$F by letter.
+    # references $B/$C/$E/$F by letter (property columns are computed with
+    # xl_col_to_name, so they follow along).
     ws1 = wb.add_worksheet("Parts Only (Editable)")
-    headers1 = ["Picture"] + FLAT_HEADERS + ["Status"]
+    headers1 = ["Picture"] + FLAT_HEADERS + prop_names + ["Status"]
     widths1 = _ColWidths(headers1)
     ws1.set_row(0, HEADER_ROW_HEIGHT)
     for col, header in enumerate(headers1):
         ws1.write(0, col, header, fmts["header"])
 
-    vendors = _write_flat_rows(ws1, fmts, widths1, flat_parts, images_dir)
+    vendors = _write_flat_rows(ws1, fmts, widths1, flat_parts, images_dir,
+                               property_names=prop_names)
 
     vendor_source = _add_vendor_list_sheet(wb, _vendor_options(vendors))
-    _add_row_extras(ws1, 1, len(flat_parts) + BUFFER_ROWS, 4, 7,
-                    vendor_source, fmts["cf"])
+    _add_row_extras(ws1, 1, len(flat_parts) + BUFFER_ROWS, 4,
+                    len(headers1) - 1, vendor_source, fmts["cf"])
     widths1.apply(ws1)
+    ws1.autofilter(0, 0, len(flat_parts) + BUFFER_ROWS, len(headers1) - 1)
     ws1.freeze_panes(1, 0)
 
     # ---- Sheet 2: Assemblies (Read-Only) ----
+    # No autofilter here: filtering a hierarchy hides the parent rows that
+    # give the numbers meaning — the Parts sheet is the filterable surface.
     ws2 = wb.add_worksheet("Assemblies (Read-Only)")
-    headers2 = ["Picture"] + HIERARCHICAL_HEADERS
+    headers2 = ["Picture"] + HIERARCHICAL_HEADERS + prop_names
     widths2 = _ColWidths(headers2)
     ws2.set_row(0, HEADER_ROW_HEIGHT)
     for col, header in enumerate(headers2):
@@ -1337,15 +1462,21 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
         if not is_assembly:
             # INDEX/MATCH formulas: look up Part Number (col D) in Sheet 1
             part = parts_by_name.get(row_data["name"], row_data)
+            part_props = part.get("properties", {})
             B = f"'{S1}'!$B$2:$B${last_row}"  # lookup range (Part Number)
-            for col, s1_col, field, cell_fmt in (
-                    (4, "C", "description", left),
-                    (6, "E", "vendor", center),
-                    (7, "F", "vendor_part_no", center)):
+            # Sheet-1 property columns start at H (0-based col 7, after
+            # Picture + the six FLAT_HEADERS); here they start after
+            # Vendor Part No (col 7).
+            lookups = [
+                (4, "C", part.get("description", ""), left),
+                (6, "E", part.get("vendor", ""), center),
+                (7, "F", part.get("vendor_part_no", ""), center),
+            ] + [(8 + i, xl_col_to_name(7 + i), part_props.get(name, ""),
+                  center) for i, name in enumerate(prop_names)]
+            for col, s1_col, cached, cell_fmt in lookups:
                 formula = (
                     f"=IFERROR(INDEX('{S1}'!${s1_col}$2:${s1_col}${last_row},"
                     f"MATCH(D{excel_row},{B},0)),\"\")")
-                cached = part.get(field, "")
                 ws2.write_formula(r, col, formula, cell_fmt, cached)
                 widths2.track(col, cached)
         else:
@@ -1353,6 +1484,9 @@ def _generate_linked_excel_bom(flat_parts, hierarchical_rows, images_dir, output
             write_cell(r, 4, row_data.get("description", ""), left)
             write_cell(r, 6, row_data.get("vendor", ""), center)
             write_cell(r, 7, row_data.get("vendor_part_no", ""), center)
+            row_props = row_data.get("properties", {})
+            for i, name in enumerate(prop_names):
+                write_cell(r, 8 + i, row_props.get(name, ""), center)
 
     # Vendor colors on Sheet 2's part rows too (conditional formatting
     # evaluates the formulas' computed values). No dropdowns here.
@@ -1622,7 +1756,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  on_status=None, overwrite=False, completion_popup=False,
                  output_excel=True, output_html=False,
                  html_size_limit_mb=25, keep_raw_glb=True, viewer_exports=True,
-                 html_sidecar=False, viewer_up_axis="+y"):
+                 html_sidecar=False, viewer_up_axis="+y",
+                 part_properties=None):
     """
     Run the full pictureBOM pipeline.
 
@@ -1675,6 +1810,12 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                         of the HTML. Geometry is never rotated — only the
                         camera — so X/Y/Z keep meaning the CAD axes.
                         (Literal default here: bomdom is imported lazily.)
+        part_properties: extra SolidWorks custom property names to read per
+                         part (list, or the raw comma-separated string —
+                         see parse_property_list). Each becomes a column in
+                         the workbook/CSV and a filterable facet in the 3D
+                         viewer. Ignored when csv_path supplies the table
+                         (its own columns win).
 
     Returns:
         dict with keys: excel_path, bom_csv_path, images_dir, total_components,
@@ -1698,6 +1839,23 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     has_glb = glb_path is not None
 
     warnings = []
+
+    part_properties, rejected_props = parse_property_list(part_properties)
+    if rejected_props:
+        msg = ("Ignored part propert"
+               + ("y" if len(rejected_props) == 1 else "ies")
+               + " colliding with the BOM's own columns: "
+               + ", ".join(rejected_props))
+        warnings.append(msg)
+        status(msg)
+    if has_csv and part_properties:
+        msg = ("The supplied BOM table provides the columns — the "
+               "configured part properties ("
+               + ", ".join(part_properties)
+               + ") are ignored for this run.")
+        warnings.append(msg)
+        status(msg)
+        part_properties = []
 
     # A reused GLB only matters for the 3D output, and a bad one must never
     # cost the user their Excel (the same rule the in-SolidWorks 3D export
@@ -1777,7 +1935,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
 
         status("Traversing assembly components...")
         # All modes use hierarchical traversal (flat/linked need it for Where Used)
-        hierarchical_rows, components = traverse_assembly_hierarchical(assy_doc, debug=debug)
+        hierarchical_rows, components = traverse_assembly_hierarchical(
+            assy_doc, debug=debug, extra_props=part_properties)
         status(f"Found {len(components)} unique component(s)")
     else:
         status("SolidWorks not needed — using the provided CSV, images"
@@ -1855,16 +2014,24 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             csv_rows, csv_kwargs = bom_rows, {"csv_columns": csv_columns}
         elif bom_mode == "linked":
             flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
-            _generate_linked_excel_bom(flat_parts, hierarchical_rows, img_dir, excel_path)
-            csv_rows, csv_kwargs = flat_parts, {}  # the Parts Only sheet
+            _generate_linked_excel_bom(flat_parts, hierarchical_rows, img_dir,
+                                       excel_path,
+                                       property_names=part_properties)
+            csv_rows, csv_kwargs = flat_parts, \
+                {"property_names": part_properties}  # the Parts Only sheet
         elif bom_mode == "nested":
-            generate_excel_bom(hierarchical_rows, img_dir, excel_path, hierarchical=True)
-            csv_rows, csv_kwargs = hierarchical_rows, {"hierarchical": True}
+            generate_excel_bom(hierarchical_rows, img_dir, excel_path,
+                               hierarchical=True,
+                               property_names=part_properties)
+            csv_rows, csv_kwargs = hierarchical_rows, \
+                {"hierarchical": True, "property_names": part_properties}
         else:
             # Flat mode — build flat parts from hierarchical data for Where Used
             flat_parts = _build_flat_from_hierarchical(hierarchical_rows, root_name)
-            generate_excel_bom(flat_parts, img_dir, excel_path)
-            csv_rows, csv_kwargs = flat_parts, {}
+            generate_excel_bom(flat_parts, img_dir, excel_path,
+                               property_names=part_properties)
+            csv_rows, csv_kwargs = flat_parts, \
+                {"property_names": part_properties}
 
         excel_elapsed = time.time() - excel_start
         status(f"Excel BOM saved to: {excel_path}")
@@ -1942,6 +2109,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                 if hierarchical_rows:
                     html_rows = hierarchical_rows
                     html_flat = _build_flat_from_hierarchical(hierarchical_rows, root_name)
+                    html_property_names = part_properties
                     bom_names = [c["name"] for c in components.values()]
                     part_colors = {c["name"]: c.get("color")
                                    for c in components.values() if c.get("color")}
@@ -1998,9 +2166,11 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                                 "surface-only parts stay missing from the "
                                 "3D view (see the log)")
                 else:
-                    # Offline run — the viewer's BOM panel comes from the CSV
+                    # Offline run — the viewer's BOM panel comes from the CSV,
+                    # and so do the facet properties (its columns win).
                     html_rows = []
-                    html_flat = _flat_parts_from_csv(bom_rows)
+                    html_flat, html_property_names = \
+                        _flat_parts_from_csv(bom_rows)
                     bom_names = [p["name"] for p in html_flat]
                     part_colors = {}
                     no_geometry = []
@@ -2025,6 +2195,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     up_axis=viewer_up_axis,
                     no_geometry_names=no_geometry,
                     census_complete=census_complete,
+                    property_names=html_property_names,
                 )
                 html_elapsed = time.time() - html_start
                 warnings.extend(res.pop("warnings", []))

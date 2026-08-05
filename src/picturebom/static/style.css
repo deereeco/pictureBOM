@@ -440,6 +440,9 @@ html.theme-transition .fill { transition: none !important; }
 .chev { transition: transform 0.12s ease; flex: none; }
 .adv[open] > summary .chev { transform: rotate(90deg); }
 .adv-body { padding: 10px 0 2px 21px; }
+/* Inside a disclosure the summary already groups the sub-options — the
+   .check-sub indent would double up with the body's own padding */
+.adv-body .check-sub { margin-left: 0; }
 
 /* ---------- export options: radios ---------- */
 .optgroup { margin-bottom: 16px; }
