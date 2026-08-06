@@ -212,17 +212,22 @@
                                             Advanced &mdash; part properties, 3D viewer and export tuning
                                         </summary>
                                         <div class="adv-body">
-                                            <div class="field">
-                                                <label class="label" for="part_properties">Extra part properties</label>
+                                            <p class="adv-note">Click the <span class="tipbtn-demo">?</span> beside an option for an explanation</p>
+                                            <div class="field tip" data-tip="Comma-separated SolidWorks custom property names to read from each part &mdash; each becomes a column in the Excel/CSV and a filter in the 3D viewer. Ignored when an existing BOM is supplied under Choose files &gt; Advanced.">
+                                                <div class="label-row">
+                                                    <label class="label" for="part_properties">Extra part properties</label>
+                                                    <button type="button" class="tipbtn" aria-expanded="false" aria-label="Explain: extra part properties">?</button>
+                                                </div>
                                                 <input class="input" type="text" id="part_properties" placeholder="Process, Finish">
-                                                <p class="hint">Comma-separated SolidWorks custom property names to read from each part &mdash; each becomes a column in the Excel/CSV and a filter in the 3D viewer. Ignored when an existing BOM is supplied under Choose files &gt; Advanced.</p>
                                             </div>
                                             <div class="radios">
-                                                <label class="check check-sub"><input type="checkbox" id="viewer_exports" checked>
-                                                    Allow exporting parts lists from the 3D viewer <span class="hint-inline">&mdash; uncheck so recipients can view but not re-export; hand-editable in the HTML afterwards ("allow_exports")</span></label>
+                                                <label class="check check-sub tip" data-tip="Uncheck so recipients can view but not re-export &mdash; hand-editable in the HTML afterwards (&quot;allow_exports&quot;)."><input type="checkbox" id="viewer_exports" checked>
+                                                    Allow exporting parts lists from the 3D viewer
+                                                    <button type="button" class="tipbtn" aria-expanded="false" aria-label="Explain: allow exporting parts lists from the 3D viewer">?</button></label>
                                                 <div class="check-sub axis-row" id="upAxisRow">
-                                                    <div class="axis-choice">
-                                                        <span class="axis-row-label">Which way is up in the 3D view</span>
+                                                    <div class="axis-choice tip" data-tip="Only the viewer camera turns &mdash; X/Y/Z always mean the model's own axes. Readers can change it in the viewer's View menu; hand-editable in the HTML afterwards (&quot;up_axis&quot;).">
+                                                        <span class="label-row"><span class="axis-row-label">Which way is up in the 3D view</span>
+                                                            <button type="button" class="tipbtn" aria-expanded="false" aria-label="Explain: which way is up in the 3D view">?</button></span>
                                                         <div class="radios radios-inline" role="radiogroup" aria-label="Up axis">
                                                             <label class="radio radio-axis"><input type="radio" name="viewer_up_axis" value="x">
                                                                 <span class="ax-chip ax-x">X</span></label>
@@ -235,17 +240,18 @@
                                                         </div>
                                                         <label class="check axis-flip"><input type="checkbox" id="up_axis_flip">
                                                             Flip (model is upside down)</label>
-                                                        <span class="hint-inline">Only the viewer camera turns &mdash; X/Y/Z always mean the model's own axes. Readers can change it in the viewer's View menu; hand-editable in the HTML afterwards ("up_axis").</span>
                                                     </div>
                                                     <figure class="axis-preview">
                                                         <div id="upAxisPreview" class="axis-preview-box"></div>
                                                         <figcaption id="upAxisCaption" class="axis-preview-cap"></figcaption>
                                                     </figure>
                                                 </div>
-                                                <label class="check check-sub"><input type="checkbox" id="html_sidecar">
-                                                    Write the 3D data as a separate .glb next to the HTML <span class="hint-inline">&mdash; smaller HTML; keep both files together (the page asks for the .glb when opened)</span></label>
-                                                <label class="check check-sub"><input type="checkbox" id="keep_raw_glb" checked>
-                                                    Keep the raw 3D model (.glb) next to the outputs <span class="hint-inline">&mdash; it takes minutes to export; reuse it under Choose files &gt; Advanced to rebuild the 3D BOM without waiting on SolidWorks</span></label>
+                                                <label class="check check-sub tip" data-tip="Smaller HTML &mdash; keep both files together, the page asks for the .glb when opened."><input type="checkbox" id="html_sidecar">
+                                                    Write the 3D data as a separate .glb next to the HTML
+                                                    <button type="button" class="tipbtn" aria-expanded="false" aria-label="Explain: write the 3D data as a separate .glb">?</button></label>
+                                                <label class="check check-sub tip tip-up" data-tip="The 3D export takes minutes &mdash; reuse the kept .glb under Choose files &gt; Advanced to rebuild the 3D BOM without waiting on SolidWorks."><input type="checkbox" id="keep_raw_glb" checked>
+                                                    Keep the raw 3D model (.glb) next to the outputs
+                                                    <button type="button" class="tipbtn" aria-expanded="false" aria-label="Explain: keep the raw 3D model">?</button></label>
                                             </div>
                                         </div>
                                     </details>

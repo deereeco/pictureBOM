@@ -146,6 +146,54 @@
     assemblyInput.addEventListener("input", refreshAssemblyField);
 
     // -----------------------------------------------------------------------
+    // "?" explanations on the Advanced options
+    // -----------------------------------------------------------------------
+
+    function setTip(tip, open) {
+        tip.classList.toggle("is-open", open);
+        const btn = tip.querySelector(".tipbtn");
+        if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    function openTip() {
+        return document.querySelector(".tip.is-open");
+    }
+
+    // The popup is a pseudo-element, so it cannot be clicked itself — a click
+    // on it lands on whatever is underneath. This works out where the popup is
+    // drawn so those clicks can be swallowed instead.
+    function overPopup(tip, ev) {
+        const cs = window.getComputedStyle(tip, "::after");
+        const w = parseFloat(cs.width);
+        const h = parseFloat(cs.height);
+        const r = tip.getBoundingClientRect();
+        const top = tip.classList.contains("tip-up") ? r.top - 2 - h : r.bottom + 2;
+        return ev.clientX >= r.left && ev.clientX <= r.left + w &&
+               ev.clientY >= top && ev.clientY <= top + h;
+    }
+
+    // Capture phase, so the click never reaches the label it is sitting on —
+    // otherwise opening a popup (or dismissing one drawn over another option)
+    // would silently flip a checkbox.
+    document.addEventListener("click", function (ev) {
+        const btn = ev.target.closest(".tipbtn");
+        const open = openTip();
+        if (!btn && !open) return;
+        if (btn || overPopup(open, ev)) {
+            ev.preventDefault();
+            ev.stopPropagation();
+        }
+        if (open) setTip(open, false);
+        const tip = btn && btn.closest(".tip");
+        if (tip && tip !== open) setTip(tip, true);
+    }, true);
+
+    document.addEventListener("keydown", function (ev) {
+        const open = ev.key === "Escape" && openTip();
+        if (open) setTip(open, false);
+    });
+
+    // -----------------------------------------------------------------------
     // Quality presets + preview box
     // -----------------------------------------------------------------------
 
