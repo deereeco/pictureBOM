@@ -657,6 +657,7 @@ export function initInteractions(app) {
     else if (key === 'h') { const t = selectedRecs(); if (t.length) actions.hide(t); }
     else if (key === 'i') { const t = selectedRecs(); if (t.length) actions.isolate(t, false); }
     else if (key === 'f') actions.frame(selectedRecs());
+    else if (key === 'r') actions.resetAll();
     else if (ev.key === '?') $('helpOverlay').classList.toggle('hidden');
   });
 
