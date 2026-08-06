@@ -22,7 +22,7 @@ export function createEmitter() {
 export class SelectionModel {
   constructor(events) {
     this.events = events;
-    this.hover = null;           // {kind:'rec',id} | {kind:'part',partId} | null
+    this.hover = null;           // {ids:number[], partId?} | null — BOM rows only, never the canvas
     this.selected = new Set();   // record ids
     this.scope = null;           // {label, recIds:Set} — "Open" viewing scope
     this.filter = null;          // {recIds:Set|null, hide:bool} — facet filter (filter.js)

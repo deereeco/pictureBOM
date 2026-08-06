@@ -49,8 +49,8 @@ Check **3D interactive BOM (.html)** under *Outputs* and the same run also produ
 **single HTML file** containing an interactive 3D view of your assembly with a synced
 parts list. Send that one file to a teammate — they double-click it and can:
 
-- Rotate, pan and zoom the assembly; hover or click a part to highlight its BOM row
-  (and vice versa)
+- Rotate, pan and zoom the assembly; click a part to highlight its BOM row, or hover a
+  BOM row to light up the part in 3D
 - Set **which way is up** (View menu, or the colour-coded X/Y/Z gizmo in the corner)
   and snap to standard views — Iso, Top, Front, Right and the rest. Pick the default
   for recipients with *Which way is up in the 3D view* before running (`--up-axis` on

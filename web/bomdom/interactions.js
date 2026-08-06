@@ -40,15 +40,6 @@ export function initInteractions(app) {
   const selectedRecs = () =>
     app.model ? [...sel.selected].map((id) => app.model.records[id]).filter(Boolean) : [];
 
-  const hoverOrSelected = () => {
-    if (!app.model) return [];
-    if (sel.hover && sel.hover.recId !== undefined && sel.hover.recId !== null) {
-      const rec = app.model.records[sel.hover.recId];
-      if (rec) return [rec];
-    }
-    return selectedRecs();
-  };
-
   // ---- actions ---------------------------------------------------------
   const actions = {
     hide(recs) { M.setHidden(recs, true); refresh(); },
@@ -663,8 +654,8 @@ export function initInteractions(app) {
     const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 5: 'top', 6: 'bottom', 0: 'iso' };
     if (VIEW_KEYS[ev.key]) { actions.setView(VIEW_KEYS[ev.key]); return; }
     if (key === 'm') actions.setMoveMode(!app.moveMode);
-    else if (key === 'h') { const t = hoverOrSelected(); if (t.length) { actions.hide(t); sel.setHover(null); } }
-    else if (key === 'i') { const t = hoverOrSelected(); if (t.length) actions.isolate(t, false); }
+    else if (key === 'h') { const t = selectedRecs(); if (t.length) actions.hide(t); }
+    else if (key === 'i') { const t = selectedRecs(); if (t.length) actions.isolate(t, false); }
     else if (key === 'f') actions.frame(selectedRecs());
     else if (ev.key === '?') $('helpOverlay').classList.toggle('hidden');
   });

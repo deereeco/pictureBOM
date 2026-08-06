@@ -1,5 +1,7 @@
-// Canvas picking: BVH-accelerated hover (rAF-throttled), click select,
-// double-click frame, right-click context menu (only when not dragged).
+// Canvas picking: BVH-accelerated click select, double-click frame,
+// right-click context menu (only when not dragged). Deliberately no hover
+// pick — moving the pointer over the model must not recolour anything; the
+// BOM list on the right is the only thing that drives hover highlighting.
 
 import * as THREE from 'three';
 import { boxOfRecs } from './model.js';
@@ -27,23 +29,6 @@ export function initPicking(app) {
   }
   app.pick = pick;
   app.raycaster = raycaster;
-
-  // ---- hover ----------------------------------------------------------
-  let lastMove = null;
-  let rafId = 0;
-  canvas.addEventListener('pointermove', (ev) => {
-    if (app.dragging) return;
-    lastMove = ev;
-    if (rafId) return;
-    rafId = requestAnimationFrame(() => {
-      rafId = 0;
-      if (!app.model || !lastMove) return;
-      if (lastMove.buttons) return; // orbit/pan in progress
-      const hit = pick(lastMove);
-      app.sel.setHover(hit ? { ids: [hit.rec.id], recId: hit.rec.id, partId: hit.rec.partId } : null);
-    });
-  });
-  canvas.addEventListener('pointerleave', () => app.sel.setHover(null));
 
   // ---- click / context ------------------------------------------------
   let down = null;
