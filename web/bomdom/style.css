@@ -43,6 +43,9 @@
     --axis-y: #2f9e63;
     --axis-z: #3a72d4;
     --axis-on: #ffffff;
+    /* Part edge lines in the 3D view. Plain hex only — the value is fed to
+       THREE.Color, which takes no alpha. */
+    --edge3d: #38404c;
 }
 :root[data-theme="dark"] {
     color-scheme: dark;
@@ -79,6 +82,7 @@
     --axis-y: #57b98a;
     --axis-z: #6fa8f5;
     --axis-on: #101720;
+    --edge3d: #9aa4b0;
 }
 
 /* ---------- base ---------- */

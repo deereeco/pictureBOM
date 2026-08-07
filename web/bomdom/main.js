@@ -96,6 +96,7 @@ async function boot() {
     return;
   }
   initPicking(app);
+  M.initEdgeColor(app.viewer.invalidate);
 
   // Which way is up: this reader's remembered choice for this assembly wins,
   // then the exported default (hand-editable "up_axis" in bomdom-config),
@@ -155,13 +156,22 @@ async function loadModel(buf, sourceLabel) {
     return false;
   }
   app.viewer.scene.add(app.model.root);
+  app.model.edgesOn = app.edgesOn;
   M.applyPositions(app.model, 0);
   M.updateVisuals(app.model, app.sel);
   app.model.root.updateWorldMatrix(true, true);
   const framePts = M.pointsOfRecs(app.model.rootRecs);
   if (framePts.length) app.viewer.framePoints(framePts);
   else app.viewer.frameBox(app.model.bounds);
-  M.buildBVHLazily(app.model);
+  // Edges chain after the BVH: both are cosmetic-vs-latency slicers, and
+  // picking speed (gated on the BVH) should win. The staleness check stops
+  // the chain if a sidecar re-drop replaces the model mid-build.
+  const model = app.model;
+  M.buildBVHLazily(model, () => {
+    if (app.edgesOn && app.model === model) {
+      M.buildEdgesLazily(model, () => app.events.emit('appearance'), () => app.model !== model);
+    }
+  });
 
   diag.counts = {
     parts: app.meta.parts.length,

@@ -31,6 +31,24 @@ function storeUpAxis(meta, axis) {
   } catch { /* ignore */ }
 }
 
+// Part edges are a reader preference (unlike up axis, which belongs to the
+// model), so one global key — same idea as picturebom-theme. Missing -> on.
+const EDGES_KEY = 'picturebom-bomdom-edges';
+
+function readStoredEdges() {
+  try {
+    return localStorage.getItem(EDGES_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+function storeEdges(on) {
+  try {
+    localStorage.setItem(EDGES_KEY, on ? 'on' : 'off');
+  } catch { /* ignore */ }
+}
+
 export function initInteractions(app) {
   const sel = app.sel;
 
@@ -39,6 +57,8 @@ export function initInteractions(app) {
 
   const selectedRecs = () =>
     app.model ? [...sel.selected].map((id) => app.model.records[id]).filter(Boolean) : [];
+
+  app.edgesOn = readStoredEdges();
 
   // ---- actions ---------------------------------------------------------
   const actions = {
@@ -98,6 +118,19 @@ export function initInteractions(app) {
       app.moveMode = on;
       $('btnMove').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-move', on);
+    },
+    setEdges(on) {
+      app.edgesOn = on;
+      storeEdges(on);
+      // Keep an open View menu's checkbox in step with the E key.
+      if (!$('viewMenu').classList.contains('hidden')) buildViewPopover();
+      if (!app.model) return; // sidecar pre-drop: the preference still sticks
+      app.model.edgesOn = on;
+      if (on) {
+        const model = app.model;
+        M.buildEdgesLazily(model, refresh, () => app.model !== model); // idempotent
+      }
+      refresh(); // off is a pure flag flip — a running build keeps going
     },
     // name ('iso', 'top', ...) or a world direction from the axis gizmo.
     setView(nameOrDir) {
@@ -352,6 +385,17 @@ export function initInteractions(app) {
 
     popNote(viewMenu, `Orbit spins around ${up[0] === '-' ? '−' : ''}${up[1].toUpperCase()}`);
     popNote(viewMenu, 'X/Y/Z always mean the model’s own axes');
+
+    popHead(viewMenu, 'Display');
+    const edges = document.createElement('label');
+    edges.className = 'pop-check';
+    const edgesBox = document.createElement('input');
+    edgesBox.type = 'checkbox';
+    edgesBox.checked = app.edgesOn;
+    edgesBox.addEventListener('change', () => actions.setEdges(edgesBox.checked));
+    edges.appendChild(edgesBox);
+    edges.appendChild(document.createTextNode(' Show part edges (E)'));
+    viewMenu.appendChild(edges);
 
     popHead(viewMenu, 'Standard views');
     const grid = document.createElement('div');
@@ -654,6 +698,7 @@ export function initInteractions(app) {
     const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 5: 'top', 6: 'bottom', 0: 'iso' };
     if (VIEW_KEYS[ev.key]) { actions.setView(VIEW_KEYS[ev.key]); return; }
     if (key === 'm') actions.setMoveMode(!app.moveMode);
+    else if (key === 'e') actions.setEdges(!app.edgesOn);
     else if (key === 'h') { const t = selectedRecs(); if (t.length) actions.hide(t); }
     else if (key === 'i') { const t = selectedRecs(); if (t.length) actions.isolate(t, false); }
     else if (key === 'f') actions.frame(selectedRecs());

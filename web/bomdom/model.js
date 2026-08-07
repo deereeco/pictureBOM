@@ -107,6 +107,12 @@ export function buildGraph(gltf, meta) {
   const mirroredIdx = new Set(meta.mirrored_nodes || []);
   for (const [mesh, rec] of meshRecords) {
     mesh.userData.__base = Array.isArray(mesh.material) ? null : mesh.material;
+    // Faces are pushed back a hair so edge lines never z-fight. Must happen
+    // here, before the first updateVisuals: derive()'s clones inherit the
+    // offset from their base and the matCache is never invalidated.
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      if (m) { m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1; }
+    }
     if (mesh.matrixWorld.determinant() < 0 ||
         (rec.nodeIdx !== null && mirroredIdx.has(rec.nodeIdx))) {
       mesh.userData.__ds = true;
@@ -420,6 +426,57 @@ function setOverlay(mesh, hl) {
   ov.visible = true;
 }
 
+// ---------------------------------------------------------------------------
+// Part edges: one EdgesGeometry per unique BufferGeometry, drawn as a
+// LineSegments child of every instance mesh (identity local transform rides
+// the mesh, like the veil). Geometries build lazily after the BVH.
+// ---------------------------------------------------------------------------
+
+// EdgesGeometry's angle test is inclusive, and coarse SolidWorks tessellation
+// emits 12-segment cylinders whose facets meet at exactly 30° — a 30°
+// threshold would draw those as wireframe barrels. 40° still catches ≥45°
+// feature breaks (chamfers, box corners, hole rims).
+const EDGE_THRESHOLD_DEG = 40;
+// One EdgesGeometry build cannot be time-sliced internally, and its string-
+// hashed edge dictionary costs seconds + hundreds of MB transient on very
+// large geometries. Those few lose their edges rather than hitch the page.
+const EDGE_MAX_TRIS = 250000;
+
+const edgeGeomCache = new WeakMap(); // source BufferGeometry -> EdgesGeometry (shared across instances)
+const edgeLineCache = new WeakMap(); // mesh -> LineSegments child
+// toneMapped false: the CSS-picked colour must survive ACES tone mapping.
+const edgeMat = new THREE.LineBasicMaterial({ color: 0x38404c, toneMapped: false });
+
+// Mirrors scene.js's theme-reactive background: --edge3d tracks data-theme.
+export function initEdgeColor(invalidate) {
+  const apply = () => {
+    const c = getComputedStyle(document.documentElement).getPropertyValue('--edge3d').trim();
+    if (c) edgeMat.color.set(c);
+    invalidate();
+  };
+  apply();
+  new MutationObserver(apply)
+    .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+}
+
+function setEdgeLines(mesh, on) {
+  let lines = edgeLineCache.get(mesh);
+  if (!on) {
+    if (lines) lines.visible = false;
+    return;
+  }
+  if (!lines) {
+    const eg = edgeGeomCache.get(mesh.geometry);
+    if (!eg) return; // not built (yet) — a later 'appearance' refresh attaches it
+    lines = new THREE.LineSegments(eg, edgeMat);
+    lines.raycast = () => {}; // picking must ignore edges
+    lines.matrixAutoUpdate = false; // identity local transform — rides the mesh
+    mesh.add(lines);
+    edgeLineCache.set(mesh, lines);
+  }
+  lines.visible = true;
+}
+
 function countMeshRecs(rec) {
   let n = rec.meshes.length ? 1 : 0;
   for (const c of rec.children) n += countMeshRecs(c);
@@ -459,6 +516,9 @@ export function updateVisuals(model, sel) {
         mesh.material = derive(mesh.userData.__base, ghost, opacity, hl, !!mesh.userData.__ds, tint);
       }
       setOverlay(mesh, hl);
+      // Ghosted context would defeat its purpose under full-strength edges;
+      // the 0.4 cutoff tracks the depthWrite threshold in derive().
+      setEdgeLines(mesh, !!model.edgesOn && !ghost && opacity > 0.4);
       if (!ghost) pickables.push(mesh);
     }
     for (const c of rec.children) dfs(c, ghost, opacity, hovered, selected);
@@ -627,7 +687,7 @@ export function movedRecs(model) {
 // geometry has no boundsTree yet.
 // ---------------------------------------------------------------------------
 
-export function buildBVHLazily(model) {
+export function buildBVHLazily(model, onDone) {
   const geos = [...model.uniqueGeometries];
   let i = 0;
   const t0 = performance.now();
@@ -643,7 +703,39 @@ export function buildBVHLazily(model) {
     else {
       model.bvhReady = true;
       timed('bvh build', performance.now() - t0);
+      if (onDone) onDone();
     }
   };
   setTimeout(step, 60);
+}
+
+// Feature edges build the same way, chained after the BVH: they are cosmetic,
+// so pick latency always comes first. Smallest geometries go first — a slice
+// can only overrun inside one EdgesGeometry call, so any hitch lands last.
+export function buildEdgesLazily(model, onProgress, isStale) {
+  if (model.edgesBuildStarted) return;
+  model.edgesBuildStarted = true;
+  const triCount = (g) => Math.floor((g.index ? g.index.count
+    : (g.attributes.position ? g.attributes.position.count : 0)) / 3);
+  const geos = [...model.uniqueGeometries].sort((a, b) => triCount(a) - triCount(b));
+  let i = 0;
+  const t0 = performance.now();
+  const step = () => {
+    if (isStale && isStale()) return; // model was replaced (sidecar re-drop)
+    const end = performance.now() + 12;
+    while (i < geos.length && performance.now() < end) {
+      const g = geos[i++];
+      if (edgeGeomCache.has(g)) continue;
+      if (triCount(g) > EDGE_MAX_TRIS) {
+        note(`part edges skipped for one very large geometry (${triCount(g)} triangles)`);
+        continue;
+      }
+      try { edgeGeomCache.set(g, new THREE.EdgesGeometry(g, EDGE_THRESHOLD_DEG)); }
+      catch (e) { console.warn('[BomDom] edges build failed for a geometry', e); }
+    }
+    onProgress(); // 'appearance' refresh attaches whatever is ready
+    if (i < geos.length) setTimeout(step, 0);
+    else timed('edges build', performance.now() - t0);
+  };
+  setTimeout(step, 0);
 }
