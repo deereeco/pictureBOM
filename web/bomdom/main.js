@@ -10,6 +10,8 @@ import { createViewer, normalizeUp, DEFAULT_UP } from './scene.js';
 import * as M from './model.js';
 import { buildBomJoin } from './bom.js';
 import { initPicking } from './picking.js';
+import { initSection } from './section.js';
+import { initMeasure } from './measure.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
 import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
@@ -97,6 +99,8 @@ async function boot() {
   }
   initPicking(app);
   M.initEdgeColor(app.viewer.invalidate);
+  initSection(app);
+  initMeasure(app);
 
   // Which way is up: this reader's remembered choice for this assembly wins,
   // then the exported default (hand-editable "up_axis" in bomdom-config),
@@ -149,11 +153,26 @@ async function loadModel(buf, sourceLabel) {
   }
   timed('gltf parse', performance.now() - t0);
 
+  const oldModel = app.model; // sidecar re-drop replaces a live model
   try {
     app.model = M.buildGraph(gltf, app.meta);
   } catch (e) {
     stageError('instance graph', e);
     return false;
+  }
+  if (oldModel) {
+    // Remove AND free the previous scene graph — leaving it would render two
+    // superimposed models and strand every child overlay (edges, veils,
+    // section outlines) with no owner able to hide them.
+    app.viewer.scene.remove(oldModel.root);
+    const seen = new Set();
+    oldModel.root.traverse((o) => {
+      if (o.geometry && !seen.has(o.geometry)) {
+        seen.add(o.geometry);
+        if (o.geometry.boundsTree) o.geometry.disposeBoundsTree();
+        o.geometry.dispose();
+      }
+    });
   }
   app.viewer.scene.add(app.model.root);
   app.model.edgesOn = app.edgesOn;
@@ -168,7 +187,9 @@ async function loadModel(buf, sourceLabel) {
   // the chain if a sidecar re-drop replaces the model mid-build.
   const model = app.model;
   M.buildBVHLazily(model, () => {
-    if (app.edgesOn && app.model === model) {
+    if (app.model !== model) return; // replaced by a sidecar re-drop mid-build
+    app.events.emit('bvh-ready'); // section outlines + measure snapping wake up
+    if (app.edgesOn) {
       M.buildEdgesLazily(model, () => app.events.emit('appearance'), () => app.model !== model);
     }
   });

@@ -149,14 +149,23 @@ export function initInteractions(app) {
   app.actions = actions;
 
   // ---- explode (guided setup popover) ----------------------------------
+  // Two movement events: 'positions-live' fires on every explode step (cheap
+  // listeners only — stale-flagging measurements, hiding section outlines),
+  // 'positions' fires when parts come to rest (full recomputes). Without
+  // these, world-space overlays keep rendering at home coordinates while
+  // the parts fly apart.
   const slider = $('explodeSlider');
   slider.addEventListener('input', () => {
     if (!app.model) return;
     M.applyPositions(app.model, parseFloat(slider.value));
+    app.events.emit('positions-live');
     invalidate();
   });
   // Exploded parts must never fly out of view: reframe when the gesture ends.
-  slider.addEventListener('change', () => actions.frame(null));
+  slider.addEventListener('change', () => {
+    app.events.emit('positions');
+    actions.frame(null);
+  });
 
   function tweenExplodeTo(target) {
     if (!app.model || !app.viewer) return;
@@ -168,8 +177,12 @@ export function initInteractions(app) {
         const f = from + (target - from) * k;
         slider.value = String(f);
         M.applyPositions(app.model, f);
+        app.events.emit('positions-live');
       },
-      done: () => actions.frame(null),
+      done: () => {
+        app.events.emit('positions');
+        actions.frame(null);
+      },
     });
   }
 
@@ -310,6 +323,7 @@ export function initInteractions(app) {
     if (app.model.explodeF < 0.05) tweenExplodeTo(0.6);
     else {
       M.applyPositions(app.model, app.model.explodeF);
+      app.events.emit('positions');
       invalidate();
       actions.frame(null);
     }
@@ -590,6 +604,7 @@ export function initInteractions(app) {
     ctxMenu.classList.add('hidden');
     $('exportMenu').classList.add('hidden');
     $('explodeMenu').classList.add('hidden');
+    $('sectionMenu').classList.add('hidden');
     viewMenu.classList.add('hidden');
   }
   app.ui.closeMenus = closeMenus;
@@ -684,9 +699,12 @@ export function initInteractions(app) {
     const inField = ev.target && (ev.target.matches ? ev.target.matches('input, textarea, select') : false);
     if (ev.key === 'Escape') {
       if (app.anchorPickMode) { exitAnchorPick(); return; }
+      // A focused text field and an open help overlay outrank measure mode:
+      // Esc while typing must blur, not silently drop a measurement point.
       if (inField) { ev.target.blur(); return; }
       closeMenus();
       if (!$('helpOverlay').classList.contains('hidden')) { $('helpOverlay').classList.add('hidden'); return; }
+      if (app.measureMode && app.measure && app.measure.escape()) return;
       if (sel.clearSelection()) return;
       if (sel.scope) actions.closeScope();
       return;
@@ -699,6 +717,8 @@ export function initInteractions(app) {
     if (VIEW_KEYS[ev.key]) { actions.setView(VIEW_KEYS[ev.key]); return; }
     if (key === 'm') actions.setMoveMode(!app.moveMode);
     else if (key === 'e') actions.setEdges(!app.edgesOn);
+    else if (key === 'x') { if (app.sectionApi) app.sectionApi.toggle(); }
+    else if (key === 'd') { if (app.measure) app.measure.toggle(); }
     else if (key === 'h') { const t = selectedRecs(); if (t.length) actions.hide(t); }
     else if (key === 'i') { const t = selectedRecs(); if (t.length) actions.isolate(t, false); }
     else if (key === 'f') actions.frame(selectedRecs());

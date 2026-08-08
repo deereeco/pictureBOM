@@ -57,6 +57,11 @@
                     <div id="explodeMenu" class="dropdown explode-pop hidden"></div>
                 </div>
                 <input id="explodeSlider" class="explode-slider" type="range" min="0" max="1" step="0.01" value="0" title="Explode amount">
+                <div class="menu-anchor">
+                    <button type="button" id="btnSection" class="tb-btn" title="Cut the model open along an axis (X)">Section &#9662;</button>
+                    <div id="sectionMenu" class="dropdown section-pop hidden"></div>
+                </div>
+                <button type="button" id="btnMeasure" class="tb-btn" title="Measure distances and hole diameters (D)">Measure</button>
                 <button type="button" id="btnMove" class="tb-btn" title="Move mode — drag parts (M)">Move</button>
                 <button type="button" id="btnReset" class="tb-btn" title="Reset appearance, positions and explode (R)">Reset</button>
                 <div class="menu-anchor">
@@ -91,6 +96,18 @@
             <div id="scopeChip" class="scope-chip hidden">
                 <span id="scopeLabel"></span>
                 <button type="button" id="scopeClose" title="Back to full assembly">&#10005; back</button>
+            </div>
+            <div id="measureChip" class="measure-chip hidden">
+                <span>Measure</span>
+                <span class="mc-hint">click two points &mdash; corners, edges &amp; holes snap</span>
+                <select id="measureUnits" class="mc-units" title="Display units">
+                    <option value="mm">mm</option>
+                    <option value="cm">cm</option>
+                    <option value="m">m</option>
+                    <option value="in">in</option>
+                </select>
+                <button type="button" id="measureClear" title="Remove all measurements">Clear</button>
+                <button type="button" id="measureExit" title="Exit measure mode (Esc)">&#10005;</button>
             </div>
             <div id="colorLegend" class="color-legend hidden"></div>
             <div id="axisGizmo" class="axis-gizmo hidden" title="Model axes — click an axis to look down it"></div>
@@ -146,6 +163,8 @@
             <span class="help-k">Shift + drag part</span><span>Move part / selection</span>
             <span class="help-k">M</span><span>Move mode on/off</span>
             <span class="help-k">E</span><span>Part edges on/off</span>
+            <span class="help-k">X</span><span>Section view on/off</span>
+            <span class="help-k">D</span><span>Measure mode — click two points; corners, edges, holes and faces snap; hole readouts offer center/min/max</span>
             <span class="help-k">H</span><span>Hide selection</span>
             <span class="help-k">I</span><span>Isolate selection</span>
             <span class="help-k">F</span><span>Frame selection (or all)</span>
