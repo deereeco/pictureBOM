@@ -64,6 +64,14 @@ parts list. Send that one file to a teammate — they double-click it and can:
   property values too, and a **color-by-property** mode paints the assembly by
   value with a legend — instant "which parts are machined" for a design review
 - Drag parts aside and snap them back; explode the whole assembly with a slider
+- **Measure** (press `D`): click two points for distances with live X/Y/Z deltas —
+  picks snap to corners and feature edges, hole rims and bores read back as true
+  fitted diameters, flat faces measure face-to-face, and hole readouts offer
+  center/min/max just like SolidWorks Measure. Every value carries an honest
+  ± bound (about ±0.01 mm on typical parts) and a mm/cm/m/inch switcher
+- **Section view** (press `X`): cut the model open along any model axis with a
+  position slider and flip control — cut cross-sections are outlined so the
+  open interiors read clearly
 - Export their own parts list straight from the viewer (Excel with thumbnails, CSV,
   or a printable order sheet) — scoped to what they have selected or visible.
   Don't want recipients re-exporting? Uncheck *Allow exporting parts lists from

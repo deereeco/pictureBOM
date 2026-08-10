@@ -120,6 +120,26 @@ export function buildGraph(gltf, meta) {
   }
 
   const rootRecs = records.filter((r) => !r.parent);
+
+  const uniqueGeometries = new Set();
+  let triangles = 0;
+  for (const mesh of meshRecords.keys()) {
+    uniqueGeometries.add(mesh.geometry);
+    const g = mesh.geometry;
+    triangles += Math.floor((g.index ? g.index.count
+      : (g.attributes.position ? g.attributes.position.count : 0)) / 3);
+  }
+  // SolidWorks' exporter writes wrong accessor POSITION min/max on many
+  // primitives (observed on ~30-45% of a real export, boxes off by up to
+  // ~0.6 m), and GLTFLoader seeds boundingBox/boundingSphere from exactly
+  // that metadata. Everything below — framing, marquee centers, measurement
+  // snap radii, the section-plane range — needs bounds computed from the
+  // decoded vertices instead.
+  for (const g of uniqueGeometries) {
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+  }
+
   const bounds = new THREE.Box3().setFromObject(root);
   const diagLen = bounds.isEmpty() ? 1 : (bounds.getSize(new THREE.Vector3()).length() || 1);
 
@@ -144,15 +164,6 @@ export function buildGraph(gltf, meta) {
     const p = rec.partId !== null && rec.meshes.length ? partById.get(rec.partId) : null;
     if (p) addName(p.bom_name || p.name, rec);
     else addName(cleanName(rec.name), rec);
-  }
-
-  const uniqueGeometries = new Set();
-  let triangles = 0;
-  for (const mesh of meshRecords.keys()) {
-    uniqueGeometries.add(mesh.geometry);
-    const g = mesh.geometry;
-    triangles += Math.floor((g.index ? g.index.count
-      : (g.attributes.position ? g.attributes.position.count : 0)) / 3);
   }
 
   const model = {
@@ -477,6 +488,12 @@ function setEdgeLines(mesh, on) {
   lines.visible = true;
 }
 
+// The measure tool snaps to these CAD-meaningful feature edges; null until
+// the lazy edges build reaches this geometry (or if it was skipped for size).
+export function edgeGeometryFor(geometry) {
+  return edgeGeomCache.get(geometry) || null;
+}
+
 function countMeshRecs(rec) {
   let n = rec.meshes.length ? 1 : 0;
   for (const c of rec.children) n += countMeshRecs(c);
@@ -513,7 +530,10 @@ export function updateVisuals(model, sel) {
     const tint = recColor ? (recColor.has(rec.id) ? recColor.get(rec.id) : null) : null;
     for (const mesh of rec.meshes) {
       if (mesh.userData.__base) {
-        mesh.material = derive(mesh.userData.__base, ghost, opacity, hl, !!mesh.userData.__ds, tint);
+        // forceDoubleSide: the section view clips closed solids open — back
+        // faces stand in for the missing cap so interiors don't vanish.
+        const ds = !!mesh.userData.__ds || !!model.forceDoubleSide;
+        mesh.material = derive(mesh.userData.__base, ghost, opacity, hl, ds, tint);
       }
       setOverlay(mesh, hl);
       // Ghosted context would defeat its purpose under full-strength edges;
