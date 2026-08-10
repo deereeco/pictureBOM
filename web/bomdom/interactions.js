@@ -49,6 +49,24 @@ function storeEdges(on) {
   } catch { /* ignore */ }
 }
 
+// Render style is a reader preference like edges. Missing -> 'shaded' (the
+// CAD-viewport look); 'realistic' is the opt-in photo look.
+const STYLE_KEY = 'picturebom-bomdom-style';
+
+function readStoredStyle() {
+  try {
+    return localStorage.getItem(STYLE_KEY) === 'realistic' ? 'realistic' : 'shaded';
+  } catch {
+    return 'shaded';
+  }
+}
+
+function storeStyle(style) {
+  try {
+    localStorage.setItem(STYLE_KEY, style);
+  } catch { /* ignore */ }
+}
+
 export function initInteractions(app) {
   const sel = app.sel;
 
@@ -59,6 +77,7 @@ export function initInteractions(app) {
     app.model ? [...sel.selected].map((id) => app.model.records[id]).filter(Boolean) : [];
 
   app.edgesOn = readStoredEdges();
+  app.renderStyle = readStoredStyle();
 
   // ---- actions ---------------------------------------------------------
   const actions = {
@@ -135,6 +154,16 @@ export function initInteractions(app) {
         M.buildEdgesLazily(model, refresh, () => app.model !== model); // idempotent
       }
       refresh(); // off is a pure flag flip — a running build keeps going
+    },
+    setRenderStyle(style) {
+      app.renderStyle = style;
+      storeStyle(style);
+      // Keep an open View menu's checkbox in step.
+      if (!$('viewMenu').classList.contains('hidden')) buildViewPopover();
+      if (app.viewer) app.viewer.setRenderStyle(style); // lights + tone curve
+      if (!app.model) return; // sidecar pre-drop: the preference still sticks
+      M.setMaterialStyle(app.model, style);
+      refresh(); // updateVisuals repoints every mesh at the new base set
     },
     // name ('iso', 'top', ...) or a world direction from the axis gizmo.
     setView(nameOrDir) {
@@ -414,6 +443,17 @@ export function initInteractions(app) {
     edges.appendChild(edgesBox);
     edges.appendChild(document.createTextNode(' Show part edges (E)'));
     viewMenu.appendChild(edges);
+
+    const realistic = document.createElement('label');
+    realistic.className = 'pop-check';
+    const realisticBox = document.createElement('input');
+    realisticBox.type = 'checkbox';
+    realisticBox.checked = app.renderStyle === 'realistic';
+    realisticBox.addEventListener('change', () =>
+      actions.setRenderStyle(realisticBox.checked ? 'realistic' : 'shaded'));
+    realistic.appendChild(realisticBox);
+    realistic.appendChild(document.createTextNode(' Realistic shading (reflections)'));
+    viewMenu.appendChild(realistic);
 
     popHead(viewMenu, 'Standard views');
     const grid = document.createElement('div');

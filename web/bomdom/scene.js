@@ -62,8 +62,6 @@ export function createViewer(canvas) {
     antialias: true,
     powerPreference: 'high-performance',
   });
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
@@ -76,24 +74,46 @@ export function createViewer(canvas) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
-  // Form definition over showroom flatness: dial the environment down and let
-  // the key/fill pair carve shading gradients into gray parts. Keep enough
-  // environment for metals — polished/black metallic parts are lit almost
-  // entirely by reflections and would crush to black without it.
-  scene.environmentIntensity = 0.65;
 
   // The rig holds the tuned key/fill geometry in +Y-up space and is rotated
   // as a whole when the up axis changes, so light keeps coming from "above"
-  // the model instead of raking it from the side.
+  // the model instead of raking it from the side. Intensities belong to the
+  // render style below.
   const lightRig = new THREE.Group();
   scene.add(lightRig);
-  lightRig.add(new THREE.HemisphereLight(0xffffff, 0x60666e, 0.3));
-  const key = new THREE.DirectionalLight(0xffffff, 1.2);
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x60666e);
+  lightRig.add(hemi);
+  const key = new THREE.DirectionalLight(0xffffff);
   key.position.set(3, 6, 4);
   lightRig.add(key);
-  const fill = new THREE.DirectionalLight(0xffffff, 0.3);
+  const fill = new THREE.DirectionalLight(0xffffff);
   fill.position.set(-4, 2.5, -3);
   lightRig.add(fill);
+
+  // ---- render style ----------------------------------------------------
+  // 'shaded' (default) is the CAD-viewport look: colors pass through nearly
+  // untouched (Khronos PBR Neutral was designed for exactly that), the room
+  // environment is a whisper, and bright even lamps do the shading — parts
+  // read as painted, the way SolidWorks paints them. 'realistic' is the
+  // original studio look: ACES filmic curve and strong image lighting, so
+  // metals mirror the room but saturated appearance colors fade. The
+  // material-side half of the split (metalness/roughness/black-lift) lives
+  // in model.js setMaterialStyle; both ride one user preference.
+  const RENDER_STYLES = {
+    shaded:    { tone: THREE.NeutralToneMapping,    exposure: 1.0,  env: 0.15, hemi: 0.75, key: 1.1, fill: 0.5 },
+    realistic: { tone: THREE.ACESFilmicToneMapping, exposure: 1.05, env: 0.65, hemi: 0.3,  key: 1.2, fill: 0.3 },
+  };
+
+  function setRenderStyle(style) {
+    const s = RENDER_STYLES[style] || RENDER_STYLES.shaded;
+    renderer.toneMapping = s.tone;
+    renderer.toneMappingExposure = s.exposure;
+    scene.environmentIntensity = s.env;
+    hemi.intensity = s.hemi;
+    key.intensity = s.key;
+    fill.intensity = s.fill;
+    invalidate();
+  }
 
   // ---- on-demand render loop + tweens --------------------------------
   let pending = false;
@@ -193,6 +213,10 @@ export function createViewer(canvas) {
     invalidate();
   }
 
+  // Establish the default look once the render-loop state above exists
+  // (setRenderStyle invalidates, which touches `pending`).
+  setRenderStyle('shaded');
+
   // ---- theme-reactive background --------------------------------------
   function applyThemeBackground() {
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
@@ -270,7 +294,7 @@ export function createViewer(canvas) {
 
   return {
     renderer, scene, camera, invalidate, addTween, frameBox, framePoints,
-    onCameraChange, setUpAxis, setView,
+    onCameraChange, setUpAxis, setView, setRenderStyle,
     get controls() { return controls; }, // rebuilt whenever the up axis changes
     get upAxis() { return upAxis; },
   };
