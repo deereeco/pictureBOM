@@ -15,12 +15,14 @@ import * as THREE from 'three';
 import * as M from './model.js';
 import {
   fitPlane, fitCircle3D, fitLine3D, fitCylinder,
-  lineLineClosest, distPointSegment, planeCircleMinMax, parallelWallMinMax,
+  lineLineClosest, distPointSegment, segSegClosest,
+  planeCircleMinMax, parallelWallMinMax,
 } from './fitmath.js';
 
 const $ = (id) => document.getElementById(id);
 
 const UNITS_KEY = 'picturebom-bomdom-units'; // reader preference, like edges
+const XYZ_KEY = 'picturebom-bomdom-xyz';     // ΔXYZ readout, same idea; missing -> off
 const UNITS = {
   mm: { scale: 1000, suffix: 'mm', maxDec: 3 },
   cm: { scale: 100, suffix: 'cm', maxDec: 4 },
@@ -48,6 +50,7 @@ export function initMeasure(app) {
   const st = {
     on: false,
     unit: readUnit(),
+    xyz: readXyz(),         // show per-axis ΔX/ΔY/ΔZ components
     pending: null,          // first committed entity of the in-progress pair
     hover: null,            // latest snap under the cursor
     measurements: [],
@@ -65,6 +68,12 @@ export function initMeasure(app) {
   }
   function storeUnit(u) {
     try { localStorage.setItem(UNITS_KEY, u); } catch { /* ignore */ }
+  }
+  function readXyz() {
+    try { return localStorage.getItem(XYZ_KEY) === 'on'; } catch { return false; }
+  }
+  function storeXyz(on) {
+    try { localStorage.setItem(XYZ_KEY, on ? 'on' : 'off'); } catch { /* ignore */ }
   }
 
   // Value + error (meters) -> display string. The last displayed digit is
@@ -341,7 +350,7 @@ export function initMeasure(app) {
         normal: toWorldDir(snap.mesh, f.normal),
         radius: f.radius * ws.mean,
         point: toWorldPoint(snap.mesh, f.center),
-        label: `Ø ${fmt(f.radius * 2 * ws.mean, (2 * f.rms + step) * ws.mean)}`,
+        dia: { d: f.radius * 2 * ws.mean, err: (2 * f.rms + step) * ws.mean },
       });
     }
     const line = growAlongChain(pts, false, fitLine3D, tol, seedIndex);
@@ -353,6 +362,7 @@ export function initMeasure(app) {
         linePoint: toWorldPoint(snap.mesh, f.point),
         lineDir: toWorldDir(snap.mesh, f.dir),
         length: f.length * ws.mean,
+        lineT: [f.t0 * ws.mean, f.t1 * ws.mean], // world extent about linePoint
         point: snap.worldPoint.clone(),
         label: 'edge',
       });
@@ -392,6 +402,7 @@ export function initMeasure(app) {
           fitRms: plane.rms * ws.mean,
           planePoint: toWorldPoint(snap.mesh, plane.point),
           planeNormal: toWorldDir(snap.mesh, plane.normal),
+          region: plane.region,
           point: snap.worldPoint.clone(),
           label: 'face',
         });
@@ -407,8 +418,9 @@ export function initMeasure(app) {
           axisPoint, axisDir,
           radius: cyl.radius * ws.mean,
           axisT: [cyl.axisT[0] * ws.mean, cyl.axisT[1] * ws.mean],
+          region: cyl.region,
           point: snap.worldPoint.clone(),
-          label: `Ø ${fmt(cyl.radius * 2 * ws.mean, (2 * cyl.rms + step) * ws.mean)}`,
+          dia: { d: cyl.radius * 2 * ws.mean, err: (2 * cyl.rms + step) * ws.mean },
         });
       }
     }
@@ -458,7 +470,9 @@ export function initMeasure(app) {
       }
     }
     const fit = fitPlane([...pts.values()]);
-    return fit && fit.rms <= tol ? fit : null;
+    // region: the grown facet set — the hover preview fills it, and lets a
+    // later pick anywhere on the same face reuse this classification.
+    return fit && fit.rms <= tol ? { ...fit, region: visited } : null;
   }
 
   function growCylindricalRegion(g, adj, seed, step) {
@@ -611,7 +625,7 @@ export function initMeasure(app) {
     let maxGap = 2 * Math.PI + angles[0] - angles[angles.length - 1];
     for (let i = 1; i < angles.length; i++) maxGap = Math.max(maxGap, angles[i] - angles[i - 1]);
     if (2 * Math.PI - maxGap < 1.0) return null; // < ~60° of arc
-    return { ...fit, axisT: [tMin, tMax] };
+    return { ...fit, axisT: [tMin, tMax], region: visited }; // region: see growPlanarRegion
   }
 
   // =========================================================================
@@ -764,7 +778,8 @@ export function initMeasure(app) {
           b.planePoint.clone().sub(a.planePoint).dot(a.planeNormal));
         return finish(d, a.planePoint.clone(), pb);
       }
-      const mm = meshMinDistance(a.mesh, b.mesh);
+      // Same mesh: the BVH would measure the body against itself (always 0).
+      const mm = a.mesh !== b.mesh ? meshMinDistance(a.mesh, b.mesh) : null;
       if (mm) {
         out.note = 'faces not parallel — minimum distance between the two bodies';
         return finish(mm.dist, mm.pa, mm.pb);
@@ -777,6 +792,23 @@ export function initMeasure(app) {
     const planeSide = a.kind === 'plane' ? a : b.kind === 'plane' ? b : null;
     if (planeSide) {
       const other = planeSide === a ? b : a;
+      // Straight edge: exact over the fitted SEGMENT — the nearest endpoint,
+      // or 0 where the edge crosses the face plane. The generic branch below
+      // would report the plane's distance to the chain centroid, a value
+      // that depends on how far the edge chain happened to grow.
+      if (other.kind === 'line' && other.lineT) {
+        const n = planeSide.planeNormal;
+        const e0 = other.linePoint.clone().addScaledVector(other.lineDir, other.lineT[0]);
+        const e1 = other.linePoint.clone().addScaledVector(other.lineDir, other.lineT[1]);
+        const d0 = e0.clone().sub(planeSide.planePoint).dot(n);
+        const d1 = e1.clone().sub(planeSide.planePoint).dot(n);
+        if (d0 * d1 <= 0) { // edge crosses the face plane
+          const px = e0.clone().lerp(e1, Math.abs(d0) / (Math.abs(d0) + Math.abs(d1) || 1));
+          return finish(0, px, px.clone());
+        }
+        const [de, pe] = Math.abs(d0) <= Math.abs(d1) ? [d0, e0] : [d1, e1];
+        return finish(Math.abs(de), pe.clone().addScaledVector(n, -de), pe);
+      }
       const oAx = axisOf(other);
       const r = radiusOf(other);
       const ref = oAx ? oAx.p : other.point;
@@ -801,6 +833,19 @@ export function initMeasure(app) {
     // two axes (circle/cylinder/line in any combination)
     if (axA && axB) {
       const ll = lineLineClosest(axA.p, axA.d, axB.p, axB.d);
+      // edge ↔ edge: both extents are known, so measure the SEGMENTS —
+      // collinear edges separated along their axis must not read 0, and a
+      // skew pair must not report a crossing outside either edge.
+      if (a.kind === 'line' && b.kind === 'line' && a.lineT && b.lineT) {
+        const ends = (e) => [
+          e.linePoint.clone().addScaledVector(e.lineDir, e.lineT[0]),
+          e.linePoint.clone().addScaledVector(e.lineDir, e.lineT[1]),
+        ];
+        const [a0, a1] = ends(a), [b0, b1] = ends(b);
+        const ss = segSegClosest(a0, a1, b0, b1);
+        if (!ll.parallel) out.note = 'edges are not parallel — closest approach shown';
+        return finish(ss.dist, ss.pa, ss.pb);
+      }
       let base = ll.dist;
       let pa = axA.p.clone(), pb = axB.p.clone();
       if (a.kind === 'circle' && b.kind === 'circle') {
@@ -841,6 +886,14 @@ export function initMeasure(app) {
         pa = axEnt.center.clone(); pb = other.point.clone();
         // No min/max here: the true point-to-arc extremes need the exact
         // 3D point-to-circle solution, and |d ∓ r| is only right in-plane.
+      } else if (axEnt.kind === 'line' && axEnt.lineT) {
+        // Finite edge: clamp to the fitted extent instead of projecting
+        // onto the infinite line's extension past the endpoints.
+        const e0 = ax.p.clone().addScaledVector(ax.d, axEnt.lineT[0]);
+        const e1 = ax.p.clone().addScaledVector(ax.d, axEnt.lineT[1]);
+        const near = distPointSegment(other.point, e0, e1);
+        base = near.d;
+        pa = near.point; pb = other.point.clone();
       } else {
         const w = other.point.clone().sub(ax.p);
         const t = w.dot(ax.d);
@@ -866,7 +919,9 @@ export function initMeasure(app) {
     ga.boundsTree.closestPointToGeometry(gb, bToA, t1, t2);
     if (!t1.point) return null;
     return {
-      dist: t1.distance,
+      // closestPointToGeometry works in A's LOCAL frame — scale the distance
+      // into world units like every other local/world crossing in this file.
+      dist: t1.distance * worldScaleOf(meshA).mean,
       pa: t1.point.clone().applyMatrix4(meshA.matrixWorld),
       // three-mesh-bvh reports target2 in the OTHER geometry's own frame.
       pb: t2.point ? t2.point.clone().applyMatrix4(meshB.matrixWorld)
@@ -900,6 +955,25 @@ export function initMeasure(app) {
     face: new THREE.PointsMaterial({ color: COLOR_APPROX, size: 7, sizeAttenuation: false, depthTest: false }),
   };
 
+  // ΔXYZ leg colours track the axis-gizmo CSS tokens, theme-reactively —
+  // same pattern as model.js initEdgeColor.
+  const axisMats = {
+    x: new THREE.LineBasicMaterial({ color: 0xcf3b40, toneMapped: false, depthTest: false, transparent: true, opacity: 0.9 }),
+    y: new THREE.LineBasicMaterial({ color: 0x2f9e63, toneMapped: false, depthTest: false, transparent: true, opacity: 0.9 }),
+    z: new THREE.LineBasicMaterial({ color: 0x3a72d4, toneMapped: false, depthTest: false, transparent: true, opacity: 0.9 }),
+  };
+  const applyAxisColors = () => {
+    const cs = getComputedStyle(document.documentElement);
+    for (const a of ['x', 'y', 'z']) {
+      const c = cs.getPropertyValue('--axis-' + a).trim();
+      if (c) axisMats[a].color.set(c);
+    }
+    invalidate();
+  };
+  applyAxisColors();
+  new MutationObserver(applyAxisColors)
+    .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
   function makePoints(positions, mat) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
@@ -918,8 +992,8 @@ export function initMeasure(app) {
     l.renderOrder = 1000;
     return l;
   }
-  // Fitted-entity glyphs: circle outline, cylinder axis, so the user sees
-  // exactly what got fitted.
+  // Fitted-entity glyphs: circle outline, cylinder end rings + axis, so the
+  // user sees exactly what got fitted.
   function entityGlyph(e) {
     if (e.kind === 'circle' || e.kind === 'cylinder') {
       const isC = e.kind === 'circle';
@@ -931,17 +1005,23 @@ export function initMeasure(app) {
       const w = new THREE.Vector3().crossVectors(dir, u);
       const segs = [];
       const N = 48;
-      const at = (i) => {
-        const ang = (i / N) * 2 * Math.PI;
-        return center.clone()
-          .addScaledVector(u, Math.cos(ang) * e.radius)
-          .addScaledVector(w, Math.sin(ang) * e.radius);
+      const ring = (c) => {
+        const at = (i) => {
+          const ang = (i / N) * 2 * Math.PI;
+          return c.clone()
+            .addScaledVector(u, Math.cos(ang) * e.radius)
+            .addScaledVector(w, Math.sin(ang) * e.radius);
+        };
+        for (let i = 0; i < N; i++) {
+          const p0 = at(i), p1 = at(i + 1);
+          segs.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+        }
       };
-      for (let i = 0; i < N; i++) {
-        const p0 = at(i), p1 = at(i + 1);
-        segs.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
-      }
-      if (!isC && e.axisT) {
+      if (isC || !e.axisT) ring(center);
+      else {
+        // A ring at each end of the fitted extent reads as "this bore".
+        ring(center.clone().addScaledVector(dir, e.axisT[0]));
+        ring(center.clone().addScaledVector(dir, e.axisT[1]));
         const a0 = e.axisPoint.clone().addScaledVector(e.axisDir, e.axisT[0]);
         const a1 = e.axisPoint.clone().addScaledVector(e.axisDir, e.axisT[1]);
         segs.push(a0.x, a0.y, a0.z, a1.x, a1.y, a1.z);
@@ -959,6 +1039,30 @@ export function initMeasure(app) {
   function disposeObj(obj) {
     obj.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
     if (obj.parent) obj.parent.remove(obj);
+  }
+
+  // ΔXYZ staircase: leader endpoint A to endpoint B, one leg per model axis.
+  // World coordinates ARE model coordinates (the camera reorients, the model
+  // never moves), so the legs read as the CAD-axis components — SolidWorks'
+  // dX/dY/dZ. Always drawn from the center-condition endpoints.
+  function xyzLegs(m) {
+    const legs = new THREE.Group();
+    const from = m.result.pa.clone();
+    for (const a of ['x', 'y', 'z']) {
+      const to = from.clone();
+      to[a] = m.result.pb[a];
+      if (Math.abs(to[a] - from[a]) > 1e-9) legs.add(makeLine(from, to, axisMats[a]));
+      from.copy(to);
+    }
+    return legs.children.length > 1 ? legs : null; // one leg = the leader line itself
+  }
+
+  function setXyzObj(m, on) {
+    if (m.xyzObj) { disposeObj(m.xyzObj); m.xyzObj = null; }
+    if (on) {
+      const legs = xyzLegs(m);
+      if (legs) { m.xyzObj = legs; m.obj.add(legs); } // rides m.obj's stale-hiding
+    }
   }
 
   // ---- labels -------------------------------------------------------------
@@ -1016,20 +1120,44 @@ export function initMeasure(app) {
     return m.result.base;
   }
 
+  // Ø labels format lazily so a unit switch re-renders them; other kinds
+  // carry fixed strings ('face', 'edge', 'corner', ...).
+  function entityLabel(e) {
+    return e.dia ? `Ø ${fmt(e.dia.d, e.dia.err)}` : (e.label || 'point');
+  }
+
   function refreshLabel(m) {
     const err = entityErr(m.a) + entityErr(m.b);
     const condTag = { center: 'ctr', min: 'min', max: 'max' }[m.condition] || '';
     m.valEl.textContent = fmt(currentValue(m), err);
     if (m.condEl) m.condEl.textContent = condTag;
+    const d = m.result.pb.clone().sub(m.result.pa);
     const bits = [`${fmtErr(err)}`];
-    if (m.a.label) bits.push(`A: ${m.a.label}`);
-    if (m.b.label) bits.push(`B: ${m.b.label}`);
+    bits.push(`A: ${entityLabel(m.a)}`);
+    bits.push(`B: ${entityLabel(m.b)}`);
     if (m.result.note) bits.push(m.result.note);
     if (m.a.approx || m.b.approx) bits.push('approximate: surface pick on a curved face');
-    const d = m.result.pb.clone().sub(m.result.pa);
     bits.push(`ΔX ${fmt(Math.abs(d.x), err)} · ΔY ${fmt(Math.abs(d.y), err)} · ΔZ ${fmt(Math.abs(d.z), err)}`);
     m.labelEl.title = bits.join('\n');
     m.labelEl.classList.toggle('is-approx', !!(m.a.approx || m.b.approx));
+    // ΔXYZ row (matches the staircase legs; always the center endpoints)
+    if (st.xyz) {
+      if (!m.xyzEl) {
+        m.xyzEl = document.createElement('span');
+        m.xyzEl.className = 'ml-xyz mono';
+        m.labelEl.appendChild(m.xyzEl);
+      }
+      m.xyzEl.innerHTML = '';
+      for (const a of ['x', 'y', 'z']) {
+        const s = document.createElement('span');
+        s.className = 'ax-' + a;
+        s.textContent = `Δ${a.toUpperCase()} ${fmt(Math.abs(d[a]), err)}`;
+        m.xyzEl.appendChild(s);
+      }
+    } else if (m.xyzEl) {
+      m.xyzEl.remove();
+      m.xyzEl = null;
+    }
   }
 
   function layoutLabels() {
@@ -1037,7 +1165,11 @@ export function initMeasure(app) {
     for (const m of st.measurements) {
       const mid = m.result.pa.clone().add(m.result.pb).multiplyScalar(0.5);
       const pos = projectToViewport(mid);
-      if (!pos) { m.labelEl.style.display = 'none'; continue; }
+      // A section cut hides the measured geometry; its label must not float
+      // over the void it used to anchor to.
+      const clipped = app.section && app.section.enabled
+        && app.section.plane.distanceToPoint(mid) < 0;
+      if (!pos || clipped) { m.labelEl.style.display = 'none'; continue; }
       m.labelEl.style.display = '';
       m.labelEl.style.left = `${pos.x}px`;
       m.labelEl.style.top = `${pos.y}px`;
@@ -1059,6 +1191,91 @@ export function initMeasure(app) {
   let rubberLine = null;
   let pendingLabel = null;
 
+  // ---- hover entity preview ------------------------------------------------
+  // The hover highlight runs the SAME classification the click will run
+  // (entityFromSnap), so what lights up is exactly what gets measured.
+  // Results are cached per mesh keyed by the classification seed; sweeping
+  // across one face or bore reuses its region via containment. The cache is
+  // swapped out whenever anything moves — entities capture world poses.
+  let hoverCache = new WeakMap(); // mesh -> Map(seedKey -> entity)
+  const resetHoverCache = () => { hoverCache = new WeakMap(); };
+
+  function hoverKeyOf(snap) {
+    if (snap.tier === 'face') return 'f' + snap.faceIndex;
+    if (snap.tier === 'edge') return 'e' + snap.edgeSeg;
+    // Vertex snaps key by exact position: same rim vertex -> same entity.
+    const p = snap.localPoint;
+    return `v${snap.edgeSeg}:${p.x},${p.y},${p.z}`;
+  }
+
+  function hoverEntityFor(snap) {
+    let byKey = hoverCache.get(snap.mesh);
+    if (!byKey) { byKey = new Map(); hoverCache.set(snap.mesh, byKey); }
+    const key = hoverKeyOf(snap);
+    let e = byKey.get(key);
+    if (e) return e;
+    // A face pick landing inside an already-grown plane/cylinder region is
+    // the same entity — no refit while sweeping along a face or bore.
+    if (snap.tier === 'face') {
+      for (const other of byKey.values()) {
+        if (other.region && other.region.has(snap.faceIndex)) {
+          byKey.set(key, other);
+          return other;
+        }
+      }
+    }
+    if (byKey.size > 64) byKey.clear();
+    e = entityFromSnap(snap);
+    byKey.set(key, e);
+    return e;
+  }
+
+  // Face-region fill: the grown facets in the mesh's LOCAL space, riding its
+  // world matrix. Depth-TESTED (unlike the markers) so only the visible part
+  // of the face lights up; the base surfaces sit behind their polygonOffset
+  // push-back, so the fill wins depth without z-fighting.
+  const planeFillMat = new THREE.MeshBasicMaterial({
+    color: COLOR_EDGE, toneMapped: false, transparent: true, opacity: 0.18,
+    side: THREE.DoubleSide, depthWrite: false,
+  });
+  function planeFill(entity) {
+    const g = entity.mesh.geometry;
+    const arr = new Float32Array(entity.region.size * 9);
+    let o = 0;
+    const v = new THREE.Vector3();
+    for (const t of entity.region) {
+      for (let k = 0; k < 3; k++) {
+        readVert(g, cornerIndex(g, t, k), v);
+        arr[o++] = v.x; arr[o++] = v.y; arr[o++] = v.z;
+      }
+    }
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    const fill = new THREE.Mesh(bg, planeFillMat);
+    fill.raycast = () => {};
+    fill.matrix.copy(entity.mesh.matrixWorld);
+    fill.matrixAutoUpdate = false;
+    fill.renderOrder = 999;
+    return fill;
+  }
+
+  let hoverGlyph = null;
+  function setHoverGlyph(entity) {
+    if (hoverGlyph) { disposeObj(hoverGlyph); hoverGlyph = null; }
+    if (!entity) return;
+    if (entity.kind === 'circle' || entity.kind === 'cylinder') {
+      hoverGlyph = entityGlyph(entity);
+    } else if (entity.kind === 'line' && entity.lineT) {
+      hoverGlyph = makeLine(
+        entity.linePoint.clone().addScaledVector(entity.lineDir, entity.lineT[0]),
+        entity.linePoint.clone().addScaledVector(entity.lineDir, entity.lineT[1]),
+        entityMat);
+    } else if (entity.kind === 'plane' && entity.region) {
+      hoverGlyph = planeFill(entity);
+    }
+    if (hoverGlyph) group.add(hoverGlyph);
+  }
+
   function setHoverMarker(snap) {
     if (hoverMarker) { disposeObj(hoverMarker); hoverMarker = null; }
     if (snap) {
@@ -1067,6 +1284,7 @@ export function initMeasure(app) {
         markerMatFor[snap.tier]);
       group.add(hoverMarker);
     }
+    setHoverGlyph(snap ? hoverEntityFor(snap) : null);
     invalidate();
   }
 
@@ -1084,7 +1302,7 @@ export function initMeasure(app) {
       if (glyph) { pendingGlyph = glyph; group.add(glyph); }
       pendingLabel = document.createElement('div');
       pendingLabel.className = 'measure-label is-pending mono';
-      pendingLabel.textContent = entity.label || 'point';
+      pendingLabel.textContent = entityLabel(entity);
       viewport.appendChild(pendingLabel);
       layoutLabels();
     }
@@ -1119,6 +1337,7 @@ export function initMeasure(app) {
       const glyph = entityGlyph(e);
       if (glyph) m.obj.add(glyph);
     }
+    setXyzObj(m, st.xyz);
     group.add(m.obj);
     st.measurements.push(m);
     makeLabel(m);
@@ -1196,6 +1415,11 @@ export function initMeasure(app) {
     if (!snap) { setPending(null); return; }
     const entity = entityFromSnap(snap);
     if (st.pending) {
+      // A double-click lands two identical snaps (framing is suppressed in
+      // measure mode but both clicks arrive) — treat the repeat as a no-op
+      // instead of committing a zero-length measurement.
+      if (st.pending.rec === entity.rec && st.pending.kind === entity.kind
+          && st.pending.point.distanceToSquared(entity.point) < 1e-18) return;
       if (st.pending.rec !== entity.rec && (displaced(st.pending.rec) || displaced(entity.rec))) {
         app.ui.toast('Parts are exploded or moved — reset positions to measure between parts');
         return;
@@ -1265,6 +1489,7 @@ export function initMeasure(app) {
       errM: entityErr(m.a) + entityErr(m.b),
       note: m.result.note,
       stale: m.stale,
+      deltasM: ['x', 'y', 'z'].map((a) => Math.abs(m.result.pb[a] - m.result.pa[a])),
       entities: [m.a, m.b].map((e) => ({
         kind: e.kind,
         radiusM: e.radius,
@@ -1285,6 +1510,21 @@ export function initMeasure(app) {
     st.unit = UNITS[unitSel.value] ? unitSel.value : 'mm';
     storeUnit(st.unit);
     for (const m of st.measurements) if (!m.stale) refreshLabel(m);
+    if (st.pending && pendingLabel) pendingLabel.textContent = entityLabel(st.pending);
+  });
+  const xyzBox = $('measureXYZ');
+  xyzBox.checked = st.xyz;
+  xyzBox.addEventListener('change', () => {
+    st.xyz = xyzBox.checked;
+    storeXyz(st.xyz);
+    for (const m of st.measurements) {
+      setXyzObj(m, st.xyz);
+      if (!m.stale) refreshLabel(m);
+      // Stale labels keep their "parts moved" tooltip; just drop the row.
+      else if (!st.xyz && m.xyzEl) { m.xyzEl.remove(); m.xyzEl = null; }
+    }
+    layoutLabels();
+    invalidate();
   });
 
   // ---- app events -----------------------------------------------------------
@@ -1293,6 +1533,7 @@ export function initMeasure(app) {
   // flight, and a pending first point whose part moved is unusable (its
   // committed coordinates are from the old pose).
   const onPositionsChanged = () => {
+    resetHoverCache(); // cached hover entities hold pre-move world coords
     for (const m of st.measurements) updateStale(m);
     if (st.pending && poseMoved(st.pending)) {
       setPending(null);
@@ -1305,6 +1546,7 @@ export function initMeasure(app) {
   app.events.on('positions-live', onPositionsChanged);
   app.events.on('model', () => {
     // Sidecar re-drop: the old scene graph (and every fitted entity) is gone.
+    resetHoverCache();
     clearAll();
     setMode(false);
   });

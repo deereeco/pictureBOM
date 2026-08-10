@@ -189,7 +189,7 @@ async function loadModel(buf, sourceLabel) {
     if (app.edgesOn) {
       M.buildEdgesLazily(model, () => app.events.emit('appearance'), () => app.model !== model);
     }
-  });
+  }, () => app.model !== model);
 
   diag.counts = {
     parts: app.meta.parts.length,

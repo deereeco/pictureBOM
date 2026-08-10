@@ -754,7 +754,13 @@ export function initInteractions(app) {
       // A focused text field and an open help overlay outrank measure mode:
       // Esc while typing must blur, not silently drop a measurement point.
       if (inField) { ev.target.blur(); return; }
+      // An open dropdown is its own layer: Esc closes it and STOPS — falling
+      // through would also drop a pending measurement point or exit measure
+      // mode with the same keypress.
+      const menuOpen = ['ctxMenu', 'exportMenu', 'explodeMenu', 'sectionMenu', 'viewMenu']
+        .some((id) => !$(id).classList.contains('hidden'));
       closeMenus();
+      if (menuOpen) return;
       if (!$('helpOverlay').classList.contains('hidden')) { $('helpOverlay').classList.add('hidden'); return; }
       if (app.measureMode && app.measure && app.measure.escape()) return;
       if (sel.clearSelection()) return;
