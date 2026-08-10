@@ -33,6 +33,7 @@ const app = {
   pick: () => null,
   moveMode: false,
   dragging: false,
+  renderStyle: 'shaded', // reader preference; initInteractions reads the stored one
 };
 window.__bomdom = app; // console access for the manual browser checklist
 
@@ -97,6 +98,7 @@ async function boot() {
     console.error('[BomDom] renderer init failed', e);
     return;
   }
+  app.viewer.setRenderStyle(app.renderStyle);
   initPicking(app);
   M.initEdgeColor(app.viewer.invalidate);
   initSection(app);
@@ -163,19 +165,14 @@ async function loadModel(buf, sourceLabel) {
   if (oldModel) {
     // Remove AND free the previous scene graph — leaving it would render two
     // superimposed models and strand every child overlay (edges, veils,
-    // section outlines) with no owner able to hide them.
+    // section outlines) with no owner able to hide them. disposeModel also
+    // frees materials, shaded twins, their matCache clones and textures.
     app.viewer.scene.remove(oldModel.root);
-    const seen = new Set();
-    oldModel.root.traverse((o) => {
-      if (o.geometry && !seen.has(o.geometry)) {
-        seen.add(o.geometry);
-        if (o.geometry.boundsTree) o.geometry.disposeBoundsTree();
-        o.geometry.dispose();
-      }
-    });
+    M.disposeModel(oldModel);
   }
   app.viewer.scene.add(app.model.root);
   app.model.edgesOn = app.edgesOn;
+  M.setMaterialStyle(app.model, app.renderStyle);
   M.applyPositions(app.model, 0);
   M.updateVisuals(app.model, app.sel);
   app.model.root.updateWorldMatrix(true, true);

@@ -27,6 +27,86 @@ export function parseGlbBuffer(arrayBuffer) {
 // Graph build
 // ---------------------------------------------------------------------------
 
+// The 'shaded' render style paints parts the way a CAD viewport does; these
+// two knobs plus the albedo lift below are its material half (the renderer/
+// light half lives in scene.js RENDER_STYLES).
+const SHADED_ROUGHNESS_FLOOR = 0.55;
+// Screen-lift: c' = c + L·(1−c). Keeps saturated colors essentially
+// untouched but raises pure black to charcoal, so faces and engravings on
+// black-anodized parts stay readable — SolidWorks' viewport does the same.
+const SHADED_BLACK_LIFT = 0.10;
+
+// One shaded twin per source material: metalness off (metals paint like
+// everything else — SolidWorks' RealView-off behaviour), satin roughness so
+// nothing gleams, black lifted to charcoal. A full clone, so texture maps,
+// transparency and emissive carry over; derive() keys its cache on material
+// uuid, so real and shaded derived states never collide.
+function shadedTwinFor(real, twinOf) {
+  let twin = twinOf.get(real);
+  if (!twin) {
+    twin = real.clone();
+    if (twin.metalness !== undefined) {
+      twin.metalness = 0;
+      twin.roughness = Math.max(SHADED_ROUGHNESS_FLOOR, twin.roughness);
+    }
+    if (twin.color) {
+      const c = twin.color, L = SHADED_BLACK_LIFT;
+      c.setRGB(c.r + L * (1 - c.r), c.g + L * (1 - c.g), c.b + L * (1 - c.b));
+    }
+    twinOf.set(real, twin);
+  }
+  return twin;
+}
+
+// Point every mesh at the base material matching the render style ('shaded'
+// or 'realistic'); the next updateVisuals re-derives every ghost/opacity/
+// highlight clone from the right base.
+export function setMaterialStyle(model, style) {
+  const shaded = style !== 'realistic';
+  for (const mesh of model.meshRecords.keys()) {
+    if (mesh.userData.__baseReal) {
+      mesh.userData.__base = shaded ? mesh.userData.__baseShaded : mesh.userData.__baseReal;
+    }
+  }
+}
+
+// Free everything a replaced model owns (sidecar re-drop): geometries and
+// their BVHs and edge geometries (all reached by the traverse — edge
+// LineSegments and veil overlays are children), the source materials and
+// their shaded twins, every matCache clone derived from either, and the
+// textures the materials reference. Module-shared state (edgeMat, the
+// overlay materials, other models' cache entries) stays.
+export function disposeModel(model) {
+  const geos = new Set();
+  const mats = new Set();
+  model.root.traverse((o) => {
+    if (o.geometry) geos.add(o.geometry);
+    if (o.userData && o.userData.__baseReal) {
+      mats.add(o.userData.__baseReal);
+      mats.add(o.userData.__baseShaded);
+    }
+  });
+  for (const g of geos) {
+    if (g.boundsTree) g.disposeBoundsTree();
+    g.dispose();
+  }
+  const textures = new Set();
+  for (const m of mats) {
+    for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap',
+                        'aoMap', 'emissiveMap', 'alphaMap']) {
+      if (m[slot]) textures.add(m[slot]);
+    }
+    for (const [key, clone] of matCache) {
+      if (key.startsWith(m.uuid + '|')) {
+        clone.dispose();
+        matCache.delete(key);
+      }
+    }
+    m.dispose();
+  }
+  for (const t of textures) t.dispose();
+}
+
 export function buildGraph(gltf, meta) {
   const t0 = performance.now();
   const root = gltf.scene;
@@ -105,13 +185,20 @@ export function buildGraph(gltf, meta) {
   // so their materials must render DoubleSide. The payload's mirrored_nodes
   // list covers our own GLBs; the determinant check covers dropped files.
   const mirroredIdx = new Set(meta.mirrored_nodes || []);
+  const twinOf = new Map(); // source material -> shaded twin (shared across instances)
   for (const [mesh, rec] of meshRecords) {
-    mesh.userData.__base = Array.isArray(mesh.material) ? null : mesh.material;
+    const real = Array.isArray(mesh.material) ? null : mesh.material;
+    mesh.userData.__base = real;
     // Faces are pushed back a hair so edge lines never z-fight. Must happen
-    // here, before the first updateVisuals: derive()'s clones inherit the
-    // offset from their base and the matCache is never invalidated.
+    // here, before the first updateVisuals AND before the shaded twins are
+    // cloned: derive()'s clones inherit the offset from their base and the
+    // matCache is never invalidated.
     for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
       if (m) { m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1; }
+    }
+    if (real) {
+      mesh.userData.__baseReal = real;
+      mesh.userData.__baseShaded = shadedTwinFor(real, twinOf);
     }
     if (mesh.matrixWorld.determinant() < 0 ||
         (rec.nodeIdx !== null && mirroredIdx.has(rec.nodeIdx))) {
@@ -392,8 +479,8 @@ function derive(base, ghost, opacity, highlight, ds, tint = null) {
       m.depthWrite = opacity > 0.4;
     }
     if (highlight !== HL_NONE && m.emissive !== undefined) {
-      // Tinting the albedo is what actually reads under ACES tone mapping on
-      // bright parts; emissive alone washes out. Selected > hover.
+      // Tinting the albedo is what actually reads on bright parts under
+      // either tone mapping; emissive alone washes out. Selected > hover.
       const accent = new THREE.Color(0x2b9187);
       if (m.color) m.color = m.color.clone().lerp(accent, highlight === HL_SELECTED ? 0.65 : 0.45);
       m.emissive = accent;
