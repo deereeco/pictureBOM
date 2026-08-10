@@ -80,13 +80,37 @@ export function initInteractions(app) {
   app.renderStyle = readStoredStyle();
 
   // ---- actions ---------------------------------------------------------
+  // Every explicit hide gesture (H key, context menu, panel eye icon) pushes
+  // the recs it actually hid; Shift+H pops the most recent batch that is
+  // still hidden. Isolate is not a hide gesture — R already undoes it.
+  const hideHistory = [];
+  const pushHideUndo = (recs) => {
+    const newly = recs.filter((r) => !r.flags.hidden);
+    if (newly.length) hideHistory.push(newly);
+  };
   const actions = {
-    hide(recs) { M.setHidden(recs, true); refresh(); },
+    hide(recs) { pushHideUndo(recs); M.setHidden(recs, true); refresh(); },
     show(recs) { M.setHidden(recs, false); refresh(); },
     toggleHidden(recs) {
       const anyVisible = recs.some((r) => !r.flags.hidden);
+      if (anyVisible) pushHideUndo(recs);
       M.setHidden(recs, anyVisible);
       refresh();
+    },
+    unhideLast() {
+      // Batches whose parts were re-shown some other way are stale: skip.
+      while (hideHistory.length) {
+        const batch = hideHistory.pop().filter((r) => r.flags.hidden);
+        if (!batch.length) continue;
+        M.setHidden(batch, false);
+        refresh();
+        const rec = batch[0];
+        const part = rec.partId !== null ? app.model.partById.get(rec.partId) : null;
+        const name = part ? (part.bom_name || part.name) : (M.cleanName(rec.name) || 'part');
+        app.ui.toast(batch.length > 1 ? `Unhid ${batch.length} parts` : `Unhid ${name}`);
+        return;
+      }
+      app.ui.toast('Nothing to unhide');
     },
     cycleOpacity(recs) { M.cycleOpacity(recs); refresh(); },
     isolate(recs, ghostRest) {
@@ -133,6 +157,7 @@ export function initInteractions(app) {
       if (!app.model) return;
       sel.setScope(null);
       sel.clearSelection();
+      hideHistory.length = 0; // everything is visible again; nothing to undo
       M.resetAppearance(app.model);
       actions.resetPositions();
       refresh();
@@ -180,6 +205,10 @@ export function initInteractions(app) {
     },
   };
   app.actions = actions;
+
+  // Hide-undo history is per-model: a sidecar re-drop replaces every record
+  // object, so old entries could never match anything again.
+  app.events.on('model', () => { hideHistory.length = 0; });
 
   // ---- explode (guided setup popover) ----------------------------------
   // Two movement events: 'positions-live' fires on every explode step (cheap
@@ -777,7 +806,10 @@ export function initInteractions(app) {
     else if (key === 'e') actions.setEdges(!app.edgesOn);
     else if (key === 'x') { if (app.sectionApi) app.sectionApi.toggle(); }
     else if (key === 'd') { if (app.measure) app.measure.toggle(); }
-    else if (key === 'h') { const t = selectedRecs(); if (t.length) actions.hide(t); }
+    else if (key === 'h') {
+      if (ev.shiftKey) actions.unhideLast();
+      else { const t = selectedRecs(); if (t.length) actions.hide(t); }
+    }
     else if (key === 'i') { const t = selectedRecs(); if (t.length) actions.isolate(t, false); }
     else if (key === 'f') actions.frame(selectedRecs());
     else if (key === 'r') actions.resetAll();
