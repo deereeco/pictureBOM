@@ -161,7 +161,8 @@ async function loadFitmath() {
     process.exit(2);
   }
   const fm = await import(pathToFileURL(FITMATH).href);
-  for (const name of ['fitPlane', 'fitCircle3D', 'fitLine3D', 'fitCylinder', 'lineLineClosest']) {
+  for (const name of ['fitPlane', 'fitCircle3D', 'fitLine3D', 'fitCylinder', 'lineLineClosest',
+                      'planeCircleMinMax', 'parallelWallMinMax']) {
     if (typeof fm[name] !== 'function') {
       console.error(`fitmath.js does not export ${name}()`);
       process.exit(1);
@@ -272,7 +273,36 @@ function runAssertions(fm, instances) {
     check('E2', `end-plane separation ${fmt(ROD_LEN, 3)} +/- 0.02 mm`, false, why);
   }
 
-  // F. summary table
+  // F. plane <-> circle rim distance extremes (regression: the old formula
+  // used base +/- r unconditionally, which measures a distance to nothing
+  // whenever the rim's axis isn't lying IN the plane).
+  const near = (v, want, tol = 1e-12) => Math.abs(v - want) <= tol;
+  const f1 = fm.planeCircleMinMax(0.010, 0.003, 1); // rim parallel to face, 10 mm off
+  check('F1', 'plane<->circle: parallel rim reads min=max=base', near(f1.min, 0.010) && near(f1.max, 0.010),
+    `min ${fmt(f1.min * MM)} max ${fmt(f1.max * MM)} mm (want 10/10)`);
+  const f2 = fm.planeCircleMinMax(0, 0.003, 1); // rim lying ON the face
+  check('F2', 'plane<->circle: rim on the face reads 0..0', near(f2.min, 0) && near(f2.max, 0),
+    `min ${fmt(f2.min * MM)} max ${fmt(f2.max * MM)} mm (want 0/0)`);
+  const f3 = fm.planeCircleMinMax(0.001, 0.003, 0); // edge-on rim crossing the plane
+  check('F3', 'plane<->circle: crossing rim clamps min to 0', near(f3.min, 0) && near(f3.max, 0.004),
+    `min ${fmt(f3.min * MM)} max ${fmt(f3.max * MM)} mm (want 0/4)`);
+
+  // G. parallel wall-to-wall extremes (regression: |base - (rA+rB)| reported
+  // ~the sum of radii for a shaft nested in a bore instead of the wall gap).
+  const g1 = fm.parallelWallMinMax(0, 0.0015, 0.002); // coaxial shaft in bore
+  check('G1', 'cyl<->cyl: coaxial shaft-in-bore reads the wall gap', near(g1.min, 0.0005) && near(g1.max, 0.0035),
+    `min ${fmt(g1.min * MM)} max ${fmt(g1.max * MM)} mm (want 0.5/3.5)`);
+  const g2 = fm.parallelWallMinMax(0.010, 0.0015, 0.002); // side by side
+  check('G2', 'cyl<->cyl: side-by-side walls', near(g2.min, 0.0065) && near(g2.max, 0.0135),
+    `min ${fmt(g2.min * MM)} max ${fmt(g2.max * MM)} mm (want 6.5/13.5)`);
+  const g3 = fm.parallelWallMinMax(0.002, 0.0015, 0.002); // overlapping walls
+  check('G3', 'cyl<->cyl: overlapping walls meet at 0', near(g3.min, 0) && near(g3.max, 0.0055),
+    `min ${fmt(g3.min * MM)} max ${fmt(g3.max * MM)} mm (want 0/5.5)`);
+  const g4 = fm.parallelWallMinMax(0, 0.003, 0.003, 0.005); // coaxial stacked rims
+  check('G4', 'circle<->circle: coaxial rims carry the axial gap', near(g4.min, 0.005) && near(g4.max, Math.hypot(0.005, 0.006)),
+    `min ${fmt(g4.min * MM)} max ${fmt(g4.max * MM)} mm (want 5/${fmt(Math.hypot(5, 6))})`);
+
+  // H. summary table
   console.log('result  id  check                                                measured');
   for (const c of checks) {
     console.log(`${c.ok ? 'PASS' : 'FAIL'}    ${c.id.padEnd(3)} ${c.label.padEnd(52)} ${c.measured}`);

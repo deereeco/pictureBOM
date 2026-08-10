@@ -259,6 +259,31 @@ export function lineLineClosest(p1, d1, p2, d2) {
   return { dist: Math.abs(w.dot(cross)) / Math.sqrt(denom), parallel: false };
 }
 
+// Distance extremes from a plane to a circle rim of radius r whose axis
+// makes |cos α| = cosAxis with the plane normal. Rim points oscillate about
+// the center distance `base` with amplitude r·sin α = r·√(1−cos²α): a rim
+// parallel to the face (cosAxis 1) is all at `base`, an edge-on rim sweeps
+// base ± r, and a rim crossing the plane bottoms out at 0 — never |base−r|,
+// which is a distance to nothing. Also serves the cylinder-wall-to-plane
+// case with the axis parallel to the plane (cosAxis ≈ 0); a TILTED
+// cylinder's extremes depend on its length, not r, so callers warn instead.
+export function planeCircleMinMax(base, r, cosAxis) {
+  const amp = r * Math.sqrt(Math.max(0, 1 - cosAxis * cosAxis));
+  return { min: Math.max(0, base - amp), max: base + amp };
+}
+
+// Wall-to-wall distance extremes between two parallel-axis round entities:
+// rho is the perpendicular separation of the axes, h a fixed offset ALONG
+// them (nonzero only for circle rims — a rim is one station on its axis,
+// so the axial gap rides every wall-point pair; cylinders extend, h = 0).
+// In the cross-section plane the walls close side-by-side by rho−(rA+rB),
+// nested (shaft in bore) by |rA−rB|−rho, and touching/overlapping walls
+// meet at 0; the outer extreme is always rho+rA+rB.
+export function parallelWallMinMax(rho, rA, rB, h = 0) {
+  const inMin = Math.max(0, rho - (rA + rB), Math.abs(rA - rB) - rho);
+  return { min: Math.hypot(h, inMin), max: Math.hypot(h, rho + rA + rB) };
+}
+
 // Closest point on segment ab to p. Returns { d, point, t }.
 export function distPointSegment(p, a, b) {
   const ab = new THREE.Vector3().subVectors(b, a);

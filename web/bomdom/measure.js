@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import * as M from './model.js';
 import {
   fitPlane, fitCircle3D, fitLine3D, fitCylinder,
-  lineLineClosest, distPointSegment,
+  lineLineClosest, distPointSegment, planeCircleMinMax, parallelWallMinMax,
 } from './fitmath.js';
 
 const $ = (id) => document.getElementById(id);
@@ -330,8 +330,9 @@ export function initMeasure(app) {
     const { pts, closed, seedIndex } = walkChain(eg, snap.edgeSeg);
 
     const circle = growAlongChain(pts, closed, fitCircle3D, tol, seedIndex);
+    // Sanity guard compares in WORLD units: the fitted radius is mesh-local.
     if (circle && circle.n >= 6 && circle.fit.arcSpanRad >= 1.75
-        && circle.fit.radius < (app.model ? app.model.diagLen : 1)) {
+        && circle.fit.radius * ws.mean < (app.model ? app.model.diagLen : 1)) {
       const f = circle.fit;
       return snapshotPose({
         kind: 'circle', rec: snap.rec, mesh: snap.mesh, step: step * ws.mean,
@@ -631,7 +632,10 @@ export function initMeasure(app) {
     if (!hit) return null;
     const mesh = hit.object;
     const g = mesh.geometry;
-    const radius = SNAP_PX * worldPerPixel(hit.distance);
+    // Every candidate distance below is measured in MESH-LOCAL space, so the
+    // world-space snap radius must be converted (÷ world scale) like every
+    // other local/world crossing in this file.
+    const radius = SNAP_PX * worldPerPixel(hit.distance) / (worldScaleOf(mesh).mean || 1);
     _m4.copy(mesh.matrixWorld).invert();
     _local.copy(hit.point).applyMatrix4(_m4);
 
@@ -780,9 +784,15 @@ export function initMeasure(app) {
       const base = Math.abs(d);
       const foot = ref.clone().addScaledVector(planeSide.planeNormal, -d);
       if (r > 0) {
-        out.conditions = { center: base, min: Math.abs(base - r), max: base + r };
-        if (oAx && Math.abs(oAx.d.dot(planeSide.planeNormal)) > 0.05 && other.kind === 'cylinder') {
+        const cosAxis = oAx ? Math.abs(oAx.d.dot(planeSide.planeNormal)) : 0;
+        if (other.kind === 'cylinder' && cosAxis > 0.05) {
+          // A tilted cylinder's wall extremes depend on its length, not its
+          // radius — there is no honest min/max, so warn instead. Circles
+          // stay exact at any tilt via the amplitude term.
           out.note = 'hole axis is not parallel to the face';
+        } else {
+          const mm = planeCircleMinMax(base, r, cosAxis);
+          out.conditions = { center: base, min: mm.min, max: mm.max };
         }
       }
       return finish(base, foot, ref.clone());
@@ -806,13 +816,15 @@ export function initMeasure(app) {
         out.note = 'axes are not parallel — closest approach shown';
       }
       // Wall-to-wall min/max only means anything when the axes are parallel
-      // (the offsets ∓(r1+r2) live in the common perpendicular plane).
+      // (the offsets live in the common perpendicular plane). ll.dist is the
+      // perpendicular axis separation — NOT `base`, which circle pairs
+      // override with the 3D center distance; their fixed axial offset
+      // returns via the hypotenuse inside parallelWallMinMax.
       if (rA + rB > 0 && ll.parallel) {
-        out.conditions = {
-          center: base,
-          min: Math.abs(base - (rA + rB)),
-          max: base + rA + rB,
-        };
+        const h = (a.kind === 'circle' && b.kind === 'circle')
+          ? Math.abs(axB.p.clone().sub(axA.p).dot(axA.d)) : 0;
+        const mm = parallelWallMinMax(ll.dist, rA, rB, h);
+        out.conditions = { center: base, min: mm.min, max: mm.max };
       }
       return finish(base, pa, pb);
     }
@@ -1148,6 +1160,10 @@ export function initMeasure(app) {
   let lastMove = null;
 
   function onPointerLeave() {
+    // Cancel the throttle rAF too — a pending callback holding the last
+    // in-canvas event would resurrect the marker after the cursor left.
+    if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
+    lastMove = null;
     if (st.hover) {
       st.hover = null;
       setHoverMarker(null);

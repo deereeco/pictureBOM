@@ -119,8 +119,14 @@ export function initSection(app) {
 
     const out = [];
     // Nudge the line to the kept side so the global clip plane never eats
-    // its own outline to float precision.
-    const eps = (app.model ? app.model.diagLen : 1) * 1e-4;
+    // its own outline to float precision. The nudge is a WORLD length but is
+    // applied along the local plane normal in local coordinates, so divide
+    // by the mesh's world scale (foreign GLBs can carry non-identity scales;
+    // BomDom's own exports are always 1).
+    const me = mesh.matrixWorld.elements;
+    const wscale = (Math.hypot(me[0], me[1], me[2]) + Math.hypot(me[4], me[5], me[6])
+      + Math.hypot(me[8], me[9], me[10])) / 3 || 1;
+    const eps = (app.model ? app.model.diagLen : 1) * 1e-4 / wscale;
     const push = () => {
       out.push(
         _va.x + _localPlane.normal.x * eps, _va.y + _localPlane.normal.y * eps, _va.z + _localPlane.normal.z * eps,
@@ -222,15 +228,19 @@ export function initSection(app) {
   // Appearance events fire for visibility changes (rebuild needed) but also
   // for every lazy edge-build slice (nothing changed) — gate on a cheap
   // visibility signature so the build doesn't trigger dozens of rebuilds.
+  // Order-DEPENDENT rolling hash, not a sum: pickables comes from a
+  // deterministic DFS, and two different visible sets with equal count and
+  // equal id sum must not collide (they'd skip the rebuild and leave newly
+  // visible parts cut open with no outlines).
   let lastSig = '';
   app.events.on('appearance', () => {
     if (!state.enabled || !app.model) return;
-    let idSum = 0;
+    let idHash = 0;
     for (const mesh of app.model.pickables) {
       const rec = app.model.meshRecords.get(mesh);
-      if (rec) idSum += rec.id * 31 + 7;
+      if (rec) idHash = (idHash * 31 + rec.id + 1) | 0;
     }
-    const sig = `${app.model.pickables.length}|${app.model.hiddenInstances}|${idSum}`;
+    const sig = `${app.model.pickables.length}|${app.model.hiddenInstances}|${idHash}`;
     if (sig === lastSig) return;
     lastSig = sig;
     scheduleOutlines(false);

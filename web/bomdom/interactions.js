@@ -95,7 +95,11 @@ export function initInteractions(app) {
     snapBack(recs) {
       if (!app.viewer || !app.model) return;
       M.snapBack(app.model, recs, app.viewer.addTween,
-        () => { M.applyPositions(app.model, app.model.explodeF); invalidate(); },
+        () => {
+          M.applyPositions(app.model, app.model.explodeF);
+          app.events.emit('positions-live'); // overlays track parts in flight
+          invalidate();
+        },
         () => app.events.emit('positions'));
     },
     resetPositions() {
@@ -456,6 +460,10 @@ export function initInteractions(app) {
   canvas.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 || !app.model || !app.viewer) return;
     if (app.anchorPickMode) return; // resolved as a click on pointerup
+    // Measure mode owns left clicks outright: with move mode (or Shift/Ctrl)
+    // active, a measure click would otherwise start a zero-slop drag or a
+    // marquee, and picking's app.dragging check would swallow the click.
+    if (app.measureMode) return;
     if (ev.ctrlKey || ev.metaKey) { startMarquee(ev); return; }
     if (!(app.moveMode || ev.shiftKey)) return;
     const hit = app.pick(ev);
@@ -507,6 +515,10 @@ export function initInteractions(app) {
         r.flags.moved = r.dragDelta.lengthSq() > 0;
       });
       M.applyPositions(app.model, app.model.explodeF);
+      // Same live event the explode slider fires: measurement staleness and
+      // section outlines must track the part through the drag, not snap to
+      // reality only at pointerup.
+      app.events.emit('positions-live');
       invalidate();
     };
     const onUp = (e) => {
