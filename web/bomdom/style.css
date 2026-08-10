@@ -944,6 +944,16 @@ html.theme-transition *::after {
     white-space: nowrap;
 }
 .measure-chip button:hover { background: var(--accent); color: var(--on-accent); }
+.mc-xyz {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.mc-xyz input { accent-color: var(--accent); margin: 0; }
 .measure-label {
     position: absolute;
     z-index: 6;
@@ -951,6 +961,7 @@ html.theme-transition *::after {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap; /* the ΔXYZ row breaks below the value */
     background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
@@ -960,6 +971,12 @@ html.theme-transition *::after {
     white-space: nowrap;
 }
 .measure-label .ml-val { color: var(--text); }
+.measure-label .ml-xyz {
+    flex-basis: 100%;
+    display: flex;
+    gap: 8px;
+    font-size: 10.5px;
+}
 .measure-label.is-approx .ml-val { color: var(--warning); }
 .measure-label.is-stale { opacity: 0.45; }
 .measure-label.is-pending {

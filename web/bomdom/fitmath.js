@@ -125,6 +125,7 @@ export function fitLine3D(points) {
     point: centroid, dir,
     rms: Math.sqrt(sum2 / points.length), max,
     length: tMax - tMin,
+    t0: tMin, t1: tMax, // extent along dir, relative to the centroid
   };
 }
 
@@ -282,6 +283,36 @@ export function planeCircleMinMax(base, r, cosAxis) {
 export function parallelWallMinMax(rho, rA, rB, h = 0) {
   const inMin = Math.max(0, rho - (rA + rB), Math.abs(rA - rB) - rho);
   return { min: Math.hypot(h, inMin), max: Math.hypot(h, rho + rA + rB) };
+}
+
+// Closest points between segments p1→q1 and p2→q2, clamped at all four
+// ends (Ericson, Real-Time Collision Detection §5.1.9). Unlike
+// lineLineClosest this never reads 0 for collinear edges separated along
+// their axis. Returns { dist, pa, pb }.
+export function segSegClosest(p1, q1, p2, q2) {
+  const d1 = new THREE.Vector3().subVectors(q1, p1);
+  const d2 = new THREE.Vector3().subVectors(q2, p2);
+  const r = new THREE.Vector3().subVectors(p1, p2);
+  const a = d1.dot(d1), e = d2.dot(d2), f = d2.dot(r);
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  let s, t;
+  if (a <= 1e-30 && e <= 1e-30) { s = 0; t = 0; }
+  else if (a <= 1e-30) { s = 0; t = clamp01(f / e); }
+  else {
+    const c = d1.dot(r);
+    if (e <= 1e-30) { t = 0; s = clamp01(-c / a); }
+    else {
+      const b = d1.dot(d2);
+      const denom = a * e - b * b;
+      s = denom > 1e-30 ? clamp01((b * f - c * e) / denom) : 0;
+      t = (b * s + f) / e;
+      if (t < 0) { t = 0; s = clamp01(-c / a); }
+      else if (t > 1) { t = 1; s = clamp01((b - c) / a); }
+    }
+  }
+  const pa = p1.clone().addScaledVector(d1, s);
+  const pb = p2.clone().addScaledVector(d2, t);
+  return { dist: pa.distanceTo(pb), pa, pb };
 }
 
 // Closest point on segment ab to p. Returns { d, point, t }.

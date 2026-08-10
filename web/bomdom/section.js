@@ -216,7 +216,24 @@ export function initSection(app) {
   // Parts moving through the fixed plane (drag-move end, snap-back, explode)
   // change every cut. 'positions-live' fires per explode step — outlines
   // can't keep up with a scrub, so they hide and rebuild at rest.
-  app.events.on('positions', () => { if (state.enabled) { computeRange(); scheduleOutlines(true); } });
+  // The box changed (explode/move) but the CUT must stay where the user put
+  // it: re-derive frac from the live plane so the next updatePlane() (axis
+  // change, flip) doesn't teleport the cut into the new box.
+  function syncFracToPlane() {
+    if (state.box.isEmpty()) return;
+    const a = state.axis;
+    const min = state.box.min[a], max = state.box.max[a];
+    const pad = Math.max((max - min) * 0.002, 1e-6);
+    const w = state.flipped ? -state.plane.constant : state.plane.constant;
+    state.frac = Math.min(1, Math.max(0, (w - (min - pad)) / ((max + pad) - (min - pad))));
+  }
+
+  app.events.on('positions', () => {
+    if (!state.enabled) return;
+    computeRange();
+    syncFracToPlane();
+    scheduleOutlines(true);
+  });
   app.events.on('positions-live', () => { if (state.enabled) clearOutlines(); });
   app.events.on('bvh-ready', () => { if (state.enabled) scheduleOutlines(true); });
   app.events.on('model', () => {
@@ -330,7 +347,12 @@ export function initSection(app) {
   }
 
   function setEnabled(on) {
-    if (on && !app.model) { app.ui.toast('No 3D model loaded'); return; }
+    if (on && !app.model) {
+      app.ui.toast('No 3D model loaded');
+      // The just-clicked checkbox must untick — nothing was enabled.
+      if (!menu.classList.contains('hidden')) buildPopover();
+      return;
+    }
     state.enabled = on;
     if (on) {
       computeRange();

@@ -162,7 +162,7 @@ async function loadFitmath() {
   }
   const fm = await import(pathToFileURL(FITMATH).href);
   for (const name of ['fitPlane', 'fitCircle3D', 'fitLine3D', 'fitCylinder', 'lineLineClosest',
-                      'planeCircleMinMax', 'parallelWallMinMax']) {
+                      'planeCircleMinMax', 'parallelWallMinMax', 'segSegClosest']) {
     if (typeof fm[name] !== 'function') {
       console.error(`fitmath.js does not export ${name}()`);
       process.exit(1);
@@ -302,7 +302,20 @@ function runAssertions(fm, instances) {
   check('G4', 'circle<->circle: coaxial rims carry the axial gap', near(g4.min, 0.005) && near(g4.max, Math.hypot(0.005, 0.006)),
     `min ${fmt(g4.min * MM)} max ${fmt(g4.max * MM)} mm (want 5/${fmt(Math.hypot(5, 6))})`);
 
-  // H. summary table
+  // H. segment-segment closest distance (regression: straight edges were
+  // measured as infinite lines — collinear edges apart along the axis read 0)
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const h1 = fm.segSegClosest(V(0, 0, 0), V(0.010, 0, 0), V(0.030, 0, 0), V(0.040, 0, 0));
+  check('H1', 'seg<->seg: collinear edges read the axial gap', near(h1.dist, 0.020),
+    `${fmt(h1.dist * MM)} mm (want 20)`);
+  const h2 = fm.segSegClosest(V(0, 0, 0), V(0.010, 0, 0), V(0, 0.003, 0.004), V(0.010, 0.003, 0.004));
+  check('H2', 'seg<->seg: parallel offset reads the perpendicular', near(h2.dist, 0.005),
+    `${fmt(h2.dist * MM)} mm (want 5)`);
+  const h3 = fm.segSegClosest(V(-0.005, 0, 0), V(0.005, 0, 0), V(0, -0.005, 0.002), V(0, 0.005, 0.002));
+  check('H3', 'seg<->seg: crossing skew pair reads the crossing gap', near(h3.dist, 0.002),
+    `${fmt(h3.dist * MM)} mm (want 2)`);
+
+  // I. summary table
   console.log('result  id  check                                                measured');
   for (const c of checks) {
     console.log(`${c.ok ? 'PASS' : 'FAIL'}    ${c.id.padEnd(3)} ${c.label.padEnd(52)} ${c.measured}`);

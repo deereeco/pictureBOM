@@ -84,6 +84,10 @@ export function disposeModel(model) {
     if (o.userData && o.userData.__baseReal) {
       mats.add(o.userData.__baseReal);
       mats.add(o.userData.__baseShaded);
+    } else if (o.isMesh && Array.isArray(o.material)) {
+      // Multi-material meshes never get twins or a __baseReal pointer, but
+      // their materials are still this model's to free.
+      for (const m of o.material) if (m) mats.add(m);
     }
   });
   for (const g of geos) {
@@ -794,11 +798,14 @@ export function movedRecs(model) {
 // geometry has no boundsTree yet.
 // ---------------------------------------------------------------------------
 
-export function buildBVHLazily(model, onDone) {
+export function buildBVHLazily(model, onDone, isStale) {
   const geos = [...model.uniqueGeometries];
   let i = 0;
   const t0 = performance.now();
   const step = () => {
+    // Model replaced (sidecar re-drop): stop, or the loop would rebuild
+    // bounds trees on geometries disposeModel just freed.
+    if (isStale && isStale()) return;
     const end = performance.now() + 12;
     while (i < geos.length && performance.now() < end) {
       const g = geos[i++];
