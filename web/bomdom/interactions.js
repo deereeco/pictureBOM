@@ -207,9 +207,18 @@ export function initInteractions(app) {
       refresh();
     },
     setMoveMode(on) {
+      on = !!on;
+      const was = !!app.moveMode;
       app.moveMode = on;
       $('btnMove').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-move', on);
+      if (!on) sel.setHover(null); // hover preview is a move-mode affordance
+      if (app.triad) app.triad.refresh();
+      if (on && !was) {
+        app.ui.toast(sel.selected.size
+          ? 'Move mode — drag the triad to slide or turn, drag a part to move it freely (M to exit)'
+          : 'Move mode — drag parts freely, or select one for the move/rotate triad (M to exit)');
+      }
     },
     setEdges(on) {
       app.edgesOn = on;
@@ -588,6 +597,9 @@ export function initInteractions(app) {
     // marquee, and picking's app.dragging check would swallow the click.
     if (app.measureMode) return;
     if (ev.ctrlKey || ev.metaKey) { startMarquee(ev); return; }
+    // The triad rides above the parts: a grab on one of its handles wins over
+    // both the free part drag and (via controls.enabled) the orbit.
+    if (app.triad && app.triad.tryStartDrag(ev)) return;
     if (!(app.moveMode || ev.shiftKey)) return;
     const hit = app.pick(ev);
     if (!hit) return;
@@ -637,7 +649,7 @@ export function initInteractions(app) {
         // Reference point cancels out of the affine delta map — one point works for all.
         r.dragDelta.copy(startDeltas[i]).add(
           M.worldDeltaToLocal(r.object.parent, worldDelta, hit.point));
-        r.flags.moved = r.dragDelta.lengthSq() > 0;
+        M.refreshMovedFlag(r); // a triad rotation keeps the part "moved" at zero translation
       });
       M.applyPositions(app.model, app.model.explodeF);
       // Same live event the explode slider fires: measurement staleness and

@@ -2,11 +2,11 @@
 // right-click context menu (only when not dragged). Deliberately no hover
 // pick — moving the pointer over the model must not recolour anything; the
 // BOM list on the right is the only thing that drives hover highlighting.
-// The one exception is assembly mode, whose whole point is previewing which
-// subassembly a click would select.
+// Two exceptions: assembly mode (previewing which subassembly a click would
+// select) and move mode (previewing exactly what a drag would grab).
 
 import * as THREE from 'three';
-import { boxOfRecs, levelTargetOf } from './model.js';
+import { boxOfRecs, levelTargetOf, selectedAncestorOf } from './model.js';
 
 const CLICK_SLOP_PX = 4;
 
@@ -57,27 +57,42 @@ export function initPicking(app) {
     return levelTargetOf(app.model, rec, anchor || null);
   }
 
-  // ---- assembly-mode hover (one raycast per frame at most) --------------
+  // ---- assembly / move-mode hover (one raycast per frame at most) --------
+  // Assembly mode previews the subassembly a click would select; move mode
+  // previews the exact drag target (the part, or its selected subassembly /
+  // whole selection — the same resolution the drag itself uses).
+  const hoverModeOn = () => app.assemblyMode || app.moveMode;
   let hoverEv = null;
   let hoverRaf = 0;
   canvas.addEventListener('pointermove', (ev) => {
-    if (!app.assemblyMode) return;
+    if (!hoverModeOn()) return;
     if (app.measureMode || app.anchorPickMode || app.dragging || ev.buttons !== 0) return;
     hoverEv = ev;
     if (hoverRaf) return;
     hoverRaf = requestAnimationFrame(() => {
       hoverRaf = 0;
-      if (!hoverEv || !app.assemblyMode || app.dragging) return;
+      if (!hoverEv || !hoverModeOn() || app.dragging) return;
       if (app.measureMode || app.anchorPickMode) return; // engaged since scheduling
       // Pre-BVH raycasts are brute-force triangle walks — per-frame casts
       // would fight the BVH build for the main thread on big models.
       if (!app.model || !app.model.bvhReady) return;
+      // The triad rides above the parts: hovering one of its handles must not
+      // tint whatever part happens to sit behind it.
+      if (!app.assemblyMode && app.triad && app.triad.hitTest(hoverEv)) {
+        app.sel.setHover(null);
+        return;
+      }
       const hit = pick(hoverEv);
-      app.sel.setHover(hit ? { ids: [assemblyTarget(hit.rec).id] } : null);
+      const target = hit
+        ? (app.assemblyMode
+          ? assemblyTarget(hit.rec)
+          : (selectedAncestorOf(app.sel.selected, hit.rec) || hit.rec))
+        : null;
+      app.sel.setHover(target ? { ids: [target.id] } : null);
     });
   });
   canvas.addEventListener('pointerleave', () => {
-    if (!app.assemblyMode) return;
+    if (!hoverModeOn()) return;
     // Cancel the queued pick too — a pending callback holding the last
     // in-canvas event would resurrect the highlight after the cursor left
     // (same race measure.js onPointerLeave guards against).

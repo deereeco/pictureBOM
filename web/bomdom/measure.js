@@ -1455,6 +1455,7 @@ export function initMeasure(app) {
     $('btnMeasure').classList.toggle('is-on', on);
     canvas.classList.toggle('is-measure', on);
     $('measureChip').classList.toggle('hidden', !on);
+    if (app.triad) app.triad.refresh(); // triad stands down while measure owns the canvas
     if (on) {
       // Assembly mode also owns hover + click on this canvas: exit it, or its
       // last hover highlight would stay frozen for the whole measure session
