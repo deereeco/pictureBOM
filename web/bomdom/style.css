@@ -132,10 +132,12 @@ html.theme-transition *::after {
 }
 .appbar-left { display: flex; align-items: center; gap: 10px; min-width: fit-content; overflow: hidden; }
 .wordmark { flex: none; }
-/* Drop decorations before they collide with the toolbar on narrow windows */
-@media (max-width: 1180px) { .gen-chip { display: none; } }
-@media (max-width: 940px) { .asm-name { display: none; } }
-@media (max-width: 880px) { #explodeSlider { display: none; } }
+/* Drop decorations before they collide with the toolbar on narrow windows.
+   Breakpoints re-measured 2026-08-12 after the Assembly button joined the
+   toolbar (~90px wider than before). */
+@media (max-width: 1500px) { .gen-chip { display: none; } }
+@media (max-width: 1200px) { .asm-name { display: none; } }
+@media (max-width: 1120px) { #explodeSlider { display: none; } }
 .wordmark { font-size: 17px; font-weight: 400; color: var(--text); white-space: nowrap; }
 .wm-a { font-weight: 400; }
 .wm-b { font-weight: 700; }
@@ -281,6 +283,7 @@ html.theme-transition *::after {
 #viewport { flex: 1; min-width: 0; position: relative; background: var(--bg); }
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
 #gl.is-move { cursor: move; }
+#gl.is-assembly { cursor: pointer; }
 #gl.is-dragging { cursor: grabbing; }
 #splitter { flex: none; width: 5px; cursor: col-resize; background: var(--border); }
 #splitter:hover { background: var(--accent); }

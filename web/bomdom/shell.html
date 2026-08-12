@@ -63,6 +63,7 @@
                 </div>
                 <button type="button" id="btnMeasure" class="tb-btn" title="Measure distances and hole diameters (D)">Measure</button>
                 <button type="button" id="btnMove" class="tb-btn" title="Move mode — drag parts (M)">Move</button>
+                <button type="button" id="btnAssembly" class="tb-btn" title="Assembly mode — hover a part to highlight its subassembly, click to select it (A)">Assembly</button>
                 <button type="button" id="btnReset" class="tb-btn" title="Reset appearance, positions and explode (R)">Reset</button>
                 <div class="menu-anchor">
                     <button type="button" id="btnExport" class="tb-btn tb-primary" title="Export BOM">Export &#9662;</button>
@@ -95,7 +96,8 @@
             <div id="marquee" class="marquee hidden"></div>
             <div id="scopeChip" class="scope-chip hidden">
                 <span id="scopeLabel"></span>
-                <button type="button" id="scopeClose" title="Back to full assembly">&#10005; back</button>
+                <button type="button" id="scopeUp" class="hidden" title="Back up one assembly level">&#8593; up a level</button>
+                <button type="button" id="scopeClose" title="Back to the full assembly">&#10005; top</button>
             </div>
             <div id="measureChip" class="measure-chip hidden">
                 <span>Measure</span>
@@ -163,12 +165,14 @@
             <span class="help-k">Right-click</span><span>Context menu (acts on selection)</span>
             <span class="help-k">Shift + drag part</span><span>Move part / selection</span>
             <span class="help-k">M</span><span>Move mode on/off</span>
+            <span class="help-k">A</span><span>Assembly mode — hover highlights a subassembly, click selects it</span>
             <span class="help-k">E</span><span>Part edges on/off</span>
             <span class="help-k">X</span><span>Section view on/off</span>
             <span class="help-k">D</span><span>Measure mode — click two points; corners, edges, holes and faces snap; hole readouts offer center/min/max</span>
             <span class="help-k">H</span><span>Hide selection</span>
             <span class="help-k">Shift + H</span><span>Unhide the last hidden part(s)</span>
             <span class="help-k">I</span><span>Isolate selection</span>
+            <span class="help-k">O</span><span>Open the selection — view it alone; the chip's buttons go back up</span>
             <span class="help-k">F</span><span>Frame selection (or all)</span>
             <span class="help-k">R</span><span>Reset appearance, positions and explode</span>
             <span class="help-k">Esc</span><span>Clear selection / close</span>

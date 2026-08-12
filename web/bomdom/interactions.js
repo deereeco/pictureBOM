@@ -76,6 +76,26 @@ export function initInteractions(app) {
   const selectedRecs = () =>
     app.model ? [...sel.selected].map((id) => app.model.records[id]).filter(Boolean) : [];
 
+  const displayName = (rec) => {
+    const part = rec.partId !== null && app.model ? app.model.partById.get(rec.partId) : null;
+    return part ? (part.bom_name || part.name) : (M.instanceLabel(rec.name) || 'part');
+  };
+
+  // Records none of whose ancestors are also in the set — the units a
+  // selection is made of (a selected subassembly counts once, not per part).
+  const selectionRoots = (recs) => {
+    const ids = new Set(recs.map((r) => r.id));
+    return recs.filter((r) => {
+      for (let a = r.parent; a; a = a.parent) if (ids.has(a.id)) return false;
+      return true;
+    });
+  };
+
+  const openLabelFor = (recs) => {
+    const roots = selectionRoots(recs);
+    return roots.length === 1 ? displayName(roots[0]) : `${roots.length} selected`;
+  };
+
   app.edgesOn = readStoredEdges();
   app.renderStyle = readStoredStyle();
 
@@ -127,13 +147,37 @@ export function initInteractions(app) {
     },
     open(recs, label) {
       if (!app.model || !recs.length) return;
-      sel.setScope({ label, recIds: M.scopeSetFor(recs) });
+      // A single-root scope is anchored: "up a level" walks its parent chain.
+      const roots = selectionRoots(recs);
+      const anchorId = roots.length === 1 ? roots[0].id : null;
+      sel.setScope({ label, recIds: M.scopeSetFor(recs), anchorId });
+      // Everything now in view was just selected — a fully tinted scope reads
+      // as a render bug, and the chip already says what you're looking at.
+      sel.clearSelection();
       actions.frame(recs);
+    },
+    upScope() {
+      if (!sel.scope || !app.model) return;
+      const anchor = sel.scope.anchorId != null ? app.model.records[sel.scope.anchorId] : null;
+      const parent = anchor ? anchor.parent : null;
+      if (!parent || parent === M.rootWrapper(app.model)) { actions.closeScope(); return; }
+      actions.open([parent], displayName(parent));
     },
     closeScope() {
       if (!sel.scope) return;
       sel.setScope(null);
       if (app.model) actions.frame(null);
+    },
+    setAssemblyMode(on) {
+      on = !!on;
+      if (on === !!app.assemblyMode) return;
+      app.assemblyMode = on;
+      $('btnAssembly').classList.toggle('is-on', on);
+      $('gl').classList.toggle('is-assembly', on);
+      // Measure also owns hover + click; the two modes can't share the canvas.
+      if (on && app.measureMode && app.measure) app.measure.toggle();
+      if (!on) sel.setHover(null);
+      if (on) app.ui.toast('Assembly mode — hover highlights a subassembly, click selects it (A to exit)');
     },
     snapBack(recs) {
       if (!app.viewer || !app.model) return;
@@ -207,8 +251,17 @@ export function initInteractions(app) {
   app.actions = actions;
 
   // Hide-undo history is per-model: a sidecar re-drop replaces every record
-  // object, so old entries could never match anything again.
-  app.events.on('model', () => { hideHistory.length = 0; });
+  // object, so old entries could never match anything again. Record ids are
+  // per-model too — a scope or selection built on the old graph would land
+  // on arbitrary records in the new one.
+  app.events.on('model', () => {
+    hideHistory.length = 0;
+    // Unguarded on purpose: on a re-drop, loadModel already nulled the scope
+    // silently (before framing), so this emit is what actually hides the
+    // scope chip. Harmless on first load — the chip is already hidden.
+    sel.setScope(null);
+    sel.clearSelection();
+  });
 
   // ---- explode (guided setup popover) ----------------------------------
   // Two movement events: 'positions-live' fires on every explode step (cheap
@@ -519,6 +572,7 @@ export function initInteractions(app) {
   });
 
   $('btnMove').addEventListener('click', () => actions.setMoveMode(!app.moveMode));
+  $('btnAssembly').addEventListener('click', () => actions.setAssemblyMode(!app.assemblyMode));
   $('btnReset').addEventListener('click', () => actions.resetAll());
 
   // ---- drag-move -------------------------------------------------------
@@ -542,10 +596,12 @@ export function initInteractions(app) {
 
   function startDrag(ev, hit) {
     const { viewer } = app;
-    // Dragging a member of a multi-selection moves the whole selection;
+    // Dragging any part of a selected subassembly moves the subassembly as a
+    // unit; dragging a member of a multi-selection moves the whole selection;
     // records whose ancestor is also selected ride along with the ancestor.
-    let targets = (sel.selected.has(hit.rec.id) && sel.selected.size > 1)
-      ? selectedRecs() : [hit.rec];
+    const eff = M.selectedAncestorOf(sel.selected, hit.rec) || hit.rec;
+    let targets = (sel.selected.has(eff.id) && sel.selected.size > 1)
+      ? selectedRecs() : [eff];
     const targetIds = new Set(targets.map((r) => r.id));
     targets = targets.filter((r) => {
       for (let a = r.parent; a; a = a.parent) if (targetIds.has(a.id)) return false;
@@ -730,6 +786,8 @@ export function initInteractions(app) {
 
   app.ui.showContextMenu = (x, y, rec) => {
     const items = [];
+    // A click on one part of a selected subassembly means the subassembly.
+    if (rec && app.model) rec = M.selectedAncestorOf(sel.selected, rec) || rec;
     if (rec) {
       // On a member of the current multi-selection the menu operates on the
       // WHOLE selection (marquee -> right-click -> isolate).
@@ -738,8 +796,7 @@ export function initInteractions(app) {
       const targets = multi ? selectedRecs() : [rec];
       const insts = M.allInstances(app.model, rec);
       const part = rec.partId !== null ? app.model.partById.get(rec.partId) : null;
-      const label = multi ? `${n} selected`
-        : (part ? (part.bom_name || part.name) : (M.cleanName(rec.name) || 'part'));
+      const label = multi ? `${n} selected` : displayName(rec);
       const row = part ? app.bom.rowFor(part) : null;
       const anyMoved = targets.some((r) => r.flags.moved || r.dragDelta.lengthSq() > 0);
       items.push(
@@ -772,7 +829,10 @@ export function initInteractions(app) {
   app.events.on('scope', (scope) => {
     $('scopeChip').classList.toggle('hidden', !scope);
     if (scope) $('scopeLabel').textContent = 'Viewing: ' + scope.label;
+    // "Up a level" needs a parent chain to walk — anchored scopes only.
+    $('scopeUp').classList.toggle('hidden', !scope || scope.anchorId == null);
   });
+  $('scopeUp').addEventListener('click', () => actions.upScope());
   $('scopeClose').addEventListener('click', () => actions.closeScope());
 
   // ---- keyboard --------------------------------------------------------
@@ -793,6 +853,7 @@ export function initInteractions(app) {
       if (!$('helpOverlay').classList.contains('hidden')) { $('helpOverlay').classList.add('hidden'); return; }
       if (app.measureMode && app.measure && app.measure.escape()) return;
       if (sel.clearSelection()) return;
+      if (app.assemblyMode) { actions.setAssemblyMode(false); return; }
       if (sel.scope) actions.closeScope();
       return;
     }
@@ -803,6 +864,8 @@ export function initInteractions(app) {
     const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 5: 'top', 6: 'bottom', 0: 'iso' };
     if (VIEW_KEYS[ev.key]) { actions.setView(VIEW_KEYS[ev.key]); return; }
     if (key === 'm') actions.setMoveMode(!app.moveMode);
+    else if (key === 'a') actions.setAssemblyMode(!app.assemblyMode);
+    else if (key === 'o') { const t = selectedRecs(); if (t.length) actions.open(t, openLabelFor(t)); }
     else if (key === 'e') actions.setEdges(!app.edgesOn);
     else if (key === 'x') { if (app.sectionApi) app.sectionApi.toggle(); }
     else if (key === 'd') { if (app.measure) app.measure.toggle(); }

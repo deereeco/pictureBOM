@@ -2,9 +2,11 @@
 // right-click context menu (only when not dragged). Deliberately no hover
 // pick — moving the pointer over the model must not recolour anything; the
 // BOM list on the right is the only thing that drives hover highlighting.
+// The one exception is assembly mode, whose whole point is previewing which
+// subassembly a click would select.
 
 import * as THREE from 'three';
-import { boxOfRecs } from './model.js';
+import { boxOfRecs, levelTargetOf } from './model.js';
 
 const CLICK_SLOP_PX = 4;
 
@@ -46,6 +48,44 @@ export function initPicking(app) {
   app.pick = pick;
   app.raycaster = raycaster;
 
+  // Assembly mode: what a hit would select — the subassembly one level below
+  // the open scope (or below the top when unscoped).
+  function assemblyTarget(rec) {
+    const scope = app.sel.scope;
+    const anchor = scope && scope.anchorId != null && app.model
+      ? app.model.records[scope.anchorId] : null;
+    return levelTargetOf(app.model, rec, anchor || null);
+  }
+
+  // ---- assembly-mode hover (one raycast per frame at most) --------------
+  let hoverEv = null;
+  let hoverRaf = 0;
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!app.assemblyMode) return;
+    if (app.measureMode || app.anchorPickMode || app.dragging || ev.buttons !== 0) return;
+    hoverEv = ev;
+    if (hoverRaf) return;
+    hoverRaf = requestAnimationFrame(() => {
+      hoverRaf = 0;
+      if (!hoverEv || !app.assemblyMode || app.dragging) return;
+      if (app.measureMode || app.anchorPickMode) return; // engaged since scheduling
+      // Pre-BVH raycasts are brute-force triangle walks — per-frame casts
+      // would fight the BVH build for the main thread on big models.
+      if (!app.model || !app.model.bvhReady) return;
+      const hit = pick(hoverEv);
+      app.sel.setHover(hit ? { ids: [assemblyTarget(hit.rec).id] } : null);
+    });
+  });
+  canvas.addEventListener('pointerleave', () => {
+    if (!app.assemblyMode) return;
+    // Cancel the queued pick too — a pending callback holding the last
+    // in-canvas event would resurrect the highlight after the cursor left
+    // (same race measure.js onPointerLeave guards against).
+    if (hoverRaf) { cancelAnimationFrame(hoverRaf); hoverRaf = 0; }
+    hoverEv = null;
+    app.sel.setHover(null);
+  });
+
   // ---- click / context ------------------------------------------------
   let down = null;
   canvas.addEventListener('pointerdown', (ev) => {
@@ -67,8 +107,11 @@ export function initPicking(app) {
         return;
       }
       if (!hit) { app.sel.clearSelection(); return; }
-      if (ev.ctrlKey || ev.metaKey) app.sel.toggle(hit.rec.id);
-      else app.sel.select([hit.rec.id]);
+      // Assembly mode selects the resolved subassembly's grouping record —
+      // one id; highlight, hide, isolate and open all inherit down from it.
+      const rec = app.assemblyMode ? assemblyTarget(hit.rec) : hit.rec;
+      if (ev.ctrlKey || ev.metaKey) app.sel.toggle(rec.id);
+      else app.sel.select([rec.id]);
     } else if (ev.button === 2) {
       // In measure mode, right-click first cancels a pending point.
       if (app.measureMode && app.measure && app.measure.handleRightClick()) return;
@@ -80,6 +123,6 @@ export function initPicking(app) {
   canvas.addEventListener('dblclick', (ev) => {
     if (app.measureMode) return; // two measure clicks, not a frame gesture
     const hit = pick(ev);
-    if (hit) viewer.frameBox(boxOfRecs([hit.rec]));
+    if (hit) viewer.frameBox(boxOfRecs([app.assemblyMode ? assemblyTarget(hit.rec) : hit.rec]));
   });
 }

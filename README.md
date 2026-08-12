@@ -58,6 +58,11 @@ parts list. Send that one file to a teammate — they double-click it and can:
   HTML. Only the camera turns — X/Y/Z always mean the model's own axes
 - Hide, isolate, or make transparent any part or subassembly — for one instance or
   **all instances at once**
+- **Assembly mode** (press `A`): hovering highlights the subassembly under the
+  cursor and a click selects it whole — then hide (`H`), isolate (`I`) or **open**
+  (`O`) it. Opening scopes the view to just that subassembly, with *up a level* and
+  *top* buttons in the corner to climb back out; the Structure tab mirrors the real
+  assembly tree (each subassembly copy its own row, duplicate parts rolled up ×N)
 - **Filter by your part properties** (set them under *Advanced* before running):
   click a value chip — say *Process: Machined* — and everything else ghosts out
   (or hides, for clean screenshots). Filters stack, the search box matches

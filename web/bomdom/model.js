@@ -290,16 +290,51 @@ function dominantAxis(v) {
   return new THREE.Vector3(0, 0, Math.sign(v.z));
 }
 
+// The single all-encompassing root record, when the export has one.
+export function rootWrapper(model) {
+  return (model.rootRecs.length === 1 && model.rootRecs[0].children.length)
+    ? model.rootRecs[0] : null;
+}
+
 // A single all-encompassing root record explodes its children instead.
 export function topRecs(model) {
-  return (model.rootRecs.length === 1 && model.rootRecs[0].children.length)
-    ? model.rootRecs[0].children : model.rootRecs;
+  const w = rootWrapper(model);
+  return w ? w.children : model.rootRecs;
 }
 
 export function topAncestorOf(model, rec) {
   const tops = new Set(topRecs(model));
   for (let r = rec; r; r = r.parent) if (tops.has(r)) return r;
   return null;
+}
+
+// Assembly-mode resolution: the ancestor of rec one level below stopRec (the
+// open subassembly — or the all-encompassing root when unscoped). A rec that
+// sits directly under stopRec, or outside its subtree entirely (an ancestor
+// grouping node's own geometry), resolves to itself.
+export function levelTargetOf(model, rec, stopRec) {
+  const stop = stopRec || rootWrapper(model);
+  if (stop) {
+    let inside = false;
+    for (let a = rec; a; a = a.parent) if (a === stop) { inside = true; break; }
+    if (!inside || rec === stop) return rec;
+  }
+  let r = rec;
+  while (r.parent && r.parent !== stop) r = r.parent;
+  return r;
+}
+
+// The selected record whose subtree contains rec (rec itself counts), or
+// null. Lets a click or drag on one part act on its selected subassembly.
+export function selectedAncestorOf(selectedIds, rec) {
+  for (let a = rec; a; a = a.parent) if (selectedIds.has(a.id)) return a;
+  return null;
+}
+
+// SolidWorks instance suffixes read badly raw: "CARRIAGE-2" -> "CARRIAGE #2".
+export function instanceLabel(name) {
+  const m = /^(.*?)-(\d+)$/.exec(name || '');
+  return m ? m[1] + ' #' + m[2] : (name || '');
 }
 
 function smallestExtentAxis(model) {

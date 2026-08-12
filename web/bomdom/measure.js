@@ -1456,6 +1456,10 @@ export function initMeasure(app) {
     canvas.classList.toggle('is-measure', on);
     $('measureChip').classList.toggle('hidden', !on);
     if (on) {
+      // Assembly mode also owns hover + click on this canvas: exit it, or its
+      // last hover highlight would stay frozen for the whole measure session
+      // (picking's hover path stands down while measureMode is set).
+      if (app.assemblyMode && app.actions) app.actions.setAssemblyMode(false);
       canvas.addEventListener('pointermove', onPointerMove);
       canvas.addEventListener('pointerleave', onPointerLeave);
       // Feature edges are the snap targets: make sure they get built even if
