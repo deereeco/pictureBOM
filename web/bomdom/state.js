@@ -24,7 +24,9 @@ export class SelectionModel {
     this.events = events;
     this.hover = null;           // {ids:number[], partId?} | null — BOM rows only, never the canvas
     this.selected = new Set();   // record ids
-    this.scope = null;           // {label, recIds:Set} — "Open" viewing scope
+    this.scope = null;           // {label, recIds:Set, anchorId} — "Open" viewing scope;
+                                 // anchorId is the opened subassembly record (null for
+                                 // loose multi-part scopes) — "up a level" walks its parent.
     this.filter = null;          // {recIds:Set|null, hide:bool} — facet filter (filter.js)
     this.colorBy = null;         // {prop, valueColor:Map, recColor:Map} — color-by-property
   }

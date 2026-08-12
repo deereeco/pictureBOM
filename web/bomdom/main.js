@@ -169,6 +169,15 @@ async function loadModel(buf, sourceLabel) {
     // frees materials, shaded twins, their matCache clones and textures.
     app.viewer.scene.remove(oldModel.root);
     M.disposeModel(oldModel);
+    // Record ids are per-model: a stale scope/filter/selection/hover would
+    // hide or tint an arbitrary subset of the NEW records during the
+    // updateVisuals + framing below. The 'model' emit clears these too, but
+    // that runs after framing — clear silently first, then the emit's
+    // handlers re-sync the widgets (scope chip, filter block, rows).
+    app.sel.selected.clear();
+    app.sel.scope = null;
+    app.sel.filter = null;
+    app.sel.hover = null;
   }
   app.viewer.scene.add(app.model.root);
   app.model.edgesOn = app.edgesOn;

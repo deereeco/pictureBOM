@@ -189,8 +189,143 @@ export function initPanel(app) {
   }
 
   // ---- structure tree ----------------------------------------------------
-  const tree = buildBomTree(meta);
-  const nodeByName = new Map(); // casefold row name -> first tree node
+  // Two sources. With a 3D model the tree mirrors the actual instance graph:
+  // subassembly copies are individual rows ("CARRIAGE #2") and identical
+  // sibling parts roll up into one ×N row that acts on all N. With no model
+  // (degraded / sidecar pre-drop) it falls back to the BOM level numbers.
+  const bomTree = buildBomTree(meta);
+  const nodeByName = new Map(); // casefold row name -> first BOM tree node
+  let instRoots = [];           // instance-tree nodes (rebuilt per model)
+  let nodeByRecId = new Map();  // record id -> instance-tree node
+  let treeMode = 'bom';
+
+  // Instance-tree nodes: {kind:'asm'|'part', recs, part, row, name, children, parent}.
+  function instChildNodes(childRecs, parent) {
+    const out = [];
+    const groups = new Map();
+    for (const c of childRecs) {
+      if (!c.meshes.length && !c.children.length) continue; // empty grouping node
+      if (c.children.length) {
+        const node = {
+          kind: 'asm', recs: [c], part: null,
+          name: M.instanceLabel(c.name) || (meta.assembly && meta.assembly.name) || 'assembly',
+          row: app.bom.rowByName.get(M.cleanName(c.name).toLowerCase()) || null,
+          children: [], parent,
+        };
+        node.children = instChildNodes(c.children, node);
+        out.push(node);
+      } else {
+        const key = c.partId !== null ? 'p' + c.partId : 'n' + M.cleanName(c.name).toLowerCase();
+        let g = groups.get(key);
+        if (!g) {
+          const part = c.partId !== null ? app.model.partById.get(c.partId) : null;
+          g = {
+            kind: 'part', recs: [], part,
+            name: part ? (part.bom_name || part.name) : (M.cleanName(c.name) || c.name),
+            row: part ? app.bom.rowFor(part) : null,
+            children: [], parent,
+          };
+          groups.set(key, g);
+          out.push(g); // at the first sibling's position — scene order kept
+        }
+        g.recs.push(c);
+      }
+    }
+    return out;
+  }
+
+  function buildInstanceTree() {
+    instRoots = [];
+    nodeByRecId = new Map();
+    if (!app.model) return;
+    instRoots = instChildNodes(app.model.rootRecs, null);
+    const index = (node) => {
+      for (const r of node.recs) nodeByRecId.set(r.id, node);
+      for (const c of node.children) index(c);
+    };
+    for (const n of instRoots) index(n);
+  }
+
+  function buildInstRow(node, depth) {
+    const holder = document.createElement('div');
+    const el = document.createElement('div');
+    el.className = 'tree-row';
+    el.style.paddingLeft = 4 + depth * 14 + 'px';
+
+    const chev = document.createElement('button');
+    chev.className = 'tree-chevron';
+    if (node.children.length) chev.innerHTML = ICON_CHEVRON;
+    el.appendChild(chev);
+
+    const icon = document.createElement('span');
+    icon.className = 'tree-icon';
+    icon.innerHTML = node.kind === 'asm' ? ICON_ASM : ICON_PART;
+    el.appendChild(icon);
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'tree-name';
+    nameEl.textContent = node.name;
+    nameEl.title = node.name + (node.row && node.row.description ? ' — ' + node.row.description : '');
+    el.appendChild(nameEl);
+
+    if (node.kind === 'part' && node.recs.length > 1) {
+      const q = document.createElement('span');
+      q.className = 'tree-qty';
+      q.textContent = '×' + node.recs.length;
+      const total = node.part ? node.part.instances : node.recs.length;
+      q.title = total !== node.recs.length
+        ? `${node.recs.length} here · ${total} total in assembly`
+        : `${node.recs.length} here`;
+      el.appendChild(q);
+    }
+
+    const getRecs = () => node.recs;
+    el.appendChild(rowActionButtons(getRecs, node.name, node.row && node.row.vendor_url));
+
+    el.addEventListener('pointerenter', () => app.sel.setHover({ ids: node.recs.map((r) => r.id) }));
+    el.addEventListener('pointerleave', () => app.sel.setHover(null));
+    el.addEventListener('click', (ev) => {
+      if (ev.target.closest('.tree-chevron')) return;
+      app.sel.select(node.recs.map((r) => r.id), { additive: ev.ctrlKey || ev.metaKey });
+    });
+    el.addEventListener('dblclick', () => app.actions.frame(node.recs));
+
+    holder.appendChild(el);
+    node.el = el;
+    node.holder = holder;
+    node.kidsEl = null;
+    node.searchText = [node.name, node.row && node.row.description,
+      node.row && node.row.vendor, node.row && node.row.vendor_part_no,
+      ...(node.row && node.row.properties ? Object.values(node.row.properties) : []),
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    if (node.children.length) {
+      chev.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleNode(node, depth);
+      });
+    }
+    return holder;
+  }
+
+  // Reflect selection / hover / hidden state on rendered instance rows.
+  // A row inside a selected subassembly shows selected too — same
+  // inheritance the 3D highlight uses.
+  function syncTreeRows() {
+    if (treeMode !== 'model' || !app.model) return;
+    const hoverIds = new Set(app.sel.hover ? app.sel.hover.ids : []);
+    const walk = (node) => {
+      if (node.el) {
+        node.el.classList.toggle('is-selected',
+          node.recs.some((r) => !!M.selectedAncestorOf(app.sel.selected, r)));
+        node.el.classList.toggle('is-hover', node.recs.some((r) => hoverIds.has(r.id)));
+        node.el.classList.toggle('is-off',
+          node.recs.every((r) => M.isEffectivelyHidden(r, app.sel.scope, app.sel.filter)));
+      }
+      for (const c of node.children) walk(c);
+    };
+    for (const n of instRoots) walk(n);
+  }
 
   function buildTreeRow(node, depth) {
     const holder = document.createElement('div');
@@ -274,25 +409,37 @@ export function initPanel(app) {
     node.el.classList.toggle('is-open', open);
     if (open && !node.kidsEl) {
       // Lazy expansion: children rendered on first open.
+      const build = node.kind ? buildInstRow : buildTreeRow;
       node.kidsEl = document.createElement('div');
       node.kidsEl.className = 'tree-kids';
-      for (const c of node.children) node.kidsEl.appendChild(buildTreeRow(c, depth + 1));
+      for (const c of node.children) node.kidsEl.appendChild(build(c, depth + 1));
       node.holder.appendChild(node.kidsEl);
       applySearchToTree(); // newly rendered rows must honor the active filter
+      syncTreeRows();      // ... and the current selection / hidden state
     }
     if (node.kidsEl) node.kidsEl.classList.toggle('hidden', !open);
   }
 
   function buildTree() {
     treeEl.innerHTML = '';
-    if (!tree.roots.length) {
+    buildInstanceTree();
+    treeMode = instRoots.length ? 'model' : 'bom';
+    if (treeMode === 'model') {
+      for (const n of instRoots) treeEl.appendChild(buildInstRow(n, 0));
+      // A collapsed lone root row is one click of pure friction: open it.
+      if (instRoots.length === 1 && instRoots[0].children.length) toggleNode(instRoots[0], 0, true);
+      applySearchToTree(); // an active query must dim the rebuilt rows too
+      syncTreeRows();
+      return;
+    }
+    if (!bomTree.roots.length) {
       const empty = document.createElement('div');
       empty.className = 'parts-empty';
       empty.textContent = 'No BOM structure in payload.';
       treeEl.appendChild(empty);
       return;
     }
-    for (const n of tree.roots) treeEl.appendChild(buildTreeRow(n, 0));
+    for (const n of bomTree.roots) treeEl.appendChild(buildTreeRow(n, 0));
   }
 
   function expandAncestors(node) {
@@ -309,9 +456,15 @@ export function initPanel(app) {
     if (!app.model || !app.sel.selected.size) return;
     const first = app.model.records[[...app.sel.selected][0]];
     if (!first) return;
-    const part = first.partId !== null ? app.model.partById.get(first.partId) : null;
-    const name = (part ? (part.bom_name || part.name) : M.cleanName(first.name)) || '';
-    const node = nodeByName.get(name.toLowerCase());
+    let node = null;
+    if (treeMode === 'model') {
+      // Exact instance, not first name match — that's the point of this tree.
+      for (let r = first; r && !node; r = r.parent) node = nodeByRecId.get(r.id);
+    } else {
+      const part = first.partId !== null ? app.model.partById.get(first.partId) : null;
+      const name = (part ? (part.bom_name || part.name) : M.cleanName(first.name)) || '';
+      node = nodeByName.get(name.toLowerCase());
+    }
     if (!node) return;
     expandAncestors(node);
     if (node.el) node.el.scrollIntoView({ block: 'nearest' });
@@ -341,18 +494,23 @@ export function initPanel(app) {
   }
 
   function applySearchToTree() {
+    const roots = treeMode === 'model' ? instRoots : bomTree.roots;
     const walk = (node) => {
       if (node.el) {
         // Assemblies are structure — facets only dim part rows.
-        const facetMiss = app.ui.rowMatchesFacets && app.sel.filter
-          && (node.row.type || '').toLowerCase() !== 'assembly'
-          && !app.ui.rowMatchesFacets(node.row);
+        const isAsm = treeMode === 'model'
+          ? node.kind === 'asm'
+          : (node.row.type || '').toLowerCase() === 'assembly';
+        // A null row must pass through: rowMatchesFacets treats it as the
+        // "(none)" value, same as the Parts list and the 3D ghost/hide.
+        const facetMiss = app.ui.rowMatchesFacets && app.sel.filter && !isAsm
+          && !app.ui.rowMatchesFacets(node.row || null);
         node.el.classList.toggle('is-dim',
           (!!query && !node.searchText.includes(query)) || !!facetMiss);
       }
       for (const c of node.children) walk(c);
     };
-    for (const n of tree.roots) walk(n);
+    for (const n of roots) walk(n);
   }
 
   searchInput.addEventListener('input', () => {
@@ -404,19 +562,24 @@ export function initPanel(app) {
     return firstSelected;
   }
 
-  app.events.on('hover', () => syncRows());
+  app.events.on('hover', () => { syncRows(); syncTreeRows(); });
   app.events.on('selection', () => {
     const el = syncRows();
+    syncTreeRows();
     if (el && activeTab === 'parts') el.scrollIntoView({ block: 'nearest' });
     if (activeTab === 'structure') revealSelection();
   });
-  app.events.on('appearance', () => syncRows());
-  app.events.on('scope', () => syncRows());
-  app.events.on('model', () => syncRows());
+  app.events.on('appearance', () => { syncRows(); syncTreeRows(); });
+  app.events.on('scope', () => { syncRows(); syncTreeRows(); });
+  app.events.on('model', () => {
+    buildTree(); // the instance tree exists only once a model is in
+    syncRows();
+  });
   app.events.on('filter', () => {
     applySearchToParts();
     applySearchToTree();
     syncRows();
+    syncTreeRows();
   });
 
   buildPartsList();
