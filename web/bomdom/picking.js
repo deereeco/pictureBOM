@@ -83,12 +83,18 @@ export function initPicking(app) {
         return;
       }
       const hit = pick(hoverEv);
-      const target = hit
-        ? (app.assemblyMode
-          ? assemblyTarget(hit.rec)
-          : (selectedAncestorOf(app.sel.selected, hit.rec) || hit.rec))
-        : null;
-      app.sel.setHover(target ? { ids: [target.id] } : null);
+      if (!hit) { app.sel.setHover(null); return; }
+      let ids;
+      if (app.assemblyMode) {
+        ids = [assemblyTarget(hit.rec).id];
+      } else {
+        const eff = selectedAncestorOf(app.sel.selected, hit.rec) || hit.rec;
+        // Grabbing a member of a multi-selection drags the WHOLE selection
+        // (startDrag's rule) — the preview must claim the same blast radius.
+        ids = (app.sel.selected.has(eff.id) && app.sel.selected.size > 1)
+          ? [...app.sel.selected] : [eff.id];
+      }
+      app.sel.setHover({ ids });
     });
   });
   canvas.addEventListener('pointerleave', () => {
@@ -137,6 +143,9 @@ export function initPicking(app) {
   canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
   canvas.addEventListener('dblclick', (ev) => {
     if (app.measureMode) return; // two measure clicks, not a frame gesture
+    // Double-clicking a triad handle is two type-in clicks gone fast — it
+    // must not frame the part that happens to sit behind the gizmo.
+    if (app.triad && app.triad.hitTest(ev)) return;
     const hit = pick(ev);
     if (hit) viewer.frameBox(boxOfRecs([app.assemblyMode ? assemblyTarget(hit.rec) : hit.rec]));
   });

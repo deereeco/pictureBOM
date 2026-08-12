@@ -1457,10 +1457,11 @@ export function initMeasure(app) {
     $('measureChip').classList.toggle('hidden', !on);
     if (app.triad) app.triad.refresh(); // triad stands down while measure owns the canvas
     if (on) {
-      // Assembly mode also owns hover + click on this canvas: exit it, or its
-      // last hover highlight would stay frozen for the whole measure session
-      // (picking's hover path stands down while measureMode is set).
+      // Assembly and move mode also own hover + click on this canvas: exit
+      // them, or their last hover highlight stays frozen (and a lit Move
+      // button promises drags that measure will eat) for the whole session.
       if (app.assemblyMode && app.actions) app.actions.setAssemblyMode(false);
+      if (app.moveMode && app.actions) app.actions.setMoveMode(false);
       canvas.addEventListener('pointermove', onPointerMove);
       canvas.addEventListener('pointerleave', onPointerLeave);
       // Feature edges are the snap targets: make sure they get built even if

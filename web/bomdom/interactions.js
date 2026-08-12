@@ -174,8 +174,10 @@ export function initInteractions(app) {
       app.assemblyMode = on;
       $('btnAssembly').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-assembly', on);
-      // Measure also owns hover + click; the two modes can't share the canvas.
+      // Measure and move also own hover + click on this canvas: one mode at
+      // a time, or the hover preview promises one thing and a drag does another.
       if (on && app.measureMode && app.measure) app.measure.toggle();
+      if (on) actions.setMoveMode(false);
       if (!on) sel.setHover(null);
       if (on) app.ui.toast('Assembly mode — hover highlights a subassembly, click selects it (A to exit)');
     },
@@ -208,13 +210,20 @@ export function initInteractions(app) {
     },
     setMoveMode(on) {
       on = !!on;
-      const was = !!app.moveMode;
+      if (on === !!app.moveMode) return;
       app.moveMode = on;
       $('btnMove').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-move', on);
-      if (!on) sel.setHover(null); // hover preview is a move-mode affordance
+      if (on) {
+        // One canvas owner at a time: a Move button lit while measure keeps
+        // eating every click is a lit-but-dead mode.
+        if (app.measureMode && app.measure) app.measure.toggle();
+        actions.setAssemblyMode(false);
+      } else {
+        sel.setHover(null); // hover preview is a move-mode affordance
+      }
       if (app.triad) app.triad.refresh();
-      if (on && !was) {
+      if (on) {
         app.ui.toast(sel.selected.size
           ? 'Move mode — drag the triad to slide or turn, drag a part to move it freely (M to exit)'
           : 'Move mode — drag parts freely, or select one for the move/rotate triad (M to exit)');
@@ -855,6 +864,9 @@ export function initInteractions(app) {
       // A focused text field and an open help overlay outrank measure mode:
       // Esc while typing must blur, not silently drop a measurement point.
       if (inField) { ev.target.blur(); return; }
+      // A live triad gesture: Esc aborts it and puts the parts back — it must
+      // not also clear the selection the user is about to keep working with.
+      if (app.triad && app.triad.dragging()) { app.triad.cancelDrag(); return; }
       // An open dropdown is its own layer: Esc closes it and STOPS — falling
       // through would also drop a pending measurement point or exit measure
       // mode with the same keypress.
@@ -870,6 +882,9 @@ export function initInteractions(app) {
       return;
     }
     if (inField) return;
+    // A live drag (triad, free move, marquee) froze its camera frame at
+    // pointerdown: view keys or mode flips underneath it teleport parts.
+    if (app.dragging) return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return; // never shadow browser shortcuts
     const key = ev.key.toLowerCase();
     // CAD-style number keys for the standard views.

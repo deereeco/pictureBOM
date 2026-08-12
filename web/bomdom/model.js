@@ -528,7 +528,11 @@ export function applyWorldRotation(rec, qWorld, pivot, start) {
     .add(pivot).sub(start.worldPos);
   rec.dragDelta.copy(start.delta)
     .add(worldDeltaToLocal(parent, _rwSwing, start.worldPos));
-  refreshMovedFlag(rec);
+  // moved stays true for the WHOLE gesture — applyPositions must keep writing
+  // this record even when a snapped drag passes back through exactly zero
+  // (skipping there would leave the previous frame's pose on screen). The
+  // gesture's owner re-runs refreshMovedFlag when the pointer comes to rest.
+  rec.flags.moved = true;
 }
 
 // ---------------------------------------------------------------------------

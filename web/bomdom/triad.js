@@ -243,12 +243,15 @@ export function initTriad(app) {
   let targets = [];
 
   // Selection roots: records none of whose ancestors are also selected — the
-  // same units the free drag and the context menu act on.
+  // same units the free drag and the context menu act on. Hidden/isolated-out
+  // parts are excluded: a gizmo floating over nothing, silently moving an
+  // invisible part, is worse than no gizmo.
   function computeTargets() {
     const recs = [...app.sel.selected].map((id) => app.model.records[id]).filter(Boolean);
     if (!recs.length) return [];
     const ids = new Set(recs.map((r) => r.id));
     return recs.filter((r) => {
+      if (M.isEffectivelyHidden(r, app.sel.scope, app.sel.filter)) return false;
       for (let a = r.parent; a; a = a.parent) if (ids.has(a.id)) return false;
       return true;
     });
@@ -291,7 +294,11 @@ export function initTriad(app) {
   function hitTest(ev) {
     if (!group.visible) return null;
     setRay(ev);
-    const hits = raycaster.intersectObjects(hitMeshes, false);
+    let hits = raycaster.intersectObjects(hitMeshes, false);
+    // A section view clips the gizmo visually (global clipping planes hit
+    // every material) — handles the user cannot see must not grab either.
+    const clip = app.section && app.section.enabled ? app.section.plane : null;
+    if (clip) hits = hits.filter((h) => clip.distanceToPoint(h.point) >= 0);
     if (!hits.length) return null;
     hits.sort((p, q) =>
       (p.object.userData.pri - q.object.userData.pri) || (p.distance - q.distance));
@@ -367,18 +374,35 @@ export function initTriad(app) {
 
   // ---- applying moves -------------------------------------------------------
   // snaps: per-target drag-start snapshots {rec, delta, quat, worldPos}.
+  // During a gesture flags.moved is held true so applyPositions keeps writing
+  // the pose even through exact zero; finishSnaps recomputes the real flag
+  // when the gesture ends (so ending AT zero counts as "not moved" again).
   const _wd = new THREE.Vector3();
   function translateSnapsWorld(snaps, refPoint, worldDelta) {
     for (const s of snaps) {
       s.rec.dragDelta.copy(s.delta).add(
         M.worldDeltaToLocal(s.rec.object.parent, worldDelta, refPoint));
-      M.refreshMovedFlag(s.rec);
+      s.rec.flags.moved = true;
     }
   }
   const _rq = new THREE.Quaternion();
   function rotateSnaps(snaps, pivot, axis, deg) {
+    if (deg === 0) {
+      // Exact zero (the snapped path lands here often): restore the start
+      // snapshots verbatim instead of running the pivot math, whose float
+      // dust would leave a not-quite-identity dragQuat behind.
+      for (const s of snaps) {
+        s.rec.dragDelta.copy(s.delta);
+        s.rec.dragQuat.copy(s.quat);
+        s.rec.flags.moved = true;
+      }
+      return;
+    }
     _rq.setFromAxisAngle(AXIS_DIRS[axis], rad(deg));
     for (const s of snaps) M.applyWorldRotation(s.rec, _rq, pivot, s);
+  }
+  function finishSnaps(snaps) {
+    for (const s of snaps) M.refreshMovedFlag(s.rec);
   }
   function commitLive() {
     M.applyPositions(app.model, app.model.explodeF);
@@ -390,6 +414,7 @@ export function initTriad(app) {
   let dragState = null;
 
   function tryStartDrag(ev) {
+    if (dragState) return true; // a second pointer mid-drag: swallow, don't restart
     if (!group.visible || ev.button !== 0) return false;
     const h = hitTest(ev);
     if (!h) return false;
@@ -438,6 +463,10 @@ export function initTriad(app) {
     } else if (h.kind === 'ring') {
       const n = AXIS_DIRS[h.axis];
       d.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, d.center);
+      // Ring plane nearly containing the view ray: intersections land at huge
+      // radii and flip sides as the pointer crosses the plane's screen trace,
+      // so the angle would jump ~180° per crossing. Refuse the gesture.
+      d.degenerate = Math.abs(n.dot(raycaster.ray.direction)) < 0.08;
       d.u1 = AXIS_DIRS[RING_BASIS[h.axis][0]];
       d.u2 = AXIS_DIRS[RING_BASIS[h.axis][1]];
       const hit = new THREE.Vector3();
@@ -460,38 +489,50 @@ export function initTriad(app) {
     });
     canvas.addEventListener('pointermove', onDragMove);
     canvas.addEventListener('pointerup', onDragUp);
-    canvas.addEventListener('pointercancel', onDragUp);
+    canvas.addEventListener('pointercancel', onDragCancel);
   }
 
   const _hit = new THREE.Vector3();
   function onDragMove(ev) {
     const d = dragState;
-    if (!d) return;
+    if (!d || ev.pointerId !== d.pointerId) return;
     if (!d.moved && Math.hypot(ev.clientX - d.downX, ev.clientY - d.downY) > CLICK_SLOP_PX) {
       d.moved = true;
     }
+    // Inside the click slop nothing may touch the model: a jittery click that
+    // opens the type-in must leave zero trace (no moved flags, no stale
+    // measurements, no 'positions-live').
+    if (!d.moved) return;
     setRay(ev);
     if (d.kind === 'shaft') {
+      if (d.degenerate) { showChip('axis is edge-on — orbit a little', null, ev); return; }
       const dir = AXIS_DIRS[d.axis];
       const raw = lineParamAtRay(d.center, dir) - d.t0;
+      // Near-edge-on axes amplify pointer motion (1/sin²θ) — never let one
+      // gesture throw parts further than a couple of assembly diagonals.
+      const lim = 2.5 * app.model.diagLen;
       const px = viewportPxOf(ev);
-      const distPx = d.degenerate ? Infinity
-        : Math.abs((px.x - d.screenA.x) * d.screenDy - (px.y - d.screenA.y) * d.screenDx);
+      const distPx = Math.abs((px.x - d.screenA.x) * d.screenDy - (px.y - d.screenA.y) * d.screenDx);
       const snapped = distPx < SNAP_PX;
-      const val = snapped ? Math.round(raw / d.stepWorld) * d.stepWorld : raw;
+      let val = snapped ? Math.round(raw / d.stepWorld) * d.stepWorld : raw;
+      val = Math.max(-lim, Math.min(lim, val));
       translateSnapsWorld(d.snaps, d.center, _wd.copy(dir).multiplyScalar(val));
       group.position.copy(d.center).addScaledVector(dir, val);
       drawRuler(d, val, snapped);
       showChip(fmtLen(val, d.unit, snapped), snapped, ev);
     } else if (d.kind === 'ring') {
+      if (d.degenerate) { showChip('ring is edge-on — orbit a little', null, ev); return; }
       if (!raycaster.ray.intersectPlane(d.plane, _hit)) return;
       const v = _hit.sub(d.center);
       const ang = Math.atan2(v.dot(d.u2), v.dot(d.u1));
       let step = ang - d.prev;
       if (step > Math.PI) step -= 2 * Math.PI;
       if (step < -Math.PI) step += 2 * Math.PI;
-      d.acc += step;
       d.prev = ang;
+      // A >69° hop between two pointer events is a plane-crossing artifact
+      // (oblique rings flip intersection sides), not a hand motion.
+      if (Math.abs(step) > 1.2) { drawProtractor(d, THREE.MathUtils.radToDeg(d.acc), false); return; }
+      d.acc += step;
       const snapped = v.length() >= RING_SNAP_FRAC * RING_R * group.scale.x;
       const rawDeg = THREE.MathUtils.radToDeg(d.acc);
       const deg = snapped ? Math.round(rawDeg / ROT_SNAP_DEG) * ROT_SNAP_DEG : rawDeg;
@@ -511,7 +552,7 @@ export function initTriad(app) {
   function teardownDrag() {
     canvas.removeEventListener('pointermove', onDragMove);
     canvas.removeEventListener('pointerup', onDragUp);
-    canvas.removeEventListener('pointercancel', onDragUp);
+    canvas.removeEventListener('pointercancel', onDragCancel);
     viewer.controls.enabled = true;
     app.dragging = false;
     canvas.classList.remove('is-dragging');
@@ -521,29 +562,47 @@ export function initTriad(app) {
   }
   function onDragUp(ev) {
     const d = dragState;
+    if (!d || ev.pointerId !== d.pointerId) return;
     dragState = null;
     try { canvas.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
     teardownDrag();
-    if (!d) return;
     if (!d.moved && (d.kind === 'shaft' || d.kind === 'ring')) {
-      openTypeIn(d, ev); // a clean click asks for an exact value instead
+      openTypeIn(d, ev); // a clean click asks for an exact value; nothing was mutated
       return;
     }
+    finishSnaps(d.snaps); // ending back AT zero counts as "not moved" again
     refresh(); // exact re-center (rotation of a group can shift its box center)
     app.events.emit('positions');
   }
+  function onDragCancel(ev) {
+    if (dragState && ev.pointerId === dragState.pointerId) cancelDrag();
+  }
+  // Abort the gesture and put everything back where the drag started (Esc,
+  // OS pointer cancel, or the selection/model dying under the drag).
   function cancelDrag() {
     const d = dragState;
     dragState = null;
     if (!d) return;
     try { canvas.releasePointerCapture(d.pointerId); } catch (e) { /* ignore */ }
     teardownDrag();
+    if (d.moved && app.model) {
+      for (const s of d.snaps) {
+        s.rec.dragDelta.copy(s.delta);
+        s.rec.dragQuat.copy(s.quat);
+      }
+      finishSnaps(d.snaps);
+      M.applyPositions(app.model, app.model.explodeF);
+      app.events.emit('positions-live');
+      invalidate();
+    }
     app.events.emit('positions');
   }
 
   // ---- type-in (click an arrow / ring, enter an exact value) ---------------
   let typeCtx = null;
+  let typeCloseTimer = null;
   function openTypeIn(d, ev) {
+    clearTimeout(typeCloseTimer); // a blur from THIS click must not close the new box
     typeCtx = d;
     const p = viewportPxOf(ev);
     typeBox.style.left = Math.min(p.x + 12, Math.max(6, viewport.clientWidth - 160)) + 'px';
@@ -556,6 +615,7 @@ export function initTriad(app) {
     typeInput.focus();
   }
   function closeTypeIn() {
+    clearTimeout(typeCloseTimer);
     if (typeBox.classList.contains('hidden')) return;
     typeBox.classList.add('hidden');
     typeCtx = null;
@@ -577,11 +637,15 @@ export function initTriad(app) {
     }
     closeTypeIn();
     M.applyPositions(app.model, app.model.explodeF);
+    finishSnaps(t.snaps); // after the write, so an exact cancel-out still painted home
     app.events.emit('positions-live');
     app.events.emit('positions');
     refresh();
   });
-  typeInput.addEventListener('blur', () => setTimeout(closeTypeIn, 120));
+  typeInput.addEventListener('blur', () => {
+    clearTimeout(typeCloseTimer);
+    typeCloseTimer = setTimeout(closeTypeIn, 120);
+  });
 
   // ---- ruler / protractor overlays -----------------------------------------
   const _tickW = new THREE.Vector3();
@@ -661,12 +725,28 @@ export function initTriad(app) {
   }
 
   // ---- follow the app ------------------------------------------------------
-  app.events.on('selection', refresh);
-  app.events.on('scope', refresh);
-  app.events.on('appearance', refresh);
-  app.events.on('model', refresh);
-  app.events.on('positions', () => { if (!dragState) refresh(); });
-  app.events.on('positions-live', () => { if (!dragState) refresh(); });
+  // Nothing but the drag itself may reposition the gizmo mid-gesture: edge
+  // builds emit 'appearance' every few ms and would drag the pivot out from
+  // under the frozen snap frame. A model swap is the exception — the records
+  // under the gesture no longer exist, so the drag dies (and reverts).
+  const quietRefresh = () => { if (!dragState) refresh(); };
+  app.events.on('selection', quietRefresh);
+  app.events.on('scope', quietRefresh);
+  app.events.on('appearance', quietRefresh);
+  app.events.on('model', () => {
+    if (dragState) cancelDrag();
+    closeTypeIn(); // its snapshots point at the replaced model's records
+    refresh();
+  });
+  // Any positional change from OUTSIDE a triad gesture (explode scrub, snap
+  // back, free drag) invalidates an open type-in's snapshots.
+  const onPositions = () => {
+    if (dragState) return;
+    if (typeCtx) closeTypeIn();
+    refresh();
+  };
+  app.events.on('positions', onPositions);
+  app.events.on('positions-live', onPositions);
 
   // Constant screen size; the type-in closes when its anchor drifts away.
   const _camPos = new THREE.Vector3(Infinity, Infinity, Infinity);
@@ -681,6 +761,12 @@ export function initTriad(app) {
     closeTypeIn();
   });
 
-  app.triad = { refresh, tryStartDrag, hitTest };
+  app.triad = {
+    refresh,
+    tryStartDrag,
+    hitTest,
+    cancelDrag,
+    dragging: () => !!dragState,
+  };
   refresh();
 }
