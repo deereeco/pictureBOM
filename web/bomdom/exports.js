@@ -113,6 +113,20 @@ export function initExports(app) {
     mk('Excel (.xlsx)', (s) => exportExcel(app, s));
     mk('CSV', (s) => exportCsv(app, s));
     mk('Print order sheet', (s) => exportPrint(app, s));
+    if (app.viewstate && app.model) {
+      const s2 = document.createElement('div');
+      s2.className = 'menu-sep';
+      menu.appendChild(s2);
+      const b = document.createElement('button');
+      b.className = 'menu-item';
+      b.textContent = 'Save view state (.json)';
+      b.title = 'Camera, explode, moved parts, hidden parts, balloons — drop the file back on this viewer to restore';
+      b.addEventListener('click', () => {
+        menu.classList.add('hidden');
+        app.viewstate.save();
+      });
+      menu.appendChild(b);
+    }
   }
 }
 

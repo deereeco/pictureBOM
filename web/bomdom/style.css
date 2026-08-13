@@ -1258,7 +1258,14 @@ html.theme-transition *::after {
     #printSheet.instr-print.is-onepage .ip-body { display: flex; gap: 14pt; align-items: flex-start; }
     #printSheet.instr-print.is-onepage .ip-view { flex: 1.25; }
     #printSheet.instr-print.is-onepage .ip-list { flex: 1; }
+    #printSheet.instr-print .ip-view { position: relative; }
     #printSheet.instr-print .ip-view img { width: 100%; height: auto; border: 0.5pt solid #999; }
+    #printSheet.instr-print .ip-inset {
+        position: absolute; top: 6pt; right: 6pt; width: 27%;
+        background: #fff; border: 0.5pt solid #666; padding: 2pt 2pt 1pt;
+    }
+    #printSheet.instr-print .ip-inset img { width: 100%; height: auto; border: none; }
+    #printSheet.instr-print .ip-inset-cap { font-size: 7.5pt; text-align: center; color: #333; }
     #printSheet.instr-print .ip-break { break-before: page; }
     #printSheet.instr-print .ip-num { font-weight: 700; text-align: center; }
     #printSheet.instr-print td img { width: 26pt; height: 26pt; object-fit: contain; }

@@ -247,6 +247,39 @@ export function initInteractions(app) {
       refresh();
       retargetOrbit();
     },
+    // Saved views restore an explode setup wholesale: it becomes both the
+    // pending AND the applied config, exactly as if the user had pressed
+    // Apply with these settings at this slider value.
+    applyExplodeState(cfg, f) {
+      if (!app.model) return;
+      explodeTweenToken = {}; // orphan any in-flight explode tween (and its reframe)
+      Object.assign(app.explodeCfg, {
+        anchorRecId: null, mode: null, plane: null, spread: 'both',
+        internal: 'light', sequenced: false,
+      }, cfg || {});
+      const aid = app.explodeCfg.anchorRecId;
+      if (aid != null && (!Number.isInteger(aid) || !app.model.records[aid])) {
+        app.explodeCfg.anchorRecId = null; // foreign or hostile id
+      }
+      appliedExplodeCfg = { ...app.explodeCfg };
+      // Authoritative restore: computeExplodeVectors deliberately KEEPS old
+      // vectors when the unit set is empty (a leaf scope) — a restore must
+      // not inherit the destination's stale vectors through that path.
+      for (const rec of app.model.records) {
+        rec.explodeVec.set(0, 0, 0);
+        rec.seqT = 0;
+      }
+      app.model.explodeSeq = false;
+      M.computeExplodeVectors(app.model, app.explodeCfg, scopeAnchorRec(), effHidden);
+      const fc = Math.max(0, Math.min(1, f || 0));
+      slider.value = String(fc);
+      M.applyPositions(app.model, fc);
+      app.events.emit('positions');
+      invalidate();
+    },
+    // Saved views must capture the setup the screen actually shows — the
+    // popover cfg may hold half-edited, never-Applied changes.
+    getAppliedExplodeCfg() { return { ...appliedExplodeCfg }; },
     setMoveMode(on) {
       on = !!on;
       if (on === !!app.moveMode) return;

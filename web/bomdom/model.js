@@ -923,7 +923,15 @@ export function resetAppearance(model) {
 
 const IDENTITY_QUAT = new THREE.Quaternion(); // read-only slerp target
 
+// A pose restore (saved views) must be able to orphan every in-flight
+// snap-back tween — otherwise a reset started moments earlier keeps lerping
+// dragDelta/dragQuat toward zero underneath the freshly restored pose.
+export function cancelPoseTweens(model) {
+  model.poseEpoch = (model.poseEpoch || 0) + 1;
+}
+
 export function snapBack(model, recs, addTween, onFrame, onDone) {
+  const epoch = model.poseEpoch || 0;
   let i = 0;
   for (const rec of recs) {
     const rotated = !isIdentityQuat(rec.dragQuat);
@@ -934,11 +942,13 @@ export function snapBack(model, recs, addTween, onFrame, onDone) {
       duration: 300,
       delay: i++ * 20, // staggered
       update: (k) => {
+        if ((model.poseEpoch || 0) !== epoch) return; // orphaned by a restore
         rec.dragDelta.copy(from).multiplyScalar(1 - k);
         if (fromQuat) rec.dragQuat.copy(fromQuat).slerp(IDENTITY_QUAT, k);
         onFrame();
       },
       done: () => {
+        if ((model.poseEpoch || 0) !== epoch) return;
         rec.dragDelta.set(0, 0, 0);
         rec.dragQuat.identity(); // exact — applyPositions then restores homeQuat bit-exactly
         rec.flags.moved = false;
