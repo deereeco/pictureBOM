@@ -49,6 +49,7 @@ export function initInstructions(app) {
     dupBalloons: true,       // every instance gets a balloon (Dominic: default on)
     checked: new Map(),      // item key -> bool, per-session only
     ownScope: false,         // we opened the isolation scope, so exit closes it
+    scopeRef: null,          // the exact scope object we opened (identity check)
     items: [],
     balloons: [],            // { item, rec, world: Vector3, el }
     offsets: new Map(),      // balloon key -> {dx,dy} px from the part's anchor
@@ -94,10 +95,20 @@ export function initInstructions(app) {
       }
       return it;
     };
+    // With a scope open, an ancestor assembly on the anchor's PATH passes
+    // isEffectivelyHidden (scopeSetFor keeps ancestors as the path to the
+    // anchor) while most of its subtree is cut away — grabbing it as one
+    // "kept subassembly" would number the whole assembly instead of the
+    // isolated parts. Only fully-in-view subassemblies stay units then.
+    const fullyInView = (rec) => {
+      if (M.isEffectivelyHidden(rec, sel.scope, sel.filter)) return false;
+      return rec.children.every(fullyInView);
+    };
     const visit = (rec) => {
       if (M.isEffectivelyHidden(rec, sel.scope, sel.filter)) return;
       const isAsm = rec.children.length > 0;
-      if (isAsm && !st.flattenAll && !st.flattenSet.has(asmKey(rec))) {
+      if (isAsm && !st.flattenAll && !st.flattenSet.has(asmKey(rec))
+          && (!sel.scope || fullyInView(rec))) {
         // A kept subassembly is one item: one balloon per copy, one row.
         const name = M.cleanName(rec.name) || rec.name || 'subassembly';
         grab('a:' + asmKey(rec), () => ({
@@ -135,6 +146,18 @@ export function initInstructions(app) {
       || M.boxOfRecs([rec]).getCenter(new THREE.Vector3());
   }
 
+  function pickVisibleRec(item) {
+    const clip = app.section && app.section.enabled ? app.section.plane : null;
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+    for (const rec of item.recs) {
+      const c = unitCenter(rec);
+      if (clip && clip.distanceToPoint(c) < 0) continue;
+      const p = toViewportPx(c);
+      if (!p.behind && p.x >= 0 && p.y >= 0 && p.x <= w && p.y <= h) return rec;
+    }
+    return item.recs[0];
+  }
+
   // ---- balloons ------------------------------------------------------------
   const _proj = new THREE.Vector3();
   function toViewportPx(world) {
@@ -162,7 +185,10 @@ export function initInstructions(app) {
     chip.querySelector('.ic-note').textContent =
       st.dupBalloons && !dups ? `${total} instances — showing one balloon per item` : '';
     for (const item of st.items) {
-      const recs = dups ? item.recs : [item.recs[0]];
+      // With duplicates off, balloon an instance the user can actually see —
+      // an off-screen or section-cut "first" instance would leave the item
+      // number missing from the view and the printed sheet.
+      const recs = dups ? item.recs : [pickVisibleRec(item)];
       for (const rec of recs) {
         const el = document.createElement('div');
         el.className = 'instr-balloon';
@@ -282,23 +308,40 @@ export function initInstructions(app) {
     el.addEventListener('pointercancel', onUp);
   }
 
-  // Nudge overlapping balloons apart (simple pairwise repulsion, a few
-  // passes) — results become custom offsets, so Tidy prints as arranged.
+  // Arrange: ring the balloons around the model (the assembly-drawing look —
+  // each balloon on the ray from the view's center through its part, pushed
+  // outside the cluster), then pull any remaining overlaps apart. Always
+  // visibly does something; results become ordinary offsets, so it prints as
+  // arranged and any balloon can still be fine-tuned by hand.
   function tidyBalloons() {
     const vis = st.balloons.filter((b) => !b.el.classList.contains('hidden'));
     if (!vis.length) return;
     const w = viewport.clientWidth, h = viewport.clientHeight;
-    const pos = vis.map((b) => ({
-      b,
-      ax: 0, ay: 0,
-      x: parseFloat(b.el.style.left),
-      y: parseFloat(b.el.style.top),
-    }));
-    for (const p of pos) {
-      const a = toViewportPx(p.b.world);
-      p.ax = a.x;
-      p.ay = a.y;
-    }
+    const pos = vis.map((b) => {
+      const a = toViewportPx(b.world);
+      return { b, ax: a.x, ay: a.y, x: 0, y: 0 };
+    });
+    let cx = 0, cy = 0;
+    for (const p of pos) { cx += p.ax; cy += p.ay; }
+    cx /= pos.length;
+    cy /= pos.length;
+    let maxR = 0;
+    for (const p of pos) maxR = Math.max(maxR, Math.hypot(p.ax - cx, p.ay - cy));
+    const ringR = Math.min(maxR + 70, Math.min(w, h) / 2 - 24);
+    pos.forEach((p, i) => {
+      let dx = p.ax - cx, dy = p.ay - cy;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) {
+        const a = (i / pos.length) * Math.PI * 2;
+        dx = Math.cos(a);
+        dy = Math.sin(a);
+      } else {
+        dx /= len;
+        dy /= len;
+      }
+      p.x = cx + dx * ringR;
+      p.y = cy + dy * ringR;
+    });
     const MIN = 30; // balloon diameter + breathing room
     for (let pass = 0; pass < 30; pass++) {
       let any = false;
@@ -331,6 +374,7 @@ export function initInstructions(app) {
     }
     layoutBalloons();
     syncChipButtons();
+    app.ui.toast('Balloons arranged around the view — drag any of them to fine-tune');
   }
 
   // ---- checklist (right panel, Parts tab) ---------------------------------
@@ -424,6 +468,26 @@ export function initInstructions(app) {
     }
   }
 
+  // The appbar search must not go dead in instruction mode: filter the
+  // checklist by the same query and keep the match counter honest.
+  function applyQueryToList() {
+    if (!st.on) return;
+    const q = ($('searchInput').value || '').trim().toLowerCase();
+    let hits = 0;
+    for (const item of st.items) {
+      if (!item.el) continue;
+      const text = [item.name, item.row && item.row.description,
+        item.row && item.row.vendor].filter(Boolean).join(' ').toLowerCase();
+      const hit = !q || text.includes(q);
+      item.el.style.display = hit ? '' : 'none';
+      if (hit) hits += 1;
+    }
+    $('searchCount').textContent = q ? `${hits} of ${st.items.length}` : '';
+  }
+  // Panel.js's own listener runs first (registered earlier) and counts the
+  // hidden parts list; ours overwrites with the checklist's numbers.
+  $('searchInput').addEventListener('input', applyQueryToList);
+
   // ---- chip ---------------------------------------------------------------
   function buildChip() {
     chip.replaceChildren();
@@ -460,8 +524,8 @@ export function initInstructions(app) {
     }
 
     const tidy = document.createElement('button');
-    tidy.textContent = 'Tidy';
-    tidy.title = 'Nudge overlapping balloons apart';
+    tidy.textContent = 'Arrange balloons';
+    tidy.title = 'Ring the balloons around the view and pull overlaps apart';
     tidy.addEventListener('click', () => tidyBalloons());
     chip.appendChild(tidy);
 
@@ -476,17 +540,6 @@ export function initInstructions(app) {
       syncChipButtons();
     });
     chip.appendChild(resetB);
-
-    const setup = document.createElement('button');
-    setup.textContent = 'Page setup ▾';
-    setup.addEventListener('click', (ev) => { ev.stopPropagation(); togglePageSetup(); });
-    chip.appendChild(setup);
-
-    const print = document.createElement('button');
-    print.className = 'ic-print';
-    print.textContent = 'Print / PDF';
-    print.addEventListener('click', () => printInstructions());
-    chip.appendChild(print);
 
     const note = document.createElement('span');
     note.className = 'ic-note';
@@ -505,24 +558,49 @@ export function initInstructions(app) {
     if (btn) btn.classList.toggle('hidden', !st.offsets.size);
   }
 
-  // ---- page setup popover ---------------------------------------------------
-  const setupPop = document.createElement('div');
-  setupPop.className = 'instr-setup hidden';
-  viewport.appendChild(setupPop);
+  // ---- print settings window (opened from the Export menu) ------------------
+  // Dominic's call: printing belongs with the other exports, and the setup
+  // deserves a real window, not a cramped chip popover.
+  const printOverlay = document.createElement('div');
+  printOverlay.className = 'overlay hidden';
+  document.body.appendChild(printOverlay);
 
-  function togglePageSetup() {
-    if (!setupPop.classList.contains('hidden')) { setupPop.classList.add('hidden'); return; }
-    buildPageSetup();
-    setupPop.classList.remove('hidden');
+  function openPrintSetup() {
+    if (!st.on || !st.items.length) { app.ui.toast('Nothing visible to print'); return; }
+    buildPrintSetup();
+    printOverlay.classList.remove('hidden');
   }
-  function buildPageSetup() {
-    setupPop.replaceChildren();
+  function closePrintSetup() { printOverlay.classList.add('hidden'); }
+  printOverlay.addEventListener('click', (ev) => {
+    if (ev.target === printOverlay) closePrintSetup();
+  });
+
+  function buildPrintSetup() {
+    printOverlay.replaceChildren();
+    const card = document.createElement('div');
+    card.className = 'overlay-card instr-setup-card';
+    printOverlay.appendChild(card);
+
+    const headRow = document.createElement('div');
+    headRow.className = 'overlay-head';
+    const title = document.createElement('span');
+    title.className = 'overlay-title';
+    title.textContent = 'Print instructions (PDF)';
+    headRow.appendChild(title);
+    const x = document.createElement('button');
+    x.className = 'banner-close';
+    x.setAttribute('aria-label', 'Close');
+    x.textContent = '✕';
+    x.addEventListener('click', closePrintSetup);
+    headRow.appendChild(x);
+    card.appendChild(headRow);
+
     const p = st.print;
     const head = (t) => {
       const h = document.createElement('div');
       h.className = 'menu-head';
       h.textContent = t;
-      setupPop.appendChild(h);
+      card.appendChild(h);
     };
     const radio = (name, value, checked, label, onChange) => {
       const lab = document.createElement('label');
@@ -534,7 +612,7 @@ export function initInstructions(app) {
       r.addEventListener('change', () => { onChange(value); storePrintSettings(p); });
       lab.appendChild(r);
       lab.appendChild(document.createTextNode(' ' + label));
-      setupPop.appendChild(lab);
+      card.appendChild(lab);
     };
     const check = (label, checked, onChange) => {
       const lab = document.createElement('label');
@@ -545,7 +623,7 @@ export function initInstructions(app) {
       b.addEventListener('change', () => { onChange(b.checked); storePrintSettings(p); });
       lab.appendChild(b);
       lab.appendChild(document.createTextNode(' ' + label));
-      setupPop.appendChild(lab);
+      card.appendChild(lab);
     };
     head('Paper');
     radio('icOrient', 'landscape', p.orient === 'landscape', 'Landscape (fits the view best)', (v) => { p.orient = v; });
@@ -559,20 +637,32 @@ export function initInstructions(app) {
     check('Vendor', p.cols.vendor, (v) => { p.cols.vendor = v; });
     const note = document.createElement('div');
     note.className = 'pop-note';
-    note.textContent = 'Long lists continue on page 2 automatically; with many columns the list starts there for clarity.';
-    setupPop.appendChild(note);
+    note.textContent = 'The sheet prints the balloons exactly as arranged on screen. Long lists continue on page 2 automatically; with many columns the list starts there for clarity. Choose "Save as PDF" in the print dialog.';
+    card.appendChild(note);
+
+    const btns = document.createElement('div');
+    btns.className = 'pop-actions';
+    const go = document.createElement('button');
+    go.className = 'pop-btn pop-btn-primary';
+    go.textContent = 'Print…';
+    go.addEventListener('click', () => { closePrintSetup(); printInstructions(); });
+    const cancel = document.createElement('button');
+    cancel.className = 'pop-btn';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', closePrintSetup);
+    btns.appendChild(go);
+    btns.appendChild(cancel);
+    card.appendChild(btns);
   }
-  document.addEventListener('pointerdown', (ev) => {
-    const t = ev.target instanceof Element ? ev.target : null;
-    if (!t || (!t.closest('.instr-setup') && !t.closest('.instr-chip'))) {
-      setupPop.classList.add('hidden');
-    }
-  });
 
   // ---- print ----------------------------------------------------------------
   // The GL buffer is not preserved: render, then read the pixels immediately,
-  // then draw the balloons on top in 2D canvas space.
+  // then draw the balloons on top in 2D canvas space. The capture always uses
+  // a white background — a dark-theme viewport would print as a toner-black
+  // rectangle, the opposite of the drawing look this sheet is for.
   function captureBallooned() {
+    const prevBg = viewer.scene.background;
+    viewer.scene.background = new THREE.Color('#ffffff');
     viewer.renderer.render(viewer.scene, viewer.camera);
     const gl = viewer.renderer.domElement;
     const out = document.createElement('canvas');
@@ -616,14 +706,19 @@ export function initInstructions(app) {
       ctx.fillStyle = accent;
       ctx.fillText(String(b.item.n), bx, by + px(0.5));
     }
+    viewer.scene.background = prevBg;
+    invalidate(); // repaint the themed background on the next frame
     return out.toDataURL('image/png');
   }
 
-  function printInstructions() {
+  async function printInstructions() {
     if (!st.items.length) { app.ui.toast('Nothing visible to print'); return; }
     const p = st.print;
     const optionalCols = (p.cols.thumb ? 1 : 0) + (p.cols.desc ? 1 : 0) + (p.cols.vendor ? 1 : 0);
+    // One-page (view beside list) only works in landscape — portrait's width
+    // can't seat both, so it stacks instead.
     const onePage = p.layout === 'one'
+      && p.orient === 'landscape'
       && st.items.length <= ONE_PAGE_ROW_LIMIT
       && optionalCols <= ONE_PAGE_COL_LIMIT;
     pageStyle.textContent = `@media print { @page { size: A4 ${p.orient}; margin: 10mm; } }`;
@@ -717,7 +812,17 @@ export function initInstructions(app) {
     table.appendChild(tbody);
     listWrap.appendChild(table);
     body.appendChild(listWrap);
-    window.print();
+    // The print dialog snapshots the page: a multi-MB data-URL image that has
+    // not DECODED yet prints as an empty box (Dominic hit exactly this). Wait
+    // for the decode, and always clean up — the @page rule and the sheet's
+    // class must not leak into the order-sheet export or a plain Ctrl+P.
+    try { await img.decode(); } catch (e) { /* decode is best-effort */ }
+    try {
+      window.print();
+    } finally {
+      pageStyle.textContent = '';
+      sheet.className = '';
+    }
   }
 
   // ---- mode lifecycle --------------------------------------------------------
@@ -727,6 +832,7 @@ export function initInstructions(app) {
     buildBalloons();
     buildList();
     syncListRows();
+    applyQueryToList();
     app.events.emit('instructions');
     invalidate();
   }
@@ -746,33 +852,72 @@ export function initInstructions(app) {
       // One canvas owner at a time, like measure/move/assembly.
       if (app.measureMode && app.measure) app.measure.toggle();
       if (app.actions) { app.actions.setMoveMode(false); app.actions.setAssemblyMode(false); }
+      // The checklist rides the Parts tab — make that the active tab, or it
+      // would stack under an open Structure tree.
+      const tabParts = $('tabParts');
+      if (tabParts && !tabParts.classList.contains('is-active')) tabParts.click();
+      list.classList.remove('hidden');
       // "What they have selected is isolated (if nothing selected, everything)."
       const roots = [...sel.selected].map((id) => app.model.records[id]).filter(Boolean);
       if (roots.length && !sel.scope) {
         st.ownScope = true;
         app.actions.open(roots, roots.length === 1
           ? (M.instanceLabel(roots[0].name) || 'selection') : `${roots.length} selected`);
+        st.scopeRef = sel.scope; // ours to close — unless the user replaces it
       }
       rebuild();
-      app.ui.toast('Instructions — drag balloons to arrange (Shift+drag moves all); Print / PDF is in the chip (Esc to exit)');
+      applyQueryToList();
+      app.ui.toast('Instructions — drag balloons to arrange (Shift+drag moves all); print from the Export menu (Esc to exit)');
     } else {
-      setupPop.classList.add('hidden');
+      closePrintSetup();
       clearBalloons();
       list.replaceChildren();
+      sel.setHover(null); // removed balloons/rows never fire pointerleave
       if (st.ownScope) {
         st.ownScope = false;
-        if (sel.scope) app.actions.closeScope();
+        // Close only the scope WE opened — if the user replaced it while the
+        // mode was on, their scope is theirs to keep.
+        if (sel.scope && sel.scope === st.scopeRef) app.actions.closeScope();
       }
+      st.scopeRef = null;
+      // Let the panel re-run its own search filtering over the restored list.
+      const si = $('searchInput');
+      if (si) si.dispatchEvent(new Event('input', { bubbles: true }));
       app.events.emit('instructions');
       invalidate();
     }
   }
 
   // ---- follow the app ---------------------------------------------------------
-  const rebuildIfOn = () => { if (st.on) rebuild(); };
+  // Throttled: the lazy edge builder emits 'appearance' every ~12ms for
+  // seconds — a full items+balloons+checklist rebuild per slice is churn.
+  let lastRebuild = 0;
+  let rebuildTimer = 0;
+  const rebuildIfOn = () => {
+    if (!st.on) return;
+    const now = performance.now();
+    if (now - lastRebuild > 80) {
+      lastRebuild = now;
+      rebuild();
+      return;
+    }
+    if (rebuildTimer) return;
+    rebuildTimer = setTimeout(() => {
+      rebuildTimer = 0;
+      lastRebuild = performance.now();
+      if (st.on) rebuild();
+    }, 100);
+  };
   app.events.on('appearance', rebuildIfOn);
   app.events.on('filter', rebuildIfOn);
-  app.events.on('scope', rebuildIfOn);
+  app.events.on('scope', () => {
+    // The user changed the view scope out from under us: it is theirs now.
+    if (st.on && st.scopeRef && sel.scope !== st.scopeRef) {
+      st.ownScope = false;
+      st.scopeRef = null;
+    }
+    rebuildIfOn();
+  });
   app.events.on('positions', () => {
     if (!st.on) return;
     for (const b of st.balloons) b.world.copy(unitCenter(b.rec));
@@ -802,5 +947,6 @@ export function initInstructions(app) {
     get on() { return st.on; },
     items: () => st.items,
     refresh: rebuildIfOn,
+    openPrintSetup, // the Export menu opens the print settings window
   };
 }

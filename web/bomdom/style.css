@@ -1190,22 +1190,13 @@ html.theme-transition *::after {
 .instr-chip .ic-print { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .instr-chip .ic-note { color: var(--text-muted); font-size: 11px; }
 .instr-chip .ic-note:empty { display: none; }
-.instr-setup {
-    position: absolute;
-    bottom: 52px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 50;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: 10px;
-    box-shadow: var(--shadow);
-    padding: 10px 14px 12px;
+.instr-setup-card {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    max-width: 320px;
+    width: min(360px, 92vw);
 }
+.instr-setup-card .pop-actions { margin-top: 12px; }
 .instr-row {
     display: flex;
     align-items: center;

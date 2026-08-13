@@ -1020,8 +1020,11 @@ export function initInteractions(app) {
       if (menuOpen) return;
       if (!$('helpOverlay').classList.contains('hidden')) { $('helpOverlay').classList.add('hidden'); return; }
       if (app.measureMode && app.measure && app.measure.escape()) return;
-      if (app.instructions && app.instructions.on) { app.instructions.set(false); return; }
+      // Clearing a selection outranks exiting instruction mode — clicking a
+      // balloon to identify a part then pressing Esc must not eject the user
+      // from the whole mode (same ordering assembly mode uses).
       if (sel.clearSelection()) return;
+      if (app.instructions && app.instructions.on) { app.instructions.set(false); return; }
       if (app.assemblyMode) { actions.setAssemblyMode(false); return; }
       if (sel.scope) actions.closeScope();
       return;

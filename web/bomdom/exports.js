@@ -45,6 +45,21 @@ export function initExports(app) {
     const info = scopeInfo();
     const def = info.selected ? 'selected' : (info.anyHidden && info.visible) ? 'visible' : 'full';
     menu.innerHTML = '';
+    // Instruction mode's printable sheet is an export like the others, so it
+    // lives here (per Dominic) — the button opens the page-setup window.
+    if (app.instructions && app.instructions.on) {
+      const b = document.createElement('button');
+      b.className = 'menu-item';
+      b.textContent = 'Print instructions (PDF)…';
+      b.addEventListener('click', () => {
+        menu.classList.add('hidden');
+        app.instructions.openPrintSetup();
+      });
+      menu.appendChild(b);
+      const s = document.createElement('div');
+      s.className = 'menu-sep';
+      menu.appendChild(s);
+    }
     const head = document.createElement('div');
     head.className = 'menu-head';
     head.textContent = 'Scope';
@@ -253,6 +268,7 @@ function exportPrint(app, scope) {
   const asm = app.meta.assembly.name || 'assembly';
   const sheet = $('printSheet');
   sheet.innerHTML = '';
+  sheet.className = ''; // #printSheet is shared with the instructions sheet
 
   const h1 = document.createElement('h1');
   h1.textContent = asm + ' — order sheet';
