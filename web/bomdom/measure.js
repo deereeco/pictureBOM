@@ -114,9 +114,11 @@ export function initMeasure(app) {
   // World coordinates only equal CAD coordinates while nothing is exploded
   // or drag-moved anywhere on the record's ancestor chain.
   function displaced(rec) {
-    const f = app.model ? app.model.explodeF : 0;
+    if (!app.model) return false;
     for (let r = rec; r; r = r.parent) {
-      if (f > 0 && r.explodeVec.lengthSq() > 0) return true;
+      // explodeEngaged, not a raw explodeF check: in sequenced mode a unit
+      // whose window hasn't started is bit-exactly home and measurable.
+      if (M.explodeEngaged(app.model, r)) return true;
       if (r.dragDelta.lengthSq() > 0 || r.flags.moved) return true;
     }
     return false;

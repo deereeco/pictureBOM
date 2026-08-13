@@ -162,6 +162,7 @@ export function buildGraph(gltf, meta) {
       homePos: obj.position.clone(),
       homeQuat: obj.quaternion.clone(),
       explodeVec: new THREE.Vector3(),
+      seqT: 0, // sequenced explode: this unit's start within the slider range
       dragDelta: new THREE.Vector3(),
       dragQuat: new THREE.Quaternion(), // triad rotation offset, parent-local
       flags: { hidden: false, ghost: false, opacity: 1, moved: false },
@@ -373,23 +374,33 @@ const PLANES = {
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 // cfg: { anchorRecId, mode: 'radial'|'x'|'y'|'z', plane: 'xy'|'yz'|'xz'|'free',
-// spread: 'both'|'one' } — null cfg / null fields use computed defaults. The
-// anchor instance (default: largest bounding volume, usually the base plate)
-// never moves.
-export function computeExplodeVectors(model, cfg) {
+// spread: 'both'|'one', internal: 'none'|'light'|'full', sequenced: bool } —
+// null cfg / null fields use computed defaults. The anchor instance (default:
+// largest bounding volume, usually the base plate) never moves. scopeAnchor:
+// explode WITHIN that open subassembly (its children become the moving units)
+// instead of the assembly's top level. isHidden: effective-visibility
+// predicate (rec) => bool — computed from selection state, NOT object.visible,
+// because event handlers may run before updateVisuals has repainted the flags.
+export function computeExplodeVectors(model, cfg, scopeAnchor = null, isHidden = null) {
   const mode = (cfg && cfg.mode) || model.defaultExplodeMode || 'radial';
   const spread = (cfg && cfg.spread) || 'both';
   const planeName = (cfg && cfg.plane) || model.defaultExplodePlane || 'free';
+  const internalFactor = { none: 0, light: 0.4, full: 1 }[(cfg && cfg.internal) || 'light'];
+  const hidden = isHidden || (() => false);
   const diag = model.diagLen;
 
   // Centers must be measured at home positions.
   const f = model.explodeF;
   if (f) applyPositions(model, 0);
-  for (const rec of model.records) rec.explodeVec.set(0, 0, 0);
 
   const box = new THREE.Box3();
   const info = [];
-  for (const rec of topRecs(model)) {
+  // Units the user cannot see sit the explode out: hidden parts used to fly
+  // invisibly, skew the distance normalization, and even win the auto-anchor
+  // pick.
+  const units = scopeAnchor ? scopeAnchor.children : topRecs(model);
+  for (const rec of units) {
+    if (hidden(rec)) continue;
     box.setFromObject(rec.object);
     if (box.isEmpty()) continue;
     const size = box.getSize(new THREE.Vector3());
@@ -400,14 +411,23 @@ export function computeExplodeVectors(model, cfg) {
     });
   }
   if (!info.length) {
+    // Nothing visible to explode (a leaf scope, everything hidden): keep the
+    // previous vectors and sequencing rather than silently wiping an active
+    // explode out from under the slider.
     if (f) applyPositions(model, f);
     return;
   }
+  for (const rec of model.records) rec.explodeVec.set(0, 0, 0);
 
   let anchorInfo = null;
   if (cfg && cfg.anchorRecId != null && model.records[cfg.anchorRecId]) {
-    const top = topAncestorOf(model, model.records[cfg.anchorRecId]);
-    anchorInfo = info.find((i) => i.rec === top) || null;
+    // The unit containing the picked anchor — works for scoped units too,
+    // where the old "top ancestor" resolution would overshoot the scope.
+    const target = model.records[cfg.anchorRecId];
+    anchorInfo = info.find((i) => {
+      for (let a = target; a; a = a.parent) if (a === i.rec) return true;
+      return false;
+    }) || null;
   }
   if (!anchorInfo) anchorInfo = info.reduce((a, b) => (b.volume > a.volume ? b : a));
   const aCenter = anchorInfo.center;
@@ -457,21 +477,39 @@ export function computeExplodeVectors(model, cfg) {
     }
   }
 
-  // Nested subassemblies keep a light internal radial spread; the anchor
-  // subtree stays fully rigid.
-  const assignInternal = (rec, origin, depth) => {
-    box.setFromObject(rec.object);
-    if (box.isEmpty()) return;
-    const c = box.getCenter(new THREE.Vector3());
-    if (depth > 0) {
-      let dir = c.clone().sub(origin);
-      if (dir.length() < diag * 1e-4) dir = dominantAxis(rec.homePos);
-      dir.normalize().multiplyScalar(0.4 * diag * 0.6 * Math.pow(0.5, depth));
-      rec.explodeVec.add(worldDeltaToLocal(rec.object.parent, dir, c));
-    }
-    for (const child of rec.children) assignInternal(child, c, depth + 1);
-  };
-  for (const i of others) assignInternal(i.rec, i.center, 0);
+  // Nested subassemblies open up internally by a controllable amount ('none'
+  // keeps them rigid, 'light' is the classic hint, 'full' spreads them like
+  // a real explode); the anchor subtree always stays fully rigid.
+  if (internalFactor > 0) {
+    const assignInternal = (rec, origin, depth) => {
+      box.setFromObject(rec.object);
+      if (box.isEmpty()) return;
+      const c = box.getCenter(new THREE.Vector3());
+      if (depth > 0) {
+        let dir = c.clone().sub(origin);
+        if (dir.length() < diag * 1e-4) dir = dominantAxis(rec.homePos);
+        dir.normalize().multiplyScalar(internalFactor * diag * 0.6 * Math.pow(0.5, depth));
+        rec.explodeVec.add(worldDeltaToLocal(rec.object.parent, dir, c));
+      }
+      for (const child of rec.children) assignInternal(child, c, depth + 1);
+    };
+    for (const i of others) assignInternal(i.rec, i.center, 0);
+  }
+
+  // Sequenced fly-out: each moving unit owns a window of the slider range,
+  // farthest-flying first, so scrubbing (or the Apply tween) plays the
+  // assembly apart one unit at a time. seqT is the window's start, inherited
+  // by the unit's whole subtree so internal spread rides along.
+  model.explodeSeq = !!(cfg && cfg.sequenced);
+  for (const rec of model.records) rec.seqT = 0;
+  if (model.explodeSeq && others.length) {
+    const ranked = [...others].sort(
+      (a, b) => b.rec.explodeVec.lengthSq() - a.rec.explodeVec.lengthSq());
+    ranked.forEach((i, idx) => {
+      const t = idx / ranked.length;
+      for (const r of subtree(i.rec)) r.seqT = t;
+    });
+  }
 
   model.explodeAnchorId = anchorInfo.rec.id;
   if (f) applyPositions(model, f);
@@ -489,13 +527,51 @@ export function refreshMovedFlag(rec) {
   rec.flags.moved = rec.dragDelta.lengthSq() > 0 || !isIdentityQuat(rec.dragQuat);
 }
 
+// Each unit's share of the slider range in sequenced mode; windows overlap
+// so the play-out flows instead of stuttering.
+const SEQ_WINDOW = 0.45;
+
+// Whether the explode is actually displacing this record right now — in
+// sequenced mode a unit whose window hasn't started yet is bit-exactly at
+// home, so measurements on it are still valid.
+export function explodeEngaged(model, rec) {
+  if (rec.explodeVec.lengthSq() === 0) return false;
+  const fc = Math.max(0, Math.min(1, model.explodeF));
+  if (fc <= 0) return false;
+  if (!model.explodeSeq) return true;
+  return (fc - rec.seqT * (1 - SEQ_WINDOW)) / SEQ_WINDOW > 0;
+}
+
+// World bounds of everything effectively visible (hide flags + scope +
+// facet filter, resolved from selection state so it is correct even before
+// updateVisuals repaints object.visible). Empty box when nothing shows.
+export function visibleBounds(model, scope, filter) {
+  const box = new THREE.Box3();
+  const one = new THREE.Box3();
+  for (const rec of model.records) {
+    if (!rec.meshes.length || isEffectivelyHidden(rec, scope, filter)) continue;
+    for (const mesh of rec.meshes) {
+      if (!mesh.geometry) continue;
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      one.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+      box.union(one);
+    }
+  }
+  return box;
+}
+
 export function applyPositions(model, f) {
   model.explodeF = f;
-  const e = easeExplode(Math.max(0, Math.min(1, f)));
+  const fc = Math.max(0, Math.min(1, f));
+  const eGlobal = easeExplode(fc);
+  const seq = !!model.explodeSeq;
   for (const rec of model.records) {
     const rotated = !isIdentityQuat(rec.dragQuat);
     if (rec.explodeVec.lengthSq() === 0 && rec.dragDelta.lengthSq() === 0
         && !rotated && !rec.flags.moved) continue;
+    const e = seq
+      ? easeExplode(Math.max(0, Math.min(1, (fc - rec.seqT * (1 - SEQ_WINDOW)) / SEQ_WINDOW)))
+      : eGlobal;
     rec.object.position.copy(rec.homePos)
       .addScaledVector(rec.explodeVec, e)
       .add(rec.dragDelta);
