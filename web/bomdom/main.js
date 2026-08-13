@@ -13,6 +13,7 @@ import { initPicking } from './picking.js';
 import { initSection } from './section.js';
 import { initMeasure } from './measure.js';
 import { initTriad } from './triad.js';
+import { initTrails } from './trails.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
 import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
@@ -105,6 +106,7 @@ async function boot() {
   initSection(app);
   initMeasure(app);
   initTriad(app);
+  initTrails(app);
 
   // Which way is up: this reader's remembered choice for this assembly wins,
   // then the exported default (hand-editable "up_axis" in bomdom-config),

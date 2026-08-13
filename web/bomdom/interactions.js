@@ -99,6 +99,30 @@ export function initInteractions(app) {
   app.edgesOn = readStoredEdges();
   app.renderStyle = readStoredStyle();
 
+  // The orbit pivot follows what you can SEE: hiding a big plate must not
+  // leave the camera turning around its ghost. Re-targets the controls to the
+  // visible-bounds center with a short glide; the camera itself stays put.
+  let pivotToken = null;
+  function retargetOrbit() {
+    if (!app.viewer || !app.model) return;
+    app.model.root.updateWorldMatrix(true, true);
+    const pts = M.pointsOfRecs(app.model.rootRecs); // visible meshes only
+    if (!pts.length) return; // everything hidden: keep the old pivot
+    const center = new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3());
+    const from = app.viewer.controls.target.clone();
+    if (center.distanceTo(from) < app.model.diagLen * 1e-3) return;
+    const token = pivotToken = {};
+    app.viewer.addTween({
+      duration: 220,
+      update: (k) => {
+        if (pivotToken !== token) return; // a newer retarget took over
+        // controls is a getter (rebuilt on up-axis changes) — re-read it.
+        app.viewer.controls.target.copy(from).lerp(center, k);
+        app.viewer.controls.update();
+      },
+    });
+  }
+
   // ---- actions ---------------------------------------------------------
   // Every explicit hide gesture (H key, context menu, panel eye icon) pushes
   // the recs it actually hid; Shift+H pops the most recent batch that is
@@ -109,13 +133,14 @@ export function initInteractions(app) {
     if (newly.length) hideHistory.push(newly);
   };
   const actions = {
-    hide(recs) { pushHideUndo(recs); M.setHidden(recs, true); refresh(); },
-    show(recs) { M.setHidden(recs, false); refresh(); },
+    hide(recs) { pushHideUndo(recs); M.setHidden(recs, true); refresh(); retargetOrbit(); },
+    show(recs) { M.setHidden(recs, false); refresh(); retargetOrbit(); },
     toggleHidden(recs) {
       const anyVisible = recs.some((r) => !r.flags.hidden);
       if (anyVisible) pushHideUndo(recs);
       M.setHidden(recs, anyVisible);
       refresh();
+      retargetOrbit();
     },
     unhideLast() {
       // Batches whose parts were re-shown some other way are stale: skip.
@@ -124,6 +149,7 @@ export function initInteractions(app) {
         if (!batch.length) continue;
         M.setHidden(batch, false);
         refresh();
+        retargetOrbit();
         const rec = batch[0];
         const part = rec.partId !== null ? app.model.partById.get(rec.partId) : null;
         const name = part ? (part.bom_name || part.name) : (M.cleanName(rec.name) || 'part');
@@ -137,6 +163,7 @@ export function initInteractions(app) {
       if (!app.model || !recs.length) return;
       M.isolate(app.model, recs, !!ghostRest);
       refresh();
+      retargetOrbit();
     },
     frame(recs) {
       if (!app.viewer || !app.model) return;
@@ -207,6 +234,7 @@ export function initInteractions(app) {
       M.resetAppearance(app.model);
       actions.resetPositions();
       refresh();
+      retargetOrbit();
     },
     setMoveMode(on) {
       on = !!on;
@@ -274,6 +302,11 @@ export function initInteractions(app) {
   // on arbitrary records in the new one.
   app.events.on('model', () => {
     hideHistory.length = 0;
+    // Record ids are per-model: a kept anchor would silently resolve to an
+    // arbitrary record in the new graph. The slider DOM also kept its old
+    // value across re-drops while the new model loaded collapsed.
+    app.explodeCfg.anchorRecId = null;
+    slider.value = '0';
     // Unguarded on purpose: on a re-drop, loadModel already nulled the scope
     // silently (before framing), so this emit is what actually hides the
     // scope chip. Harmless on first load — the chip is already hidden.
@@ -300,12 +333,12 @@ export function initInteractions(app) {
     actions.frame(null);
   });
 
-  function tweenExplodeTo(target) {
+  function tweenExplodeTo(target, duration = 500) {
     if (!app.model || !app.viewer) return;
     const from = app.model.explodeF;
     if (Math.abs(target - from) < 1e-3) return;
     app.viewer.addTween({
-      duration: 500,
+      duration,
       update: (k) => {
         const f = from + (target - from) * k;
         slider.value = String(f);
@@ -320,8 +353,28 @@ export function initInteractions(app) {
   }
 
   // Session-persistent setup; null fields fall back to model defaults.
-  app.explodeCfg = { anchorRecId: null, mode: null, plane: null, spread: 'both' };
+  app.explodeCfg = {
+    anchorRecId: null, mode: null, plane: null, spread: 'both',
+    internal: 'light', sequenced: false,
+  };
   const explodeMenu = $('explodeMenu');
+
+  // Explode acts on what you're viewing: with an "Open" scope on a
+  // subassembly, its children become the moving units.
+  function scopeAnchorRec() {
+    return sel.scope && sel.scope.anchorId != null && app.model
+      ? app.model.records[sel.scope.anchorId] : null;
+  }
+  // Entering or leaving a scope while exploded: recompute for the new units,
+  // or the old top-level vectors keep flying parts the user just zoomed away
+  // from (and the scoped subassembly stays rigid).
+  app.events.on('scope', () => {
+    if (!app.model || app.model.explodeF < 0.01) return;
+    M.computeExplodeVectors(app.model, app.explodeCfg, scopeAnchorRec());
+    M.applyPositions(app.model, app.model.explodeF);
+    app.events.emit('positions');
+    invalidate();
+  });
 
   function anchorName() {
     const id = app.explodeCfg.anchorRecId;
@@ -435,6 +488,39 @@ export function initInteractions(app) {
       explodeMenu.appendChild(sRow);
     }
 
+    head('Subassembly internals');
+    const nRow = document.createElement('div');
+    nRow.className = 'pop-inline';
+    const internal = cfg.internal || 'light';
+    for (const [value, text] of [['none', 'Rigid'], ['light', 'Slight'], ['full', 'Full spread']]) {
+      nRow.appendChild(popRadio('bdExInternal', value, internal === value, text,
+        () => { cfg.internal = value; }));
+    }
+    explodeMenu.appendChild(nRow);
+
+    head('Playback');
+    const seq = document.createElement('label');
+    seq.className = 'pop-check';
+    const seqBox = document.createElement('input');
+    seqBox.type = 'checkbox';
+    seqBox.checked = !!cfg.sequenced;
+    seqBox.addEventListener('change', () => { cfg.sequenced = seqBox.checked; });
+    seq.appendChild(seqBox);
+    seq.appendChild(document.createTextNode(' One part at a time (plays apart in order)'));
+    explodeMenu.appendChild(seq);
+
+    const trails = document.createElement('label');
+    trails.className = 'pop-check';
+    const trailsBox = document.createElement('input');
+    trailsBox.type = 'checkbox';
+    trailsBox.checked = !!app.explodeTrailsOn;
+    trailsBox.addEventListener('change', () => {
+      if (app.trails) app.trails.set(trailsBox.checked); // immediate, no Apply needed
+    });
+    trails.appendChild(trailsBox);
+    trails.appendChild(document.createTextNode(' Show trails (lines back to home)'));
+    explodeMenu.appendChild(trails);
+
     const btns = document.createElement('div');
     btns.className = 'pop-actions';
     const apply = document.createElement('button');
@@ -452,9 +538,13 @@ export function initInteractions(app) {
 
   function applyExplodeCfg() {
     if (!app.model) return;
-    M.computeExplodeVectors(app.model, app.explodeCfg);
-    if (app.model.explodeF < 0.05) tweenExplodeTo(0.6);
-    else {
+    M.computeExplodeVectors(app.model, app.explodeCfg, scopeAnchorRec());
+    if (app.model.explodeF < 0.05) {
+      // Sequenced mode plays the whole range through, one unit at a time —
+      // give it the time and the distance to read as a play-out.
+      if (app.explodeCfg.sequenced) tweenExplodeTo(1, 1600);
+      else tweenExplodeTo(0.6);
+    } else {
       M.applyPositions(app.model, app.model.explodeF);
       app.events.emit('positions');
       invalidate();
@@ -857,6 +947,9 @@ export function initInteractions(app) {
     }
     app.ui.showMenu(x, y, items);
   };
+
+  // Facet filters change what's visible too — same pivot rule as hiding.
+  app.events.on('filter', retargetOrbit);
 
   // ---- scope chip ------------------------------------------------------
   app.events.on('scope', (scope) => {
