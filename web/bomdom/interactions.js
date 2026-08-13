@@ -628,11 +628,12 @@ export function initInteractions(app) {
       for (let a = r.parent; a; a = a.parent) if (targetIds.has(a.id)) return false;
       return true;
     });
-    viewer.controls.enabled = false;
-    app.dragging = true;
-    canvas.classList.add('is-dragging');
+    viewer.controls.enabled = false; // pre-empt orbit for this gesture either way
     try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
-    sel.setHover(null);
+    // Nothing else happens until the pointer clears the click slop: a plain
+    // click in move mode must stay a click — picking's pointerup selects the
+    // part (which is how the triad appears) only while app.dragging is false.
+    let active = false;
 
     // Camera-facing plane through the grab point; one plane intersection
     // per pointermove.
@@ -651,6 +652,13 @@ export function initInteractions(app) {
     };
 
     const onMove = (e) => {
+      if (!active) {
+        if (Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) <= 4) return;
+        active = true;
+        app.dragging = true; // hover + click-select stand down
+        canvas.classList.add('is-dragging');
+        sel.setHover(null);
+      }
       const p = planeHit(e);
       if (!p) return;
       const worldDelta = p.clone().sub(hit.point);
@@ -673,6 +681,10 @@ export function initInteractions(app) {
       canvas.removeEventListener('pointercancel', onUp);
       try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       viewer.controls.enabled = true;
+      if (!active) return; // plain click: picking's pointerup handles the select
+      // Picking's pointerup ran first (registered at boot, before these
+      // dynamic listeners) and saw app.dragging still true, so a real drag's
+      // release never doubles as a click.
       app.dragging = false;
       canvas.classList.remove('is-dragging');
       app.events.emit('positions');
