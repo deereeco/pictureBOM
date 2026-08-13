@@ -6,7 +6,7 @@
 // select) and move mode (previewing exactly what a drag would grab).
 
 import * as THREE from 'three';
-import { boxOfRecs, levelTargetOf, selectedAncestorOf } from './model.js';
+import { assemblyUnitOf, boxOfRecs, selectedAncestorOf } from './model.js';
 
 const CLICK_SLOP_PX = 4;
 
@@ -51,10 +51,7 @@ export function initPicking(app) {
   // Assembly mode: what a hit would select — the subassembly one level below
   // the open scope (or below the top when unscoped).
   function assemblyTarget(rec) {
-    const scope = app.sel.scope;
-    const anchor = scope && scope.anchorId != null && app.model
-      ? app.model.records[scope.anchorId] : null;
-    return levelTargetOf(app.model, rec, anchor || null);
+    return assemblyUnitOf(app.model, app.sel.scope, rec);
   }
 
   // ---- assembly / move / anchor-pick hover (one raycast per frame at most)
@@ -79,27 +76,34 @@ export function initPicking(app) {
       if (!app.model || !app.model.bvhReady) return;
       // The triad rides above the parts: hovering one of its handles must not
       // tint whatever part happens to sit behind it. (Anchor picking ignores
-      // the gizmo entirely — its click does too.)
-      if (!app.assemblyMode && !app.anchorPickMode
-          && app.triad && app.triad.hitTest(hoverEv)) {
+      // the gizmo entirely — its click does too; hitTest is null whenever the
+      // gizmo is hidden, so assembly-only mode never reaches it.)
+      if (!app.anchorPickMode && app.triad && app.triad.hitTest(hoverEv)) {
         app.sel.setHover(null);
         return;
       }
       const hit = pick(hoverEv);
       if (!hit) { app.sel.setHover(null); return; }
       let ids;
-      if (app.anchorPickMode || app.assemblyMode) {
+      if (app.anchorPickMode || (app.assemblyMode && !app.moveMode && !hoverEv.shiftKey)) {
         // Both resolve to the unit one level below the open scope (or the
-        // top level) — for anchor picking that is exactly what stays fixed.
+        // top level) — for anchor picking that is exactly what stays fixed,
+        // for assembly mode exactly what a click selects. Shift held means a
+        // drag is imminent instead: fall through to the drag resolution.
         ids = [assemblyTarget(hit.rec).id];
       } else {
-        const eff = selectedAncestorOf(app.sel.selected, hit.rec) || hit.rec;
+        // Move mode previews the exact drag target; with assembly mode also
+        // on, the drag grabs the whole subassembly unit, so start from it.
+        const base = app.assemblyMode ? assemblyTarget(hit.rec) : hit.rec;
+        const eff = selectedAncestorOf(app.sel.selected, base) || base;
         // Grabbing a member of a multi-selection drags the WHOLE selection
         // (startDrag's rule) — the preview must claim the same blast radius.
         ids = (app.sel.selected.has(eff.id) && app.sel.selected.size > 1)
           ? [...app.sel.selected] : [eff.id];
       }
-      app.sel.setHover({ ids });
+      // src tags the origin: mode toggles clear stale CANVAS previews only,
+      // never a live panel-row hover (whose meaning no mode changes).
+      app.sel.setHover({ ids, src: 'canvas' });
     });
   });
   canvas.addEventListener('pointerleave', () => {

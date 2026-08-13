@@ -326,6 +326,15 @@ export function levelTargetOf(model, rec, stopRec) {
   return r;
 }
 
+// The unit assembly mode acts on: the subassembly one level below the open
+// scope (or below the top level when unscoped). Picking's hover preview,
+// click select, drag-move and the context menu all resolve through here so
+// the highlight can never promise a different unit than the action grabs.
+export function assemblyUnitOf(model, scope, rec) {
+  const anchor = scope && scope.anchorId != null ? model.records[scope.anchorId] : null;
+  return levelTargetOf(model, rec, anchor || null);
+}
+
 // The selected record whose subtree contains rec (rec itself counts), or
 // null. Lets a click or drag on one part act on its selected subassembly.
 export function selectedAncestorOf(selectedIds, rec) {

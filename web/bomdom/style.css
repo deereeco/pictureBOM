@@ -282,8 +282,10 @@ html.theme-transition *::after {
 #main { flex: 1; display: flex; min-height: 0; }
 #viewport { flex: 1; min-width: 0; position: relative; background: var(--bg); }
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
-#gl.is-move { cursor: move; }
+/* Move + assembly can be on together — the later move rule wins then (a drag
+   is the headline gesture), and is-dragging stays last to win during one. */
 #gl.is-assembly { cursor: pointer; }
+#gl.is-move { cursor: move; }
 #gl.is-dragging { cursor: grabbing; }
 #splitter { flex: none; width: 5px; cursor: col-resize; background: var(--border); }
 #splitter:hover { background: var(--accent); }

@@ -211,13 +211,21 @@ export function initInteractions(app) {
       app.assemblyMode = on;
       $('btnAssembly').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-assembly', on);
-      // Measure, move and instructions also own this canvas: one mode at a
-      // time, or the hover preview promises one thing and a drag does another.
+      // Measure and instructions own the canvas's clicks outright: exit them.
+      // Move mode COMPOSES with assembly mode — hover, click and drag all
+      // resolve through the same subassembly unit (M.assemblyUnitOf), so the
+      // preview and the gesture can never disagree.
       if (on && app.measureMode && app.measure) app.measure.toggle();
-      if (on) actions.setMoveMode(false);
       if (on && app.instructions && app.instructions.on) app.instructions.set(false);
-      if (!on) sel.setHover(null);
-      if (on) app.ui.toast('Assembly mode — hover highlights a subassembly, click selects it (A to exit)');
+      // What CANVAS hover resolves to just changed either way — clear a stale
+      // preview so it can't promise the old target until the pointer next
+      // moves. A panel-row hover stays: no mode changes what a row means.
+      if (sel.hover && sel.hover.src === 'canvas') sel.setHover(null);
+      if (on) {
+        app.ui.toast(app.moveMode
+          ? 'Assembly + move — hover shows the subassembly a drag will move (A to exit)'
+          : 'Assembly mode — hover highlights a subassembly, click selects it (A to exit)');
+      }
     },
     snapBack(recs) {
       if (!app.viewer || !app.model) return;
@@ -287,19 +295,23 @@ export function initInteractions(app) {
       $('btnMove').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-move', on);
       if (on) {
-        // One canvas owner at a time: a Move button lit while measure keeps
-        // eating every click is a lit-but-dead mode.
+        // Measure and instructions own the canvas's clicks outright: a Move
+        // button lit while measure keeps eating every click is a lit-but-dead
+        // mode. Assembly mode composes instead (see setAssemblyMode).
         if (app.measureMode && app.measure) app.measure.toggle();
-        actions.setAssemblyMode(false);
         if (app.instructions && app.instructions.on) app.instructions.set(false);
-      } else {
-        sel.setHover(null); // hover preview is a move-mode affordance
       }
+      // Canvas hover resolution changed either way (drag target vs assembly
+      // unit vs nothing) — drop a stale canvas preview; the next pointermove
+      // rebuilds it. Panel-row hover is mode-independent and stays.
+      if (sel.hover && sel.hover.src === 'canvas') sel.setHover(null);
       if (app.triad) app.triad.refresh();
       if (on) {
-        app.ui.toast(sel.selected.size
-          ? 'Move mode — drag the triad to slide or turn, drag a part to move it freely (M to exit)'
-          : 'Move mode — drag parts freely, or select one for the move/rotate triad (M to exit)');
+        app.ui.toast(app.assemblyMode
+          ? 'Move + assembly — drag any part to move its whole subassembly (M to exit)'
+          : sel.selected.size
+            ? 'Move mode — drag the triad to slide or turn, drag a part to move it freely (M to exit)'
+            : 'Move mode — drag parts freely, or select one for the move/rotate triad (M to exit)');
       }
     },
     setEdges(on) {
@@ -778,10 +790,13 @@ export function initInteractions(app) {
 
   function startDrag(ev, hit) {
     const { viewer } = app;
-    // Dragging any part of a selected subassembly moves the subassembly as a
-    // unit; dragging a member of a multi-selection moves the whole selection;
-    // records whose ancestor is also selected ride along with the ancestor.
-    const eff = M.selectedAncestorOf(sel.selected, hit.rec) || hit.rec;
+    // Assembly mode grabs the subassembly unit the hover previews — the same
+    // resolution the click select uses, so drag and highlight always agree.
+    // Then: dragging any part of a selected subassembly moves the subassembly
+    // as a unit; dragging a member of a multi-selection moves the whole
+    // selection; records whose ancestor is also selected ride the ancestor.
+    const base = app.assemblyMode ? M.assemblyUnitOf(app.model, sel.scope, hit.rec) : hit.rec;
+    const eff = M.selectedAncestorOf(sel.selected, base) || base;
     let targets = (sel.selected.has(eff.id) && sel.selected.size > 1)
       ? selectedRecs() : [eff];
     const targetIds = new Set(targets.map((r) => r.id));
@@ -922,7 +937,11 @@ export function initInteractions(app) {
         if (c.z < -1 || c.z > 1) continue; // behind the camera / past far plane
         const px = cr.left + ((c.x + 1) / 2) * cr.width;
         const py = cr.top + ((1 - c.y) / 2) * cr.height;
-        if (px >= minX && px <= maxX && py >= minY && py <= maxY) ids.push(rec.id);
+        if (px < minX || px > maxX || py < minY || py > maxY) continue;
+        // Assembly mode selects units here too — a box over three parts of
+        // one subassembly means the subassembly, matching click and drag.
+        // (sel.selected is a Set, so unit ids landing twice are harmless.)
+        ids.push(app.assemblyMode ? M.assemblyUnitOf(app.model, sel.scope, rec).id : rec.id);
       }
       if (ids.length) sel.select(ids, { additive: true }); // Ctrl semantics: adds
     }
@@ -980,8 +999,13 @@ export function initInteractions(app) {
 
   app.ui.showContextMenu = (x, y, rec) => {
     const items = [];
-    // A click on one part of a selected subassembly means the subassembly.
-    if (rec && app.model) rec = M.selectedAncestorOf(sel.selected, rec) || rec;
+    // Assembly mode: the menu acts on the subassembly unit the hover
+    // highlights, not the leaf part under the cursor. Then a click on one
+    // part of a selected subassembly means the subassembly.
+    if (rec && app.model) {
+      if (app.assemblyMode) rec = M.assemblyUnitOf(app.model, sel.scope, rec);
+      rec = M.selectedAncestorOf(sel.selected, rec) || rec;
+    }
     if (rec) {
       // On a member of the current multi-selection the menu operates on the
       // WHOLE selection (marquee -> right-click -> isolate).
@@ -992,7 +1016,12 @@ export function initInteractions(app) {
       const part = rec.partId !== null ? app.model.partById.get(rec.partId) : null;
       const label = multi ? `${n} selected` : displayName(rec);
       const row = part ? app.bom.rowFor(part) : null;
-      const anyMoved = targets.some((r) => r.flags.moved || r.dragDelta.lengthSq() > 0);
+      // Moved parts anywhere INSIDE the targets: assembly mode resolves the
+      // menu to the unit, but a child displaced on its own must still offer
+      // Snap back — and snapping the unit back must take it home too.
+      const movedIn = [...new Set(targets.flatMap((r) => M.subtree(r)))]
+        .filter((r) => r.flags.moved || r.dragDelta.lengthSq() > 0);
+      const anyMoved = movedIn.length > 0;
       items.push(
         { head: label },
         { label: multi ? `Hide ${n} selected` : 'Hide', onClick: () => actions.hide(targets) },
@@ -1002,9 +1031,9 @@ export function initInteractions(app) {
         { label: multi ? `Isolate ${n} selected (ghost rest)` : 'Isolate (ghost rest)', onClick: () => actions.isolate(targets, true) },
         { label: multi ? `Make ${n} selected transparent` : 'Make transparent', onClick: () => actions.cycleOpacity(targets) },
         { sep: true },
-        { label: 'Move', onClick: () => { actions.setMoveMode(true); app.ui.toast(multi ? 'Move mode on — drag any selected part to move all (M to exit)' : 'Move mode on — drag the part (M to exit)'); } },
+        { label: 'Move', onClick: () => { actions.setMoveMode(true); app.ui.toast(app.assemblyMode ? 'Move mode on — drag moves the whole subassembly (M to exit)' : multi ? 'Move mode on — drag any selected part to move all (M to exit)' : 'Move mode on — drag the part (M to exit)'); } },
         anyMoved
-          ? { label: multi ? `Snap back ${n} selected` : 'Snap back', onClick: () => actions.snapBack(targets) } : null,
+          ? { label: multi ? `Snap back ${n} selected` : 'Snap back', onClick: () => actions.snapBack(movedIn) } : null,
         { sep: true },
         { label: multi ? `Open ${n} selected` : 'Open', onClick: () => actions.open(targets, label) },
         !multi && row && row.vendor_url ? { label: 'Vendor page', href: row.vendor_url } : null,
