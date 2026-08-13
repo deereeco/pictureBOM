@@ -51,8 +51,12 @@ export function initInstructions(app) {
     ownScope: false,         // we opened the isolation scope, so exit closes it
     items: [],
     balloons: [],            // { item, rec, world: Vector3, el }
+    offsets: new Map(),      // balloon key -> {dx,dy} px from the part's anchor
+                             // (user-arranged positions; follow the part while orbiting)
     print: readPrintSettings(),
   };
+  const balloonKey = (b) => b.item.key + '@' + b.rec.id;
+  const OFFSET_LEASH_PX = 260; // a balloon can never be dragged out of leash of its part
 
   // ---- DOM: leader-line layer, chip, list container ----------------------
   const leads = document.createElementNS(SVG_NS, 'svg');
@@ -163,19 +167,27 @@ export function initInstructions(app) {
         const el = document.createElement('div');
         el.className = 'instr-balloon';
         el.textContent = String(item.n);
-        el.title = item.name;
+        el.title = item.name + ' — drag to arrange · Shift+drag moves all · double-click resets';
+        const b = { item, rec, world: unitCenter(rec), el };
         el.addEventListener('pointerenter', () => sel.setHover({ ids: item.recs.map((r) => r.id) }));
         el.addEventListener('pointerleave', () => sel.setHover(null));
-        el.addEventListener('click', () => sel.select(item.recs.map((r) => r.id)));
+        el.addEventListener('click', () => {
+          if (el.dataset.dragged) { delete el.dataset.dragged; return; } // a drag is not a select
+          sel.select(item.recs.map((r) => r.id));
+        });
+        el.addEventListener('dblclick', () => { st.offsets.delete(balloonKey(b)); layoutBalloons(); });
+        el.addEventListener('pointerdown', (ev) => startBalloonDrag(ev, b));
         viewport.appendChild(el);
-        st.balloons.push({ item, rec, world: unitCenter(rec), el });
+        st.balloons.push(b);
       }
     }
     layoutBalloons();
   }
 
   // Balloon sits pushed out from the part along the direction away from the
-  // view center, with a leader line back to the part — the drawing look.
+  // view center — or wherever the user dragged it (offset stored relative to
+  // the part's anchor, so arrangements ride along while orbiting) — with a
+  // leader line back to the part, the drawing look.
   function layoutBalloons() {
     if (!st.on) return;
     leads.replaceChildren();
@@ -192,11 +204,18 @@ export function initInstructions(app) {
         continue;
       }
       b.el.classList.remove('hidden');
-      let dx = p.x - w / 2, dy = p.y - h / 2;
-      const len = Math.hypot(dx, dy);
-      if (len < 1) { dx = 0.7; dy = -0.7; } else { dx /= len; dy /= len; }
-      const bx = p.x + dx * BALLOON_OFFSET_PX;
-      const by = p.y + dy * BALLOON_OFFSET_PX;
+      let bx, by;
+      const custom = st.offsets.get(balloonKey(b));
+      if (custom) {
+        bx = p.x + custom.dx;
+        by = p.y + custom.dy;
+      } else {
+        let dx = p.x - w / 2, dy = p.y - h / 2;
+        const len = Math.hypot(dx, dy);
+        if (len < 1) { dx = 0.7; dy = -0.7; } else { dx /= len; dy /= len; }
+        bx = p.x + dx * BALLOON_OFFSET_PX;
+        by = p.y + dy * BALLOON_OFFSET_PX;
+      }
       b.el.style.left = bx + 'px';
       b.el.style.top = by + 'px';
       const line = document.createElementNS(SVG_NS, 'line');
@@ -213,6 +232,105 @@ export function initInstructions(app) {
       dot.setAttribute('class', 'il-dot');
       leads.appendChild(dot);
     }
+  }
+
+  // ---- arranging balloons ---------------------------------------------------
+  // Drag one balloon, or Shift+drag to slide the whole arrangement together.
+  // Offsets are clamped to a leash so a callout can never lose its part.
+  function startBalloonDrag(ev, b) {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const all = ev.shiftKey;
+    const el = b.el;
+    try { el.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+    const startX = ev.clientX, startY = ev.clientY;
+    const targets = (all ? st.balloons.filter((x) => !x.el.classList.contains('hidden')) : [b])
+      .map((x) => {
+        const p = toViewportPx(x.world);
+        return {
+          b: x,
+          dx: parseFloat(x.el.style.left) - p.x,
+          dy: parseFloat(x.el.style.top) - p.y,
+        };
+      });
+    let moved = false;
+    const onMove = (e) => {
+      const mx = e.clientX - startX, my = e.clientY - startY;
+      if (!moved && Math.hypot(mx, my) <= 3) return;
+      moved = true;
+      el.dataset.dragged = '1'; // the click on release must not select
+      for (const t of targets) {
+        let dx = t.dx + mx, dy = t.dy + my;
+        const len = Math.hypot(dx, dy);
+        if (len > OFFSET_LEASH_PX) {
+          dx *= OFFSET_LEASH_PX / len;
+          dy *= OFFSET_LEASH_PX / len;
+        }
+        st.offsets.set(balloonKey(t.b), { dx, dy });
+      }
+      layoutBalloons();
+      syncChipButtons();
+    };
+    const onUp = () => {
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+    };
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+  }
+
+  // Nudge overlapping balloons apart (simple pairwise repulsion, a few
+  // passes) — results become custom offsets, so Tidy prints as arranged.
+  function tidyBalloons() {
+    const vis = st.balloons.filter((b) => !b.el.classList.contains('hidden'));
+    if (!vis.length) return;
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+    const pos = vis.map((b) => ({
+      b,
+      ax: 0, ay: 0,
+      x: parseFloat(b.el.style.left),
+      y: parseFloat(b.el.style.top),
+    }));
+    for (const p of pos) {
+      const a = toViewportPx(p.b.world);
+      p.ax = a.x;
+      p.ay = a.y;
+    }
+    const MIN = 30; // balloon diameter + breathing room
+    for (let pass = 0; pass < 30; pass++) {
+      let any = false;
+      for (let i = 0; i < pos.length; i++) {
+        for (let j = i + 1; j < pos.length; j++) {
+          let dx = pos[j].x - pos[i].x, dy = pos[j].y - pos[i].y;
+          const d = Math.hypot(dx, dy);
+          if (d >= MIN) continue;
+          any = true;
+          if (d < 1e-3) { dx = (i % 2 ? 1 : -1); dy = 1; }
+          const push = (MIN - Math.max(d, 1e-3)) / 2;
+          const len = Math.hypot(dx, dy);
+          pos[i].x -= (dx / len) * push;
+          pos[i].y -= (dy / len) * push;
+          pos[j].x += (dx / len) * push;
+          pos[j].y += (dy / len) * push;
+        }
+      }
+      if (!any) break;
+    }
+    for (const p of pos) {
+      let dx = Math.min(Math.max(p.x, 16), w - 16) - p.ax;
+      let dy = Math.min(Math.max(p.y, 16), h - 16) - p.ay;
+      const len = Math.hypot(dx, dy);
+      if (len > OFFSET_LEASH_PX) {
+        dx *= OFFSET_LEASH_PX / len;
+        dy *= OFFSET_LEASH_PX / len;
+      }
+      st.offsets.set(balloonKey(p.b), { dx, dy });
+    }
+    layoutBalloons();
+    syncChipButtons();
   }
 
   // ---- checklist (right panel, Parts tab) ---------------------------------
@@ -341,6 +459,24 @@ export function initInstructions(app) {
       chip.appendChild(restore);
     }
 
+    const tidy = document.createElement('button');
+    tidy.textContent = 'Tidy';
+    tidy.title = 'Nudge overlapping balloons apart';
+    tidy.addEventListener('click', () => tidyBalloons());
+    chip.appendChild(tidy);
+
+    const resetB = document.createElement('button');
+    resetB.className = 'ic-reset-balloons';
+    resetB.textContent = 'Reset balloons';
+    resetB.title = 'Put every balloon back at its automatic spot';
+    resetB.classList.toggle('hidden', !st.offsets.size);
+    resetB.addEventListener('click', () => {
+      st.offsets.clear();
+      layoutBalloons();
+      syncChipButtons();
+    });
+    chip.appendChild(resetB);
+
     const setup = document.createElement('button');
     setup.textContent = 'Page setup ▾';
     setup.addEventListener('click', (ev) => { ev.stopPropagation(); togglePageSetup(); });
@@ -361,6 +497,12 @@ export function initInstructions(app) {
     exit.title = 'Exit instructions (Esc)';
     exit.addEventListener('click', () => set(false));
     chip.appendChild(exit);
+  }
+
+  // "Reset balloons" only earns its chip slot once something was arranged.
+  function syncChipButtons() {
+    const btn = chip.querySelector('.ic-reset-balloons');
+    if (btn) btn.classList.toggle('hidden', !st.offsets.size);
   }
 
   // ---- page setup popover ---------------------------------------------------
@@ -612,7 +754,7 @@ export function initInstructions(app) {
           ? (M.instanceLabel(roots[0].name) || 'selection') : `${roots.length} selected`);
       }
       rebuild();
-      app.ui.toast('Instruction mode — balloons match the numbered list; Print / PDF is in the chip (Esc to exit)');
+      app.ui.toast('Instructions — drag balloons to arrange (Shift+drag moves all); Print / PDF is in the chip (Esc to exit)');
     } else {
       setupPop.classList.add('hidden');
       clearBalloons();
@@ -647,6 +789,7 @@ export function initInstructions(app) {
     st.flattenSet.clear();
     st.flattenAll = false;
     st.checked.clear();
+    st.offsets.clear(); // keyed by per-model record ids
     if (st.on) set(false);
   });
   viewer.onCameraChange(() => { if (st.on) layoutBalloons(); });
