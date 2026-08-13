@@ -20,13 +20,17 @@ const ONE_PAGE_COL_LIMIT = 2;   // more optional columns than this -> list start
 const PRINT_KEY = 'picturebom-bomdom-instr-print';
 
 function readPrintSettings() {
-  const def = { orient: 'landscape', layout: 'one', cols: { desc: true, vendor: false, thumb: true } };
+  const def = {
+    orient: 'landscape', layout: 'one', assembled: true,
+    cols: { desc: true, vendor: false, thumb: true },
+  };
   try {
     const s = JSON.parse(localStorage.getItem(PRINT_KEY) || 'null');
     if (!s) return def;
     return {
       orient: s.orient === 'portrait' ? 'portrait' : 'landscape',
       layout: s.layout === 'split' ? 'split' : 'one',
+      assembled: s.assembled !== false,
       cols: { desc: !!(s.cols && s.cols.desc), vendor: !!(s.cols && s.cols.vendor), thumb: !!(s.cols && s.cols.thumb) },
     };
   } catch { return def; }
@@ -631,6 +635,7 @@ export function initInstructions(app) {
     head('Layout');
     radio('icLayout', 'one', p.layout === 'one', 'Everything on one page when it fits', (v) => { p.layout = v; });
     radio('icLayout', 'split', p.layout !== 'one', 'View on page 1, list follows', (v) => { p.layout = v; });
+    check('"Finished assembly" inset (when exploded)', p.assembled, (v) => { p.assembled = v; });
     head('List columns');
     check('Pictures', p.cols.thumb, (v) => { p.cols.thumb = v; });
     check('Description', p.cols.desc, (v) => { p.cols.desc = v; });
@@ -711,6 +716,31 @@ export function initInstructions(app) {
     return out.toDataURL('image/png');
   }
 
+  // The "finished assembly" inset: the same camera with the explode silently
+  // collapsed — no events fire (measurements must not stale-flap), the pose
+  // is reapplied bit-exactly, and the explode trails sit the shot out.
+  function captureAssembled() {
+    const model = app.model;
+    const f = model.explodeF;
+    const trailsGroup = viewer.scene.children.find((c) => c.name === 'bomdom-explode-trails');
+    const trailsWere = trailsGroup ? trailsGroup.visible : false;
+    if (trailsGroup) trailsGroup.visible = false;
+    M.applyPositions(model, 0);
+    const prevBg = viewer.scene.background;
+    viewer.scene.background = new THREE.Color('#ffffff');
+    viewer.renderer.render(viewer.scene, viewer.camera);
+    const gl = viewer.renderer.domElement;
+    const out = document.createElement('canvas');
+    out.width = gl.width;
+    out.height = gl.height;
+    out.getContext('2d').drawImage(gl, 0, 0);
+    viewer.scene.background = prevBg;
+    if (trailsGroup) trailsGroup.visible = trailsWere;
+    M.applyPositions(model, f);
+    invalidate();
+    return out.toDataURL('image/png');
+  }
+
   async function printInstructions() {
     if (!st.items.length) { app.ui.toast('Nothing visible to print'); return; }
     const p = st.print;
@@ -747,6 +777,22 @@ export function initInstructions(app) {
     img.src = captureBallooned();
     img.alt = '';
     fig.appendChild(img);
+    // Exploded sheets get a small "this is what it should look like" inset —
+    // the same camera with the explode collapsed (Dominic's IKEA instinct).
+    let insetImg = null;
+    if (p.assembled && app.model.explodeF > 0.01) {
+      const inset = document.createElement('div');
+      inset.className = 'ip-inset';
+      insetImg = document.createElement('img');
+      insetImg.src = captureAssembled();
+      insetImg.alt = '';
+      inset.appendChild(insetImg);
+      const cap = document.createElement('div');
+      cap.className = 'ip-inset-cap';
+      cap.textContent = 'Finished assembly';
+      inset.appendChild(cap);
+      fig.appendChild(inset);
+    }
     body.appendChild(fig);
 
     const listWrap = document.createElement('div');
@@ -816,7 +862,10 @@ export function initInstructions(app) {
     // not DECODED yet prints as an empty box (Dominic hit exactly this). Wait
     // for the decode, and always clean up — the @page rule and the sheet's
     // class must not leak into the order-sheet export or a plain Ctrl+P.
-    try { await img.decode(); } catch (e) { /* decode is best-effort */ }
+    try {
+      await img.decode();
+      if (insetImg) await insetImg.decode();
+    } catch (e) { /* decode is best-effort */ }
     try {
       window.print();
     } finally {

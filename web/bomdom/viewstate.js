@@ -52,7 +52,9 @@ export function initViewState(app) {
       },
       explode: {
         f: model.explodeF,
-        cfg: { ...app.explodeCfg },
+        // The APPLIED setup, never the popover's half-edited state: radios
+        // changed without pressing Apply must not poison the saved file.
+        cfg: app.actions.getAppliedExplodeCfg(),
         trails: !!app.explodeTrailsOn,
       },
       records: recs,
@@ -75,44 +77,60 @@ export function initViewState(app) {
       return false;
     }
 
-    // Clean slate, then pose. Order matters: flags before scope/explode
-    // (their recomputes read effective visibility), camera after framing
-    // side effects, instructions last (they read everything). Any snap-back
-    // still animating (a reset moments ago) is orphaned first, or it would
-    // keep lerping the restored pose back toward zero.
+    // A live gesture would keep writing the pre-restore pose from its stale
+    // drag snapshots the moment the pointer moves again.
+    if (app.triad && app.triad.dragging()) app.triad.cancelDrag();
+    if (app.dragging) { app.ui.toast('Finish the drag first, then drop the view'); return false; }
+
+    // Only real, validated record ids touch the model — a hand-edited file
+    // with "map"/"__proto__" ids must refuse cleanly, not crash mid-restore.
+    const recAt = (i) => (Number.isInteger(i) && i >= 0 && i < model.records.length
+      ? model.records[i] : null);
+
+    // Clean slate, then pose. Order matters: appearance flags first (scope
+    // and explode recomputes read effective visibility), explode BEFORE the
+    // drag offsets are restored (unit centers must be measured at true home,
+    // matching how the vectors were computed when the view was made), camera
+    // after all framing side effects, instructions last (they read
+    // everything). Any snap-back still animating is orphaned first, or it
+    // would keep lerping the restored pose back toward zero.
     M.cancelPoseTweens(model);
     if (app.instructions && app.instructions.on) app.instructions.set(false);
     sel.clearSelection();
     sel.setScope(null);
+    if (app.ui.clearFilters) app.ui.clearFilters(); // same clean slate resetAll uses
     M.resetAppearance(model);
     for (const rec of model.records) {
       rec.dragDelta.set(0, 0, 0);
       rec.dragQuat.identity();
       rec.flags.moved = false;
+      // applyPositions skips untouched records, so anything displaced BEFORE
+      // this restore must be put home explicitly (bit-exact copies, the same
+      // values applyPositions writes at rest).
+      rec.object.position.copy(rec.homePos);
+      rec.object.quaternion.copy(rec.homeQuat);
     }
     for (const e of v.records || []) {
-      const rec = model.records[e.i];
+      const rec = recAt(e.i);
       if (!rec) continue;
       if (e.h) rec.flags.hidden = true;
       if (e.g) rec.flags.ghost = true;
-      if (e.o !== undefined) rec.flags.opacity = e.o;
-      if (e.d) rec.dragDelta.fromArray(e.d);
-      if (e.q) rec.dragQuat.fromArray(e.q);
-      M.refreshMovedFlag(rec);
+      if (typeof e.o === 'number') rec.flags.opacity = e.o;
     }
     app.events.emit('appearance'); // updateVisuals: flags -> object.visible
 
     if (v.scope) {
-      if (v.scope.anchorId != null && model.records[v.scope.anchorId]) {
+      const anchorRec = recAt(v.scope.anchorId);
+      if (anchorRec) {
         sel.setScope({
           label: v.scope.label || 'saved view',
-          recIds: M.scopeSetFor([model.records[v.scope.anchorId]]),
-          anchorId: v.scope.anchorId,
+          recIds: M.scopeSetFor([anchorRec]),
+          anchorId: anchorRec.id,
         });
       } else if (Array.isArray(v.scope.recIds)) {
         sel.setScope({
           label: v.scope.label || 'saved view',
-          recIds: new Set(v.scope.recIds.filter((id) => model.records[id])),
+          recIds: new Set(v.scope.recIds.filter((id) => recAt(id))),
           anchorId: null,
         });
       }
@@ -120,6 +138,22 @@ export function initViewState(app) {
 
     const ex = v.explode || {};
     app.actions.applyExplodeState(ex.cfg || {}, ex.f || 0);
+
+    // Now the hand-moves, composed on top of the freshly computed explode.
+    let anyMoved = false;
+    for (const e of v.records || []) {
+      const rec = recAt(e.i);
+      if (!rec || (!e.d && !e.q)) continue;
+      if (Array.isArray(e.d) && e.d.length === 3 && e.d.every(Number.isFinite)) {
+        rec.dragDelta.fromArray(e.d);
+      }
+      if (Array.isArray(e.q) && e.q.length === 4 && e.q.every(Number.isFinite)) {
+        rec.dragQuat.fromArray(e.q);
+      }
+      M.refreshMovedFlag(rec);
+      anyMoved = true;
+    }
+    if (anyMoved) M.applyPositions(model, model.explodeF);
     if (app.trails) app.trails.set(!!ex.trails);
 
     // Camera last among the 3D bits — scope/explode paths reframe on their

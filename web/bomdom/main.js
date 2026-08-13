@@ -253,7 +253,16 @@ function setupDropZone() {
   };
 
   $('btnBrowseGlb').addEventListener('click', () => $('glbFileInput').click());
-  $('glbFileInput').addEventListener('change', (ev) => takeFile(ev.target.files[0]));
+  $('glbFileInput').addEventListener('change', (ev) => {
+    const f = ev.target.files[0];
+    // The Browse flow has no drop event for viewstate to catch — route saved
+    // views from here, or picking one would be silently swallowed.
+    if (f && /\.json$/i.test(f.name) && app.viewstate) {
+      app.viewstate.restoreFile(f);
+      return;
+    }
+    takeFile(f);
+  });
 
   const viewport = $('viewport');
   for (const evName of ['dragover', 'dragenter']) {
