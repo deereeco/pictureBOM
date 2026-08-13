@@ -53,7 +53,11 @@ export function initTrails(app) {
     }
     const pts = [];
     for (const rec of model.records) {
-      if (rec.explodeVec.lengthSq() === 0 || !rec.object.visible) continue;
+      // Effective visibility from selection state: object.visible is only
+      // stamped on hidden subtree ROOTS (descendants keep a stale true), and
+      // may not be repainted yet when an event reaches us.
+      if (rec.explodeVec.lengthSq() === 0
+        || M.isEffectivelyHidden(rec, app.sel.scope, app.sel.filter)) continue;
       // Pure explode displacement in world space: where the unit's origin is
       // now vs. where it would rest with the explode collapsed (user drags
       // and rotations stay in both endpoints, so trails track moved parts).
@@ -81,6 +85,28 @@ export function initTrails(app) {
     invalidate();
   }
 
+  // Throttled rebuild: 'appearance' fires every ~12ms during lazy edge
+  // builds and 'positions-live' on every scrub frame — rebuilding whole
+  // geometry that often is pure churn. Rebuild at most every 50ms with one
+  // trailing rebuild so the final state is always exact.
+  let lastRebuild = 0;
+  let rebuildTimer = 0;
+  function requestRebuild() {
+    if (!app.explodeTrailsOn && !lines) return; // nothing shown, nothing to clear
+    const now = performance.now();
+    if (now - lastRebuild > 50) {
+      lastRebuild = now;
+      rebuild();
+      return;
+    }
+    if (rebuildTimer) return;
+    rebuildTimer = setTimeout(() => {
+      rebuildTimer = 0;
+      lastRebuild = performance.now();
+      rebuild();
+    }, 60);
+  }
+
   app.explodeTrailsOn = false; // Dominic's call: hidden by default, they get messy
   app.trails = {
     set(on) {
@@ -90,8 +116,9 @@ export function initTrails(app) {
     refresh: rebuild,
   };
 
-  app.events.on('positions', rebuild);
-  app.events.on('positions-live', rebuild);
-  app.events.on('appearance', rebuild); // hide/isolate changes which units show
+  app.events.on('positions', requestRebuild);
+  app.events.on('positions-live', requestRebuild);
+  app.events.on('appearance', requestRebuild); // hide/isolate changes which units show
+  app.events.on('filter', requestRebuild); // facet filters change visibility too
   app.events.on('model', () => { clear(); invalidate(); });
 }

@@ -378,28 +378,29 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 // null cfg / null fields use computed defaults. The anchor instance (default:
 // largest bounding volume, usually the base plate) never moves. scopeAnchor:
 // explode WITHIN that open subassembly (its children become the moving units)
-// instead of the assembly's top level.
-export function computeExplodeVectors(model, cfg, scopeAnchor = null) {
+// instead of the assembly's top level. isHidden: effective-visibility
+// predicate (rec) => bool — computed from selection state, NOT object.visible,
+// because event handlers may run before updateVisuals has repainted the flags.
+export function computeExplodeVectors(model, cfg, scopeAnchor = null, isHidden = null) {
   const mode = (cfg && cfg.mode) || model.defaultExplodeMode || 'radial';
   const spread = (cfg && cfg.spread) || 'both';
   const planeName = (cfg && cfg.plane) || model.defaultExplodePlane || 'free';
   const internalFactor = { none: 0, light: 0.4, full: 1 }[(cfg && cfg.internal) || 'light'];
+  const hidden = isHidden || (() => false);
   const diag = model.diagLen;
 
   // Centers must be measured at home positions.
   const f = model.explodeF;
   if (f) applyPositions(model, 0);
-  for (const rec of model.records) rec.explodeVec.set(0, 0, 0);
 
   const box = new THREE.Box3();
   const info = [];
   // Units the user cannot see sit the explode out: hidden parts used to fly
   // invisibly, skew the distance normalization, and even win the auto-anchor
-  // pick. object.visible is the effective visibility updateVisuals resolved
-  // from hide flags, scope and facet filters.
+  // pick.
   const units = scopeAnchor ? scopeAnchor.children : topRecs(model);
   for (const rec of units) {
-    if (!rec.object.visible) continue;
+    if (hidden(rec)) continue;
     box.setFromObject(rec.object);
     if (box.isEmpty()) continue;
     const size = box.getSize(new THREE.Vector3());
@@ -410,9 +411,13 @@ export function computeExplodeVectors(model, cfg, scopeAnchor = null) {
     });
   }
   if (!info.length) {
+    // Nothing visible to explode (a leaf scope, everything hidden): keep the
+    // previous vectors and sequencing rather than silently wiping an active
+    // explode out from under the slider.
     if (f) applyPositions(model, f);
     return;
   }
+  for (const rec of model.records) rec.explodeVec.set(0, 0, 0);
 
   let anchorInfo = null;
   if (cfg && cfg.anchorRecId != null && model.records[cfg.anchorRecId]) {
@@ -525,6 +530,35 @@ export function refreshMovedFlag(rec) {
 // Each unit's share of the slider range in sequenced mode; windows overlap
 // so the play-out flows instead of stuttering.
 const SEQ_WINDOW = 0.45;
+
+// Whether the explode is actually displacing this record right now — in
+// sequenced mode a unit whose window hasn't started yet is bit-exactly at
+// home, so measurements on it are still valid.
+export function explodeEngaged(model, rec) {
+  if (rec.explodeVec.lengthSq() === 0) return false;
+  const fc = Math.max(0, Math.min(1, model.explodeF));
+  if (fc <= 0) return false;
+  if (!model.explodeSeq) return true;
+  return (fc - rec.seqT * (1 - SEQ_WINDOW)) / SEQ_WINDOW > 0;
+}
+
+// World bounds of everything effectively visible (hide flags + scope +
+// facet filter, resolved from selection state so it is correct even before
+// updateVisuals repaints object.visible). Empty box when nothing shows.
+export function visibleBounds(model, scope, filter) {
+  const box = new THREE.Box3();
+  const one = new THREE.Box3();
+  for (const rec of model.records) {
+    if (!rec.meshes.length || isEffectivelyHidden(rec, scope, filter)) continue;
+    for (const mesh of rec.meshes) {
+      if (!mesh.geometry) continue;
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      one.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+      box.union(one);
+    }
+  }
+  return box;
+}
 
 export function applyPositions(model, f) {
   model.explodeF = f;

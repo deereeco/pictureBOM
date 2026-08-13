@@ -99,23 +99,28 @@ export function initInteractions(app) {
   app.edgesOn = readStoredEdges();
   app.renderStyle = readStoredStyle();
 
-  // The orbit pivot follows what you can SEE: hiding a big plate must not
-  // leave the camera turning around its ghost. Re-targets the controls to the
-  // visible-bounds center with a short glide; the camera itself stays put.
+  // The orbit pivot follows what you can SEE — but only when it has to.
+  // Rule: if the current pivot still sits inside (a slightly padded) box of
+  // the visible parts, the user's framing is respected and nothing moves;
+  // only when what they were orbiting is gone (isolate elsewhere, hide the
+  // thing under the pivot, hide-others filter) does the pivot glide to the
+  // new visible center. Bounds come from selection state, not
+  // object.visible, so event ordering vs updateVisuals cannot bite.
   let pivotToken = null;
   function retargetOrbit() {
     if (!app.viewer || !app.model) return;
     app.model.root.updateWorldMatrix(true, true);
-    const pts = M.pointsOfRecs(app.model.rootRecs); // visible meshes only
-    if (!pts.length) return; // everything hidden: keep the old pivot
-    const center = new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3());
+    const box = M.visibleBounds(app.model, sel.scope, sel.filter);
+    if (box.isEmpty()) return; // everything hidden: keep the old pivot
     const from = app.viewer.controls.target.clone();
+    if (box.clone().expandByScalar(app.model.diagLen * 0.05).containsPoint(from)) return;
+    const center = box.getCenter(new THREE.Vector3());
     if (center.distanceTo(from) < app.model.diagLen * 1e-3) return;
     const token = pivotToken = {};
     app.viewer.addTween({
       duration: 220,
       update: (k) => {
-        if (pivotToken !== token) return; // a newer retarget took over
+        if (pivotToken !== token) return; // a newer retarget (or a frame) took over
         // controls is a getter (rebuilt on up-axis changes) — re-read it.
         app.viewer.controls.target.copy(from).lerp(center, k);
         app.viewer.controls.update();
@@ -132,15 +137,19 @@ export function initInteractions(app) {
     const newly = recs.filter((r) => !r.flags.hidden);
     if (newly.length) hideHistory.push(newly);
   };
+  // Visibility changed: the explode redistributes over what's left (a
+  // re-shown part must rejoin the flown cloud, not sit at home inside it),
+  // THEN the pivot re-checks its containment against the new positions.
+  const afterVisibilityChange = () => { reexplodeForView(); retargetOrbit(); };
   const actions = {
-    hide(recs) { pushHideUndo(recs); M.setHidden(recs, true); refresh(); retargetOrbit(); },
-    show(recs) { M.setHidden(recs, false); refresh(); retargetOrbit(); },
+    hide(recs) { pushHideUndo(recs); M.setHidden(recs, true); refresh(); afterVisibilityChange(); },
+    show(recs) { M.setHidden(recs, false); refresh(); afterVisibilityChange(); },
     toggleHidden(recs) {
       const anyVisible = recs.some((r) => !r.flags.hidden);
       if (anyVisible) pushHideUndo(recs);
       M.setHidden(recs, anyVisible);
       refresh();
-      retargetOrbit();
+      afterVisibilityChange();
     },
     unhideLast() {
       // Batches whose parts were re-shown some other way are stale: skip.
@@ -149,7 +158,7 @@ export function initInteractions(app) {
         if (!batch.length) continue;
         M.setHidden(batch, false);
         refresh();
-        retargetOrbit();
+        afterVisibilityChange();
         const rec = batch[0];
         const part = rec.partId !== null ? app.model.partById.get(rec.partId) : null;
         const name = part ? (part.bom_name || part.name) : (M.cleanName(rec.name) || 'part');
@@ -163,10 +172,11 @@ export function initInteractions(app) {
       if (!app.model || !recs.length) return;
       M.isolate(app.model, recs, !!ghostRest);
       refresh();
-      retargetOrbit();
+      afterVisibilityChange();
     },
     frame(recs) {
       if (!app.viewer || !app.model) return;
+      pivotToken = null; // an explicit framing beats any in-flight pivot glide
       const target = recs && recs.length ? recs : app.model.rootRecs;
       app.model.root.updateWorldMatrix(true, true);
       const pts = M.pointsOfRecs(target);
@@ -303,9 +313,11 @@ export function initInteractions(app) {
   app.events.on('model', () => {
     hideHistory.length = 0;
     // Record ids are per-model: a kept anchor would silently resolve to an
-    // arbitrary record in the new graph. The slider DOM also kept its old
-    // value across re-drops while the new model loaded collapsed.
+    // arbitrary record in the new graph — in the pending cfg AND in the
+    // applied snapshot view-driven recomputes read. The slider DOM also kept
+    // its old value across re-drops while the new model loaded collapsed.
     app.explodeCfg.anchorRecId = null;
+    appliedExplodeCfg = { ...app.explodeCfg };
     slider.value = '0';
     // Unguarded on purpose: on a re-drop, loadModel already nulled the scope
     // silently (before framing), so this emit is what actually hides the
@@ -333,19 +345,27 @@ export function initInteractions(app) {
     actions.frame(null);
   });
 
+  // Only one explode tween may drive the slider at a time: the tween loop
+  // runs older tweens last, so without the token a Collapse pressed during
+  // the 1.6s sequenced play-out would lose to the still-running Apply tween
+  // and the model would end fully exploded against the user's wishes.
+  let explodeTweenToken = null;
   function tweenExplodeTo(target, duration = 500) {
     if (!app.model || !app.viewer) return;
     const from = app.model.explodeF;
     if (Math.abs(target - from) < 1e-3) return;
+    const token = explodeTweenToken = {};
     app.viewer.addTween({
       duration,
       update: (k) => {
+        if (explodeTweenToken !== token) return; // superseded
         const f = from + (target - from) * k;
         slider.value = String(f);
         M.applyPositions(app.model, f);
         app.events.emit('positions-live');
       },
       done: () => {
+        if (explodeTweenToken !== token) return;
         app.events.emit('positions');
         actions.frame(null);
       },
@@ -357,6 +377,10 @@ export function initInteractions(app) {
     anchorRecId: null, mode: null, plane: null, spread: 'both',
     internal: 'light', sequenced: false,
   };
+  // Recomputes triggered by view changes (scope, hide/show, filters) must use
+  // the last APPLIED setup, not half-edited popover state the user never
+  // confirmed with Apply.
+  let appliedExplodeCfg = { ...app.explodeCfg };
   const explodeMenu = $('explodeMenu');
 
   // Explode acts on what you're viewing: with an "Open" scope on a
@@ -365,16 +389,23 @@ export function initInteractions(app) {
     return sel.scope && sel.scope.anchorId != null && app.model
       ? app.model.records[sel.scope.anchorId] : null;
   }
-  // Entering or leaving a scope while exploded: recompute for the new units,
-  // or the old top-level vectors keep flying parts the user just zoomed away
-  // from (and the scoped subassembly stays rigid).
-  app.events.on('scope', () => {
-    if (!app.model || app.model.explodeF < 0.01) return;
-    M.computeExplodeVectors(app.model, app.explodeCfg, scopeAnchorRec());
-    M.applyPositions(app.model, app.model.explodeF);
-    app.events.emit('positions');
-    invalidate();
-  });
+  // Effective visibility from selection state — correct even when this
+  // handler runs before updateVisuals repaints object.visible.
+  const effHidden = (rec) => M.isEffectivelyHidden(rec, sel.scope, sel.filter);
+
+  // The visible set changed (scope, hide/show, facet filter): the moving
+  // units and their spacing are stale. Recompute with the applied setup; if
+  // parts are currently flown, reposition them under the same slider value.
+  function reexplodeForView() {
+    if (!app.model) return;
+    M.computeExplodeVectors(app.model, appliedExplodeCfg, scopeAnchorRec(), effHidden);
+    if (app.model.explodeF >= 0.01) {
+      M.applyPositions(app.model, app.model.explodeF);
+      app.events.emit('positions');
+      invalidate();
+    }
+  }
+  app.events.on('scope', reexplodeForView);
 
   function anchorName() {
     const id = app.explodeCfg.anchorRecId;
@@ -538,7 +569,8 @@ export function initInteractions(app) {
 
   function applyExplodeCfg() {
     if (!app.model) return;
-    M.computeExplodeVectors(app.model, app.explodeCfg, scopeAnchorRec());
+    appliedExplodeCfg = { ...app.explodeCfg }; // this setup is now the applied one
+    M.computeExplodeVectors(app.model, app.explodeCfg, scopeAnchorRec(), effHidden);
     if (app.model.explodeF < 0.05) {
       // Sequenced mode plays the whole range through, one unit at a time —
       // give it the time and the distance to read as a play-out.
@@ -565,8 +597,11 @@ export function initInteractions(app) {
   app.ui.anchorPicked = (rec) => {
     exitAnchorPick();
     if (rec && app.model) {
-      const top = M.topAncestorOf(app.model, rec);
-      if (top) app.explodeCfg.anchorRecId = top.id;
+      // Store the raw pick: computeExplodeVectors walks UP from it to find
+      // the containing unit, which works both unscoped (top-level ancestor)
+      // and inside an open subassembly (pre-resolving to the top ancestor
+      // here would overshoot the scoped units and the pick would be ignored).
+      app.explodeCfg.anchorRecId = rec.id;
     } else {
       app.ui.toast('No part there — anchor unchanged');
     }
@@ -940,7 +975,7 @@ export function initInteractions(app) {
       );
     } else {
       items.push(
-        { label: 'Show all', onClick: () => { if (app.model) { M.resetAppearance(app.model); refresh(); } } },
+        { label: 'Show all', onClick: () => { if (app.model) { M.resetAppearance(app.model); refresh(); afterVisibilityChange(); } } },
         { label: 'Reset positions', onClick: () => actions.resetPositions() },
         { label: 'Reset all', onClick: () => actions.resetAll() },
       );
@@ -948,8 +983,10 @@ export function initInteractions(app) {
     app.ui.showMenu(x, y, items);
   };
 
-  // Facet filters change what's visible too — same pivot rule as hiding.
-  app.events.on('filter', retargetOrbit);
+  // Facet filters change what's visible too — same explode + pivot rules as
+  // hiding. (colorBy also emits 'filter' with no visibility change; the
+  // containment guard and the info-empty keep-vectors path make it a no-op.)
+  app.events.on('filter', afterVisibilityChange);
 
   // ---- scope chip ------------------------------------------------------
   app.events.on('scope', (scope) => {
