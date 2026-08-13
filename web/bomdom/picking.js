@@ -57,35 +57,40 @@ export function initPicking(app) {
     return levelTargetOf(app.model, rec, anchor || null);
   }
 
-  // ---- assembly / move-mode hover (one raycast per frame at most) --------
+  // ---- assembly / move / anchor-pick hover (one raycast per frame at most)
   // Assembly mode previews the subassembly a click would select; move mode
   // previews the exact drag target (the part, or its selected subassembly /
-  // whole selection — the same resolution the drag itself uses).
-  const hoverModeOn = () => app.assemblyMode || app.moveMode;
+  // whole selection — the same resolution the drag itself uses); explode's
+  // anchor picking previews the UNIT a click would anchor.
+  const hoverModeOn = () => app.assemblyMode || app.moveMode || app.anchorPickMode;
   let hoverEv = null;
   let hoverRaf = 0;
   canvas.addEventListener('pointermove', (ev) => {
     if (!hoverModeOn()) return;
-    if (app.measureMode || app.anchorPickMode || app.dragging || ev.buttons !== 0) return;
+    if (app.measureMode || app.dragging || ev.buttons !== 0) return;
     hoverEv = ev;
     if (hoverRaf) return;
     hoverRaf = requestAnimationFrame(() => {
       hoverRaf = 0;
       if (!hoverEv || !hoverModeOn() || app.dragging) return;
-      if (app.measureMode || app.anchorPickMode) return; // engaged since scheduling
+      if (app.measureMode) return; // engaged since scheduling
       // Pre-BVH raycasts are brute-force triangle walks — per-frame casts
       // would fight the BVH build for the main thread on big models.
       if (!app.model || !app.model.bvhReady) return;
       // The triad rides above the parts: hovering one of its handles must not
-      // tint whatever part happens to sit behind it.
-      if (!app.assemblyMode && app.triad && app.triad.hitTest(hoverEv)) {
+      // tint whatever part happens to sit behind it. (Anchor picking ignores
+      // the gizmo entirely — its click does too.)
+      if (!app.assemblyMode && !app.anchorPickMode
+          && app.triad && app.triad.hitTest(hoverEv)) {
         app.sel.setHover(null);
         return;
       }
       const hit = pick(hoverEv);
       if (!hit) { app.sel.setHover(null); return; }
       let ids;
-      if (app.assemblyMode) {
+      if (app.anchorPickMode || app.assemblyMode) {
+        // Both resolve to the unit one level below the open scope (or the
+        // top level) — for anchor picking that is exactly what stays fixed.
         ids = [assemblyTarget(hit.rec).id];
       } else {
         const eff = selectedAncestorOf(app.sel.selected, hit.rec) || hit.rec;

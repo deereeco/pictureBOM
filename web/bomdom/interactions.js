@@ -590,11 +590,12 @@ export function initInteractions(app) {
     closeMenus();
     app.anchorPickMode = true;
     canvas.classList.add('is-pick');
-    app.ui.toast('Click the part that stays fixed (Esc to cancel)');
+    app.ui.toast('Click the part that stays fixed — the highlight shows what will anchor (Esc to cancel)');
   }
   function exitAnchorPick() {
     app.anchorPickMode = false;
     canvas.classList.remove('is-pick');
+    sel.setHover(null); // the anchor-preview highlight must not outlive the pick
   }
   app.ui.anchorPicked = (rec) => {
     exitAnchorPick();
