@@ -1134,6 +1134,104 @@ html.theme-transition *::after {
     white-space: nowrap;
 }
 
+/* ---------- instruction mode ---------- */
+.instr-leads { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.instr-leads .il-line { stroke: var(--accent); stroke-width: 1.3; }
+.instr-leads .il-dot { fill: var(--accent); }
+.instr-balloon {
+    position: absolute;
+    z-index: 6;
+    transform: translate(-50%, -50%);
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1.8px solid var(--accent);
+    color: var(--accent);
+    font: 700 12px "Cascadia Code", Consolas, monospace;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+}
+.instr-balloon { cursor: grab; touch-action: none; user-select: none; }
+.instr-balloon:hover { background: var(--accent-tint); }
+.instr-balloon:active { cursor: grabbing; }
+.instr-chip {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 6px 12px;
+    box-shadow: var(--shadow);
+    font-size: 12.5px;
+    white-space: nowrap;
+}
+.instr-chip .ic-title { font-weight: 650; color: var(--accent); }
+.instr-chip label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.instr-chip button {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    border-radius: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.instr-chip button:hover { border-color: var(--accent); color: var(--accent); }
+.instr-chip .ic-print { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.instr-chip .ic-note { color: var(--text-muted); font-size: 11px; }
+.instr-chip .ic-note:empty { display: none; }
+.instr-setup-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: min(360px, 92vw);
+}
+.instr-setup-card .pop-actions { margin-top: 12px; }
+.instr-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+}
+.instr-row:hover, .instr-row.is-hover { background: var(--accent-tint); }
+.instr-row.is-selected { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
+.instr-row.is-checked .part-no { text-decoration: line-through; color: var(--text-muted); }
+.instr-num {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1.5px solid var(--accent);
+    color: var(--accent);
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 700 11px "Cascadia Code", Consolas, monospace;
+}
+.instr-check { accent-color: var(--accent); flex: none; }
+.instr-flatten {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.instr-flatten:hover { border-color: var(--accent); color: var(--accent); }
+
 /* ---------- print ---------- */
 #printSheet { display: none; }
 @media print {
@@ -1155,4 +1253,13 @@ html.theme-transition *::after {
     #printSheet img { width: 34pt; height: 34pt; object-fit: contain; }
     #printSheet .ordered-box { font-size: 12pt; text-align: center; }
     #printSheet tr { break-inside: avoid; }
+    /* Instruction sheet: ballooned view + numbered checklist. */
+    #printSheet.instr-print .ip-body { display: block; }
+    #printSheet.instr-print.is-onepage .ip-body { display: flex; gap: 14pt; align-items: flex-start; }
+    #printSheet.instr-print.is-onepage .ip-view { flex: 1.25; }
+    #printSheet.instr-print.is-onepage .ip-list { flex: 1; }
+    #printSheet.instr-print .ip-view img { width: 100%; height: auto; border: 0.5pt solid #999; }
+    #printSheet.instr-print .ip-break { break-before: page; }
+    #printSheet.instr-print .ip-num { font-weight: 700; text-align: center; }
+    #printSheet.instr-print td img { width: 26pt; height: 26pt; object-fit: contain; }
 }

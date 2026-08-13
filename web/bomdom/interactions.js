@@ -211,10 +211,11 @@ export function initInteractions(app) {
       app.assemblyMode = on;
       $('btnAssembly').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-assembly', on);
-      // Measure and move also own hover + click on this canvas: one mode at
-      // a time, or the hover preview promises one thing and a drag does another.
+      // Measure, move and instructions also own this canvas: one mode at a
+      // time, or the hover preview promises one thing and a drag does another.
       if (on && app.measureMode && app.measure) app.measure.toggle();
       if (on) actions.setMoveMode(false);
+      if (on && app.instructions && app.instructions.on) app.instructions.set(false);
       if (!on) sel.setHover(null);
       if (on) app.ui.toast('Assembly mode — hover highlights a subassembly, click selects it (A to exit)');
     },
@@ -257,6 +258,7 @@ export function initInteractions(app) {
         // eating every click is a lit-but-dead mode.
         if (app.measureMode && app.measure) app.measure.toggle();
         actions.setAssemblyMode(false);
+        if (app.instructions && app.instructions.on) app.instructions.set(false);
       } else {
         sel.setHover(null); // hover preview is a move-mode affordance
       }
@@ -588,11 +590,12 @@ export function initInteractions(app) {
     closeMenus();
     app.anchorPickMode = true;
     canvas.classList.add('is-pick');
-    app.ui.toast('Click the part that stays fixed (Esc to cancel)');
+    app.ui.toast('Click the part that stays fixed — the highlight shows what will anchor (Esc to cancel)');
   }
   function exitAnchorPick() {
     app.anchorPickMode = false;
     canvas.classList.remove('is-pick');
+    sel.setHover(null); // the anchor-preview highlight must not outlive the pick
   }
   app.ui.anchorPicked = (rec) => {
     exitAnchorPick();
@@ -1018,7 +1021,11 @@ export function initInteractions(app) {
       if (menuOpen) return;
       if (!$('helpOverlay').classList.contains('hidden')) { $('helpOverlay').classList.add('hidden'); return; }
       if (app.measureMode && app.measure && app.measure.escape()) return;
+      // Clearing a selection outranks exiting instruction mode — clicking a
+      // balloon to identify a part then pressing Esc must not eject the user
+      // from the whole mode (same ordering assembly mode uses).
       if (sel.clearSelection()) return;
+      if (app.instructions && app.instructions.on) { app.instructions.set(false); return; }
       if (app.assemblyMode) { actions.setAssemblyMode(false); return; }
       if (sel.scope) actions.closeScope();
       return;
