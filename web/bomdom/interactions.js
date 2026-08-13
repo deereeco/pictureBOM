@@ -247,6 +247,27 @@ export function initInteractions(app) {
       refresh();
       retargetOrbit();
     },
+    // Saved views restore an explode setup wholesale: it becomes both the
+    // pending AND the applied config, exactly as if the user had pressed
+    // Apply with these settings at this slider value.
+    applyExplodeState(cfg, f) {
+      if (!app.model) return;
+      explodeTweenToken = {}; // orphan any in-flight explode tween (and its reframe)
+      Object.assign(app.explodeCfg, {
+        anchorRecId: null, mode: null, plane: null, spread: 'both',
+        internal: 'light', sequenced: false,
+      }, cfg || {});
+      if (app.explodeCfg.anchorRecId != null && !app.model.records[app.explodeCfg.anchorRecId]) {
+        app.explodeCfg.anchorRecId = null; // foreign id from a different model
+      }
+      appliedExplodeCfg = { ...app.explodeCfg };
+      M.computeExplodeVectors(app.model, app.explodeCfg, scopeAnchorRec(), effHidden);
+      const fc = Math.max(0, Math.min(1, f || 0));
+      slider.value = String(fc);
+      M.applyPositions(app.model, fc);
+      app.events.emit('positions');
+      invalidate();
+    },
     setMoveMode(on) {
       on = !!on;
       if (on === !!app.moveMode) return;

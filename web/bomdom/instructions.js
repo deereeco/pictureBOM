@@ -948,5 +948,23 @@ export function initInstructions(app) {
     items: () => st.items,
     refresh: rebuildIfOn,
     openPrintSetup, // the Export menu opens the print settings window
+    // Saved views (#16) carry the whole instruction setup.
+    stateForSave: () => ({
+      on: st.on,
+      flattenAll: st.flattenAll,
+      flattenSet: [...st.flattenSet],
+      dupBalloons: st.dupBalloons,
+      offsets: Object.fromEntries(st.offsets),
+      checked: [...st.checked.entries()].filter(([, v]) => v).map(([k]) => k),
+    }),
+    restoreState: (s) => {
+      st.flattenAll = !!s.flattenAll;
+      st.flattenSet = new Set(s.flattenSet || []);
+      st.dupBalloons = s.dupBalloons !== false;
+      st.offsets = new Map(Object.entries(s.offsets || {}));
+      st.checked = new Map((s.checked || []).map((k) => [k, true]));
+      if (s.on && !st.on) set(true);
+      else if (st.on) rebuild();
+    },
   };
 }
