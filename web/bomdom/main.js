@@ -12,6 +12,7 @@ import { buildBomJoin } from './bom.js';
 import { initPicking } from './picking.js';
 import { initSection } from './section.js';
 import { initMeasure } from './measure.js';
+import { initTriad } from './triad.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
 import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
@@ -103,6 +104,7 @@ async function boot() {
   M.initEdgeColor(app.viewer.invalidate);
   initSection(app);
   initMeasure(app);
+  initTriad(app);
 
   // Which way is up: this reader's remembered choice for this assembly wins,
   // then the exported default (hand-editable "up_axis" in bomdom-config),

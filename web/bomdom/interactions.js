@@ -174,8 +174,10 @@ export function initInteractions(app) {
       app.assemblyMode = on;
       $('btnAssembly').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-assembly', on);
-      // Measure also owns hover + click; the two modes can't share the canvas.
+      // Measure and move also own hover + click on this canvas: one mode at
+      // a time, or the hover preview promises one thing and a drag does another.
       if (on && app.measureMode && app.measure) app.measure.toggle();
+      if (on) actions.setMoveMode(false);
       if (!on) sel.setHover(null);
       if (on) app.ui.toast('Assembly mode — hover highlights a subassembly, click selects it (A to exit)');
     },
@@ -207,9 +209,25 @@ export function initInteractions(app) {
       refresh();
     },
     setMoveMode(on) {
+      on = !!on;
+      if (on === !!app.moveMode) return;
       app.moveMode = on;
       $('btnMove').classList.toggle('is-on', on);
       $('gl').classList.toggle('is-move', on);
+      if (on) {
+        // One canvas owner at a time: a Move button lit while measure keeps
+        // eating every click is a lit-but-dead mode.
+        if (app.measureMode && app.measure) app.measure.toggle();
+        actions.setAssemblyMode(false);
+      } else {
+        sel.setHover(null); // hover preview is a move-mode affordance
+      }
+      if (app.triad) app.triad.refresh();
+      if (on) {
+        app.ui.toast(sel.selected.size
+          ? 'Move mode — drag the triad to slide or turn, drag a part to move it freely (M to exit)'
+          : 'Move mode — drag parts freely, or select one for the move/rotate triad (M to exit)');
+      }
     },
     setEdges(on) {
       app.edgesOn = on;
@@ -588,6 +606,9 @@ export function initInteractions(app) {
     // marquee, and picking's app.dragging check would swallow the click.
     if (app.measureMode) return;
     if (ev.ctrlKey || ev.metaKey) { startMarquee(ev); return; }
+    // The triad rides above the parts: a grab on one of its handles wins over
+    // both the free part drag and (via controls.enabled) the orbit.
+    if (app.triad && app.triad.tryStartDrag(ev)) return;
     if (!(app.moveMode || ev.shiftKey)) return;
     const hit = app.pick(ev);
     if (!hit) return;
@@ -607,11 +628,12 @@ export function initInteractions(app) {
       for (let a = r.parent; a; a = a.parent) if (targetIds.has(a.id)) return false;
       return true;
     });
-    viewer.controls.enabled = false;
-    app.dragging = true;
-    canvas.classList.add('is-dragging');
+    viewer.controls.enabled = false; // pre-empt orbit for this gesture either way
     try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
-    sel.setHover(null);
+    // Nothing else happens until the pointer clears the click slop: a plain
+    // click in move mode must stay a click — picking's pointerup selects the
+    // part (which is how the triad appears) only while app.dragging is false.
+    let active = false;
 
     // Camera-facing plane through the grab point; one plane intersection
     // per pointermove.
@@ -630,6 +652,13 @@ export function initInteractions(app) {
     };
 
     const onMove = (e) => {
+      if (!active) {
+        if (Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) <= 4) return;
+        active = true;
+        app.dragging = true; // hover + click-select stand down
+        canvas.classList.add('is-dragging');
+        sel.setHover(null);
+      }
       const p = planeHit(e);
       if (!p) return;
       const worldDelta = p.clone().sub(hit.point);
@@ -637,7 +666,7 @@ export function initInteractions(app) {
         // Reference point cancels out of the affine delta map — one point works for all.
         r.dragDelta.copy(startDeltas[i]).add(
           M.worldDeltaToLocal(r.object.parent, worldDelta, hit.point));
-        r.flags.moved = r.dragDelta.lengthSq() > 0;
+        M.refreshMovedFlag(r); // a triad rotation keeps the part "moved" at zero translation
       });
       M.applyPositions(app.model, app.model.explodeF);
       // Same live event the explode slider fires: measurement staleness and
@@ -652,6 +681,10 @@ export function initInteractions(app) {
       canvas.removeEventListener('pointercancel', onUp);
       try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       viewer.controls.enabled = true;
+      if (!active) return; // plain click: picking's pointerup handles the select
+      // Picking's pointerup ran first (registered at boot, before these
+      // dynamic listeners) and saw app.dragging still true, so a real drag's
+      // release never doubles as a click.
       app.dragging = false;
       canvas.classList.remove('is-dragging');
       app.events.emit('positions');
@@ -843,6 +876,9 @@ export function initInteractions(app) {
       // A focused text field and an open help overlay outrank measure mode:
       // Esc while typing must blur, not silently drop a measurement point.
       if (inField) { ev.target.blur(); return; }
+      // A live triad gesture: Esc aborts it and puts the parts back — it must
+      // not also clear the selection the user is about to keep working with.
+      if (app.triad && app.triad.dragging()) { app.triad.cancelDrag(); return; }
       // An open dropdown is its own layer: Esc closes it and STOPS — falling
       // through would also drop a pending measurement point or exit measure
       // mode with the same keypress.
@@ -858,6 +894,9 @@ export function initInteractions(app) {
       return;
     }
     if (inField) return;
+    // A live drag (triad, free move, marquee) froze its camera frame at
+    // pointerdown: view keys or mode flips underneath it teleport parts.
+    if (app.dragging) return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return; // never shadow browser shortcuts
     const key = ev.key.toLowerCase();
     // CAD-style number keys for the standard views.

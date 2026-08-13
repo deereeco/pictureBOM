@@ -163,6 +163,7 @@ export function buildGraph(gltf, meta) {
       homeQuat: obj.quaternion.clone(),
       explodeVec: new THREE.Vector3(),
       dragDelta: new THREE.Vector3(),
+      dragQuat: new THREE.Quaternion(), // triad rotation offset, parent-local
       flags: { hidden: false, ghost: false, opacity: 1, moved: false },
     };
     records.push(rec);
@@ -478,16 +479,60 @@ export function computeExplodeVectors(model, cfg) {
 
 const easeExplode = (f) => f * (2 - f);
 
+export function isIdentityQuat(q) {
+  return q.x === 0 && q.y === 0 && q.z === 0 && q.w === 1;
+}
+
+// flags.moved is the cheap "this part is displaced" bit the footer, context
+// menu and measure staleness all read; rotation counts as moved.
+export function refreshMovedFlag(rec) {
+  rec.flags.moved = rec.dragDelta.lengthSq() > 0 || !isIdentityQuat(rec.dragQuat);
+}
+
 export function applyPositions(model, f) {
   model.explodeF = f;
   const e = easeExplode(Math.max(0, Math.min(1, f)));
   for (const rec of model.records) {
-    if (rec.explodeVec.lengthSq() === 0 && rec.dragDelta.lengthSq() === 0 && !rec.flags.moved) continue;
+    const rotated = !isIdentityQuat(rec.dragQuat);
+    if (rec.explodeVec.lengthSq() === 0 && rec.dragDelta.lengthSq() === 0
+        && !rotated && !rec.flags.moved) continue;
     rec.object.position.copy(rec.homePos)
       .addScaledVector(rec.explodeVec, e)
       .add(rec.dragDelta);
+    // copy() restores homeQuat bit-exactly at rest — measure's poseMoved
+    // compares matrix floats with !==, so the home pose must be identical.
+    rec.object.quaternion.copy(rec.homeQuat);
+    if (rotated) rec.object.quaternion.premultiply(rec.dragQuat);
   }
   model.root.updateMatrixWorld(true);
+}
+
+// Rotate a record rigidly about a world-space pivot. The orientation offset
+// and the position swing both land in dragQuat/dragDelta, so explode
+// composition, snap back and reset keep working unchanged. start is the
+// drag-start snapshot { delta, quat, worldPos }. Assumes rigid (unscaled)
+// ancestor transforms — true for BomDom's own exports; a scaled foreign GLB
+// would swing about a slightly wrong pivot, nothing worse.
+const _rwq = new THREE.Quaternion();
+const _rwqInv = new THREE.Quaternion();
+const _rwqLocal = new THREE.Quaternion();
+const _rwSwing = new THREE.Vector3();
+export function applyWorldRotation(rec, qWorld, pivot, start) {
+  const parent = rec.object.parent;
+  parent.getWorldQuaternion(_rwq);
+  _rwqInv.copy(_rwq).invert();
+  // The world rotation expressed in the parent's frame: Qp⁻¹ · qw · Qp.
+  _rwqLocal.copy(_rwqInv).multiply(qWorld).multiply(_rwq);
+  rec.dragQuat.copy(_rwqLocal).multiply(start.quat);
+  _rwSwing.copy(start.worldPos).sub(pivot).applyQuaternion(qWorld)
+    .add(pivot).sub(start.worldPos);
+  rec.dragDelta.copy(start.delta)
+    .add(worldDeltaToLocal(parent, _rwSwing, start.worldPos));
+  // moved stays true for the WHOLE gesture — applyPositions must keep writing
+  // this record even when a snapped drag passes back through exactly zero
+  // (skipping there would leave the previous frame's pose on screen). The
+  // gesture's owner re-runs refreshMovedFlag when the pointer comes to rest.
+  rec.flags.moved = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -800,20 +845,26 @@ export function resetAppearance(model) {
   }
 }
 
+const IDENTITY_QUAT = new THREE.Quaternion(); // read-only slerp target
+
 export function snapBack(model, recs, addTween, onFrame, onDone) {
   let i = 0;
   for (const rec of recs) {
-    if (rec.dragDelta.lengthSq() === 0 && !rec.flags.moved) continue;
+    const rotated = !isIdentityQuat(rec.dragQuat);
+    if (rec.dragDelta.lengthSq() === 0 && !rotated && !rec.flags.moved) continue;
     const from = rec.dragDelta.clone();
+    const fromQuat = rotated ? rec.dragQuat.clone() : null;
     addTween({
       duration: 300,
       delay: i++ * 20, // staggered
       update: (k) => {
         rec.dragDelta.copy(from).multiplyScalar(1 - k);
+        if (fromQuat) rec.dragQuat.copy(fromQuat).slerp(IDENTITY_QUAT, k);
         onFrame();
       },
       done: () => {
         rec.dragDelta.set(0, 0, 0);
+        rec.dragQuat.identity(); // exact — applyPositions then restores homeQuat bit-exactly
         rec.flags.moved = false;
         onFrame();
         if (onDone) onDone();
@@ -824,7 +875,8 @@ export function snapBack(model, recs, addTween, onFrame, onDone) {
 }
 
 export function movedRecs(model) {
-  return model.records.filter((r) => r.flags.moved || r.dragDelta.lengthSq() > 0);
+  return model.records.filter((r) =>
+    r.flags.moved || r.dragDelta.lengthSq() > 0 || !isIdentityQuat(r.dragQuat));
 }
 
 // ---------------------------------------------------------------------------
