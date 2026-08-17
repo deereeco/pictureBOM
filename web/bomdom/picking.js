@@ -118,10 +118,38 @@ export function initPicking(app) {
 
   // ---- click / context ------------------------------------------------
   let down = null;
+  // Touch and pen have no right button: a still long-press opens the same
+  // context menu. pressFired swallows the following pointerup so the press
+  // does not ALSO select (or clear the selection under) the finger.
+  let pressTimer = null;
+  let pressFired = false;
+  const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
   canvas.addEventListener('pointerdown', (ev) => {
     down = { x: ev.clientX, y: ev.clientY, button: ev.button };
+    pressFired = false;
+    if (!ev.isPrimary) { cancelPress(); return; } // second finger = pinch, not a press
+    if ((ev.pointerType === 'touch' || ev.pointerType === 'pen') && ev.button === 0
+        && !app.measureMode && !app.anchorPickMode) {
+      cancelPress();
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        if (app.dragging) return; // a move/triad gesture claimed the finger
+        pressFired = true;
+        const hit = pick(ev);
+        app.ui.showContextMenu(ev.clientX, ev.clientY, hit ? hit.rec : null);
+      }, 500);
+    }
   });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (pressTimer && down
+        && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > CLICK_SLOP_PX) {
+      cancelPress(); // the finger is orbiting or dragging, not pressing
+    }
+  });
+  canvas.addEventListener('pointercancel', cancelPress);
   canvas.addEventListener('pointerup', (ev) => {
+    cancelPress();
+    if (pressFired) { pressFired = false; down = null; return; } // menu already open
     if (!down || ev.button !== down.button || app.dragging) { down = null; return; }
     const moved = Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > CLICK_SLOP_PX;
     down = null;

@@ -97,6 +97,9 @@ body {
     overflow: hidden;
 }
 button { font: inherit; }
+/* Kill iOS's double-tap-to-zoom delay and misfires on controls; the canvas
+   and drag surfaces keep their stricter touch-action: none. */
+button, input, select, a, label { touch-action: manipulation; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .mono { font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; }
 .hidden { display: none !important; }
@@ -118,8 +121,17 @@ html.theme-transition *::after {
 }
 
 /* dvh, where supported, excludes mobile browser chrome — with plain 100vh,
-   iPad Safari sits the statusbar behind its toolbar with no way to reach it. */
-#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+   iPad Safari sits the statusbar behind its toolbar with no way to reach it.
+   The bottom safe-area pad keeps the footer above the iPhone home indicator
+   (viewport-fit=cover); the surface background makes that strip match it. */
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--surface);
+}
 
 /* ---------- app bar ---------- */
 .appbar {
@@ -127,7 +139,9 @@ html.theme-transition *::after {
     align-items: center;
     justify-content: space-between;
     gap: 14px;
-    padding: 8px 14px;
+    /* env() insets keep controls clear of iPhone notches in landscape; they
+       resolve to 0 everywhere else. */
+    padding: 8px calc(14px + env(safe-area-inset-right, 0px)) 8px calc(14px + env(safe-area-inset-left, 0px));
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     flex: none;
@@ -199,6 +213,19 @@ html.theme-transition *::after {
 :root[data-theme="light"] .icon-sun { display: none; }
 :root[data-theme="dark"] .icon-moon { display: none; }
 
+/* Fingers need bigger targets than cursors; desktop metrics stay untouched. */
+@media (pointer: coarse) {
+    .tb-btn { padding: 8px 12px; }
+    .tb-icon { width: 34px; }
+    .icon-btn { width: 36px; height: 36px; }
+    .seg-btn { padding: 7px 12px; }
+    .menu-item { padding: 9px 12px; }
+    .menu-radio, .pop-check { padding: 7px 10px; }
+    .ra-btn { width: 30px; height: 28px; font-size: 13px; }
+    .tree-row { padding: 6px 8px 6px 4px; }
+    .diag-btn { font-size: 15px; padding: 0 8px; }
+}
+
 .btn {
     display: inline-block;
     border: 1px solid transparent;
@@ -267,7 +294,15 @@ html.theme-transition *::after {
 /* ---------- main layout ---------- */
 #main { flex: 1; display: flex; min-height: 0; }
 #viewport { flex: 1; min-width: 0; position: relative; background: var(--bg); }
-#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+#gl {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    display: block; outline: none; touch-action: none;
+    /* A long-press opens the context menu — iOS must not also pop its own
+       callout / text-selection UI over the canvas. */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
 /* Move + assembly can be on together — the later move rule wins then (a drag
    is the headline gesture), and is-dragging stays last to win during one. */
 #gl.is-assembly { cursor: pointer; }
@@ -693,6 +728,12 @@ html.theme-transition *::after {
 /* Keep the qty pill readable while the hover actions are showing */
 .part-side { transition: margin-right 0.12s ease; }
 .part-row:hover .part-side { margin-right: 118px; }
+/* No hover on touch: keep every row's actions visible instead of behind
+   iOS's sticky tap-to-hover two-step. */
+@media (pointer: coarse) {
+    .row-actions { display: flex; }
+    .part-row .part-side { margin-right: 132px; }
+}
 .ra-btn {
     border: none;
     background: transparent;
@@ -766,7 +807,7 @@ html.theme-transition *::after {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 14px;
+    padding: 4px calc(14px + env(safe-area-inset-right, 0px)) 4px calc(14px + env(safe-area-inset-left, 0px));
     background: var(--surface);
     border-top: 1px solid var(--border);
     font-size: 12px;
