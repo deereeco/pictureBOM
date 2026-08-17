@@ -156,6 +156,32 @@ html.theme-transition *::after {
     .appbar-center { max-width: none; }
     .toolbar { order: 5; flex-basis: 100%; flex-wrap: wrap; }
 }
+/* Phones (<=600px): wrapped toolbar rows ate a third of the screen — the
+   toolbar becomes a one-row swipeable strip instead. The panel-drawer rules
+   live with the #panel block further down. */
+.toolbar-fade { display: none; }
+@media (max-width: 600px) {
+    .wordmark { display: none; } /* the cube mark carries the brand */
+    .appbar { gap: 10px; }
+    .toolbar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none; /* the edge fade + swipe are the affordance */
+    }
+    .toolbar::-webkit-scrollbar { display: none; }
+    /* Sticky trailing fade: hugs the visible right edge while there is more
+       to scroll, and slides past the last button at the end of the strip. */
+    .toolbar-fade {
+        display: block;
+        position: sticky;
+        right: 0;
+        flex: none;
+        align-self: stretch;
+        width: 36px;
+        background: linear-gradient(to right, transparent, var(--surface));
+        pointer-events: none;
+    }
+}
 .wordmark { font-size: 17px; font-weight: 400; color: var(--text); white-space: nowrap; }
 .wm-a { font-weight: 400; }
 .wm-b { font-weight: 700; }
@@ -292,7 +318,7 @@ html.theme-transition *::after {
 }
 
 /* ---------- main layout ---------- */
-#main { flex: 1; display: flex; min-height: 0; }
+#main { flex: 1; display: flex; min-height: 0; position: relative; }
 #viewport { flex: 1; min-width: 0; position: relative; background: var(--bg); }
 #gl {
     position: absolute; inset: 0; width: 100%; height: 100%;
@@ -327,6 +353,37 @@ html.theme-transition *::after {
 /* ---------- viewport overlays ---------- */
 /* A 360px panel is nearly half a portrait iPad — start slimmer there. */
 @media (max-width: 900px) { #panel { width: 300px; } }
+
+/* Phones (<=600px): side-by-side leaves a sliver of 3D — the panel becomes
+   an overlay drawer over the full-width viewport instead. JS toggles
+   .panel-hidden on #app (interactions.js setPanelHidden). */
+.panel-scrim { display: none; }
+@media (max-width: 600px) {
+    #splitter { display: none; } /* no drag-resize on phones */
+    #panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        /* !important: a splitter drag in a wider window leaves an inline
+           width on the element; the drawer must win over it. */
+        width: 84% !important;
+        min-width: 0;
+        max-width: none;
+        z-index: 7; /* over the canvas overlays (marquee 6, chips 5) */
+        border-left: 1px solid var(--border-strong);
+        box-shadow: -10px 0 26px rgba(8, 16, 15, 0.35);
+    }
+    #app:not(.panel-hidden) .panel-scrim {
+        display: block;
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        background: rgba(8, 16, 15, 0.42); /* dims both themes legibly */
+    }
+    /* The tab rides the drawer's left edge while it is open. */
+    #app:not(.panel-hidden) #panelToggle { right: 84%; z-index: 8; }
+}
 
 /* Panel hide/show tab: sits at the viewport's right edge — the panel boundary
    when open, the screen edge when hidden — so it never has to move. */

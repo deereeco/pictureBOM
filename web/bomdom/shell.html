@@ -30,7 +30,10 @@
 <script type='text/plain' id='bomdom-meta'>__BOMDOM_PAYLOAD_JSON__</script>
 <script type='text/plain' id='bomdom-glb'>__BOMDOM_GLB_GZ_B64__</script>
 
-<div id="app">
+<!-- Ships with the panel collapsed (panel-hidden + hidden classes) so a
+     phone's first paint doesn't flash the 84% drawer + scrim before init;
+     initInteractions applies the stored preference (desktop default: shown). -->
+<div id="app" class="panel-hidden">
     <header class="appbar">
         <div class="appbar-left">
             <svg class="mark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
@@ -67,6 +70,7 @@
                     <div id="exportMenu" class="dropdown hidden"></div>
                 </div>
                 <button type="button" id="btnHelp" class="tb-btn tb-icon" title="Mouse and keyboard help (?)">?</button>
+                <div class="toolbar-fade" aria-hidden="true"></div>
             </div>
             <button type="button" id="themeToggle" class="icon-btn" title="Switch between light and dark theme" aria-label="Switch theme">
                 <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -119,7 +123,7 @@
                     </div>
                 </div>
             </noscript>
-            <button type="button" id="panelToggle" class="panel-toggle" title="Hide the parts panel (P)" aria-label="Hide the parts panel">&#8250;</button>
+            <button type="button" id="panelToggle" class="panel-toggle" title="Show the parts panel (P)" aria-label="Show the parts panel">&#8249;</button>
             <div id="dropZone" class="drop-zone hidden">
                 <div class="drop-inner">
                     <div class="drop-title">3D data is in a separate file</div>
@@ -129,8 +133,9 @@
                 </div>
             </div>
         </section>
-        <div id="splitter" title="Drag to resize panel"></div>
-        <aside id="panel">
+        <div id="splitter" class="hidden" title="Drag to resize panel"></div>
+        <div id="panelScrim" class="panel-scrim" aria-hidden="true"></div>
+        <aside id="panel" class="hidden">
             <div class="panel-tabs seg">
                 <button type="button" class="seg-btn is-active" id="tabParts" data-tab="parts">Parts</button>
                 <button type="button" class="seg-btn" id="tabStructure" data-tab="structure">Structure</button>

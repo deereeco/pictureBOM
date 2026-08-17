@@ -981,8 +981,27 @@ export function initInteractions(app) {
   // Toolbar popovers anchor right:0 to their button. On the wrapped narrow
   // toolbar (<=1100px) a left-end button would push its menu past the left
   // page edge, where body{overflow:hidden} clips it — nudge it back on open.
+  // On phones (<=600px) the toolbar is a SCROLL container that would clip
+  // the menu to the strip itself: escape with fixed positioning under the
+  // button, clamped to the viewport and capped to the space below.
   app.ui.clampMenu = (menu) => {
+    menu.style.position = '';
+    menu.style.top = '';
+    menu.style.left = '';
     menu.style.right = '';
+    menu.style.maxHeight = '';
+    menu.style.overflowY = '';
+    if (window.matchMedia('(max-width: 600px)').matches) {
+      const b = menu.parentElement.getBoundingClientRect(); // .menu-anchor
+      menu.style.position = 'fixed';
+      menu.style.top = (b.bottom + 4) + 'px';
+      menu.style.right = 'auto';
+      const w = menu.offsetWidth;
+      menu.style.left = Math.max(4, Math.min(b.right - w, window.innerWidth - w - 4)) + 'px';
+      menu.style.maxHeight = Math.max(120, window.innerHeight - b.bottom - 16) + 'px';
+      menu.style.overflowY = 'auto';
+      return;
+    }
     const left = menu.getBoundingClientRect().left;
     if (left < 4) menu.style.right = (left - 4) + 'px';
   };
@@ -1183,27 +1202,41 @@ export function initInteractions(app) {
   const panelToggle = $('panelToggle');
   const PANEL_KEY = 'picturebom-panel:' + ((app.meta.assembly && app.meta.assembly.name) || 'assembly');
   let panelHidden = false;
-  try { panelHidden = localStorage.getItem(PANEL_KEY) === 'hidden'; } catch (e) { /* ignore */ }
+  try {
+    const stored = localStorage.getItem(PANEL_KEY);
+    if (stored === 'hidden') panelHidden = true;
+    // First visit on a phone leads with the 3D — the drawer would otherwise
+    // open over the model before the user has seen it.
+    else if (stored !== 'shown') panelHidden = window.matchMedia('(max-width: 600px)').matches;
+  } catch (e) { /* ignore */ }
   function applyPanelHidden() {
     panel.classList.toggle('hidden', panelHidden);
     splitter.classList.toggle('hidden', panelHidden);
+    // Drives the phone drawer CSS (scrim + tab position) — see style.css.
+    $('app').classList.toggle('panel-hidden', panelHidden);
     panelToggle.textContent = panelHidden ? '‹' : '›';
     const label = (panelHidden ? 'Show' : 'Hide') + ' the parts panel (P)';
     panelToggle.title = label;
     panelToggle.setAttribute('aria-label', label);
   }
-  function setPanelHidden(hidden) {
+  function setPanelHidden(hidden, persist = true) {
     panelHidden = !!hidden;
     applyPanelHidden();
+    if (!persist) return;
     try { localStorage.setItem(PANEL_KEY, panelHidden ? 'hidden' : 'shown'); } catch (e) { /* ignore */ }
   }
   applyPanelHidden();
   panelToggle.addEventListener('click', () => setPanelHidden(!panelHidden));
   // Double-click the splitter (desktop): a quicker collapse than the tab.
   splitter.addEventListener('dblclick', () => setPanelHidden(true));
+  // Phone drawer: tapping the dimmed 3D behind it dismisses (the scrim only
+  // renders — and therefore only takes clicks — at <=600px with the panel open).
+  $('panelScrim').addEventListener('click', () => setPanelHidden(true));
   // Features whose output lives in the panel (search, instruction checklist)
-  // un-hide it rather than filling an invisible list.
-  app.ui.setPanelHidden = setPanelHidden;
+  // un-hide it rather than filling an invisible list. Programmatic opens do
+  // NOT persist — one search keystroke must not overwrite the phone default
+  // of leading with the 3D.
+  app.ui.setPanelHidden = (hidden) => setPanelHidden(hidden, false);
 
   // ---- theme toggle (mirrors pictureBOM's static/app.js) ---------------
   const THEME_KEY = 'picturebom-theme'; // must match the inline boot script
