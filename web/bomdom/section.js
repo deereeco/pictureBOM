@@ -378,5 +378,6 @@ export function initSection(app) {
     app.ui.closeMenus();
     buildPopover();
     menu.classList.remove('hidden');
+    app.ui.clampMenu(menu);
   });
 }

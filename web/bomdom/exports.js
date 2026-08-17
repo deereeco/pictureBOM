@@ -26,6 +26,7 @@ export function initExports(app) {
     app.ui.closeMenus();
     buildMenu();
     menu.classList.remove('hidden');
+    app.ui.clampMenu(menu);
   });
 
   function scopeInfo() {
@@ -126,6 +127,23 @@ export function initExports(app) {
         app.viewstate.save();
       });
       menu.appendChild(b);
+      // Restore via file picker — the drag-drop route is desktop-only in
+      // practice (dragging a file onto the viewer is a chore on an iPad).
+      const r = document.createElement('button');
+      r.className = 'menu-item';
+      r.textContent = 'Restore view state (.json)…';
+      r.title = 'Pick a saved view file — same as dropping it on the viewer';
+      r.addEventListener('click', () => {
+        menu.classList.add('hidden');
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.addEventListener('change', () => {
+          if (input.files && input.files[0]) app.viewstate.restoreFile(input.files[0]);
+        });
+        input.click();
+      });
+      menu.appendChild(r);
     }
   }
 }

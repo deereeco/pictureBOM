@@ -379,7 +379,18 @@ export function initInteractions(app) {
   // 'positions' fires when parts come to rest (full recomputes). Without
   // these, world-space overlays keep rendering at home coordinates while
   // the parts fly apart.
-  const slider = $('explodeSlider');
+  // The amount slider lives inside the explode popover (like the section
+  // slider) but is created once, not per build: tweens, saved-view restores
+  // and the model-reset handler write slider.value while the popover is
+  // closed or mid-rebuild, and a per-build element would orphan those writes.
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0';
+  slider.max = '1';
+  slider.step = '0.01';
+  slider.value = '0';
+  slider.className = 'explode-slider section-slider';
+  slider.title = 'Explode amount';
   slider.addEventListener('input', () => {
     if (!app.model) return;
     M.applyPositions(app.model, parseFloat(slider.value));
@@ -599,6 +610,12 @@ export function initInteractions(app) {
     trails.appendChild(document.createTextNode(' Show trails (lines back to home)'));
     explodeMenu.appendChild(trails);
 
+    head('Amount');
+    const sWrap = document.createElement('div');
+    sWrap.className = 'section-slider-row';
+    sWrap.appendChild(slider); // persistent element — value is already current
+    explodeMenu.appendChild(sWrap);
+
     const btns = document.createElement('div');
     btns.className = 'pop-actions';
     const apply = document.createElement('button');
@@ -655,6 +672,7 @@ export function initInteractions(app) {
     }
     buildExplodePopover();
     explodeMenu.classList.remove('hidden');
+    app.ui.clampMenu(explodeMenu);
   };
 
   $('btnExplode').addEventListener('click', (ev) => {
@@ -667,6 +685,7 @@ export function initInteractions(app) {
     closeMenus();
     buildExplodePopover();
     explodeMenu.classList.remove('hidden');
+    app.ui.clampMenu(explodeMenu);
   });
 
   // ---- view (up axis + standard views) ---------------------------------
@@ -750,6 +769,7 @@ export function initInteractions(app) {
     closeMenus();
     buildViewPopover();
     viewMenu.classList.remove('hidden');
+    app.ui.clampMenu(viewMenu);
   }
   app.ui.openViewMenu = openViewMenu;
 
@@ -958,6 +978,14 @@ export function initInteractions(app) {
     viewMenu.classList.add('hidden');
   }
   app.ui.closeMenus = closeMenus;
+  // Toolbar popovers anchor right:0 to their button. On the wrapped narrow
+  // toolbar (<=1100px) a left-end button would push its menu past the left
+  // page edge, where body{overflow:hidden} clips it — nudge it back on open.
+  app.ui.clampMenu = (menu) => {
+    menu.style.right = '';
+    const left = menu.getBoundingClientRect().left;
+    if (left < 4) menu.style.right = (left - 4) + 'px';
+  };
   document.addEventListener('pointerdown', (ev) => {
     const t = ev.target instanceof Element ? ev.target : null;
     if (!t || (!t.closest('.dropdown') && !t.closest('.menu-anchor'))) closeMenus();
@@ -1114,6 +1142,7 @@ export function initInteractions(app) {
     else if (key === 'i') { const t = selectedRecs(); if (t.length) actions.isolate(t, false); }
     else if (key === 'f') actions.frame(selectedRecs());
     else if (key === 'r') actions.resetAll();
+    else if (key === 'p') setPanelHidden(!panelHidden);
     else if (ev.key === '?') $('helpOverlay').classList.toggle('hidden');
   });
 
@@ -1139,10 +1168,42 @@ export function initInteractions(app) {
     const onUp = () => {
       splitter.removeEventListener('pointermove', onMove);
       splitter.removeEventListener('pointerup', onUp);
+      splitter.removeEventListener('pointercancel', onUp);
     };
     splitter.addEventListener('pointermove', onMove);
     splitter.addEventListener('pointerup', onUp);
+    // iOS cancels (rather than ends) a touch drag the browser takes over.
+    splitter.addEventListener('pointercancel', onUp);
   });
+
+  // ---- panel hide/show --------------------------------------------------
+  // The chevron tab sits at the viewport's right edge — the panel boundary
+  // when open, the screen edge when hidden — so it never has to move. The
+  // viewport ResizeObserver in scene.js re-fits the canvas on its own.
+  const panelToggle = $('panelToggle');
+  const PANEL_KEY = 'picturebom-panel:' + ((app.meta.assembly && app.meta.assembly.name) || 'assembly');
+  let panelHidden = false;
+  try { panelHidden = localStorage.getItem(PANEL_KEY) === 'hidden'; } catch (e) { /* ignore */ }
+  function applyPanelHidden() {
+    panel.classList.toggle('hidden', panelHidden);
+    splitter.classList.toggle('hidden', panelHidden);
+    panelToggle.textContent = panelHidden ? '‹' : '›';
+    const label = (panelHidden ? 'Show' : 'Hide') + ' the parts panel (P)';
+    panelToggle.title = label;
+    panelToggle.setAttribute('aria-label', label);
+  }
+  function setPanelHidden(hidden) {
+    panelHidden = !!hidden;
+    applyPanelHidden();
+    try { localStorage.setItem(PANEL_KEY, panelHidden ? 'hidden' : 'shown'); } catch (e) { /* ignore */ }
+  }
+  applyPanelHidden();
+  panelToggle.addEventListener('click', () => setPanelHidden(!panelHidden));
+  // Double-click the splitter (desktop): a quicker collapse than the tab.
+  splitter.addEventListener('dblclick', () => setPanelHidden(true));
+  // Features whose output lives in the panel (search, instruction checklist)
+  // un-hide it rather than filling an invisible list.
+  app.ui.setPanelHidden = setPanelHidden;
 
   // ---- theme toggle (mirrors pictureBOM's static/app.js) ---------------
   const THEME_KEY = 'picturebom-theme'; // must match the inline boot script

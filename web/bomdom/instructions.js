@@ -905,6 +905,9 @@ export function initInstructions(app) {
       // would stack under an open Structure tree.
       const tabParts = $('tabParts');
       if (tabParts && !tabParts.classList.contains('is-active')) tabParts.click();
+      // The panel itself may be collapsed (persisted per-file) — the checklist
+      // is the mode's heart, so bring it back before showing balloons.
+      if (app.ui.setPanelHidden) app.ui.setPanelHidden(false);
       list.classList.remove('hidden');
       // "What they have selected is isolated (if nothing selected, everything)."
       const roots = [...sel.selected].map((id) => app.model.records[id]).filter(Boolean);

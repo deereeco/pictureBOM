@@ -188,7 +188,7 @@ export function initViewState(app) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    app.ui.toast('View saved — drop the file on this viewer any time to restore it');
+    app.ui.toast('View saved — restore it from Export → Restore view state, or drop the file on the viewer');
   }
 
   function restoreFile(file) {

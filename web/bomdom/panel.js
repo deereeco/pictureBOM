@@ -515,6 +515,9 @@ export function initPanel(app) {
 
   searchInput.addEventListener('input', () => {
     query = searchInput.value.trim().toLowerCase();
+    // Results live in the panel — typing into a collapsed panel would filter
+    // an invisible list with only the match counter as feedback.
+    if (query && app.ui.setPanelHidden) app.ui.setPanelHidden(false);
     applySearchToParts();
     applySearchToTree();
   });

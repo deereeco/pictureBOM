@@ -240,6 +240,11 @@ export function createViewer(canvas) {
   new ResizeObserver(resize).observe(holder);
   resize();
 
+  // iPadOS reclaims WebGL contexts under memory pressure. three.js rebuilds
+  // GL state on 'webglcontextrestored', but with on-demand rendering nothing
+  // repaints until the next interaction — repaint now instead of sitting stale.
+  canvas.addEventListener('webglcontextrestored', () => invalidate());
+
   // ---- framing ---------------------------------------------------------
   // Exact fit: project points into the camera frustum and solve the nearest
   // distance where every point is inside. Called with per-mesh bounding-box

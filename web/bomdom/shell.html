@@ -39,24 +39,20 @@
                 <path d="M16.5 8.5H21.5M16.5 12.5H21.5M16.5 16.5H21.5"/>
             </svg>
             <h1 class="wordmark"><span class="wm-a">Bom</span><span class="wm-b">Dom</span></h1>
-            <span id="asmName" class="asm-name mono"></span>
-            <span id="genChip" class="gen-chip"></span>
         </div>
         <div class="appbar-center">
             <input id="searchInput" class="input search-input" type="search" placeholder="Filter parts, vendors, descriptions&hellip;" autocomplete="off" spellcheck="false">
             <span id="searchCount" class="search-count"></span>
         </div>
-        <div class="appbar-right">
-            <div class="toolbar">
+        <div class="toolbar">
                 <div class="menu-anchor">
                     <button type="button" id="btnView" class="tb-btn" title="Which way is up, and standard views">View &#9662;</button>
                     <div id="viewMenu" class="dropdown view-pop hidden"></div>
                 </div>
                 <div class="menu-anchor">
-                    <button type="button" id="btnExplode" class="tb-btn" title="Explode view setup">Explode &#9662;</button>
+                    <button type="button" id="btnExplode" class="tb-btn" title="Explode view setup and amount">Explode &#9662;</button>
                     <div id="explodeMenu" class="dropdown explode-pop hidden"></div>
                 </div>
-                <input id="explodeSlider" class="explode-slider" type="range" min="0" max="1" step="0.01" value="0" title="Explode amount">
                 <div class="menu-anchor">
                     <button type="button" id="btnSection" class="tb-btn" title="Cut the model open along an axis (X)">Section &#9662;</button>
                     <div id="sectionMenu" class="dropdown section-pop hidden"></div>
@@ -81,7 +77,6 @@
                     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
                 </svg>
             </button>
-        </div>
     </header>
 
     <div id="warnBanner" class="warn-banner hidden">
@@ -116,6 +111,15 @@
             <div id="colorLegend" class="color-legend hidden"></div>
             <div id="axisGizmo" class="axis-gizmo hidden" title="Model axes — click an axis to look down it"></div>
             <div id="viewportCard" class="viewport-card hidden"></div>
+            <noscript>
+                <div class="viewport-card">
+                    <div class="card-msg">
+                        <h2>This viewer needs JavaScript</h2>
+                        <p>JavaScript is turned off here. On an iPad this usually means the file opened in Quick Look (the tap-to-preview screen), which never runs scripts &mdash; open the file in a real browser instead and everything lights up.</p>
+                    </div>
+                </div>
+            </noscript>
+            <button type="button" id="panelToggle" class="panel-toggle" title="Hide the parts panel (P)" aria-label="Hide the parts panel">&#8250;</button>
             <div id="dropZone" class="drop-zone hidden">
                 <div class="drop-inner">
                     <div class="drop-title">3D data is in a separate file</div>
@@ -132,14 +136,16 @@
                 <button type="button" class="seg-btn" id="tabStructure" data-tab="structure">Structure</button>
             </div>
             <div id="filterBlock" class="filter-block hidden"></div>
-            <div id="partsList" class="panel-body" data-tab-body="parts"></div>
+            <div id="partsList" class="panel-body" data-tab-body="parts"><noscript><div class="parts-empty">The parts list needs JavaScript &mdash; see the note in the 3D area.</div></noscript></div>
             <div id="structureTree" class="panel-body hidden" data-tab-body="structure"></div>
         </aside>
     </main>
 
     <footer id="statusbar">
-        <span id="statusStats" class="status-stats"></span>
+        <span id="asmName" class="asm-name mono"></span>
+        <span id="genChip" class="gen-chip"></span>
         <span class="status-spacer"></span>
+        <span id="statusStats" class="status-stats"></span>
         <button type="button" id="btnDiag" class="diag-btn" title="Diagnostics">&#9432;</button>
     </footer>
     <div id="diagLine" class="diag-line mono hidden"></div>
@@ -177,6 +183,7 @@
             <span class="help-k">O</span><span>Open the selection — view it alone; the chip's buttons go back up</span>
             <span class="help-k">F</span><span>Frame selection (or all)</span>
             <span class="help-k">R</span><span>Reset appearance, positions and explode</span>
+            <span class="help-k">P</span><span>Hide / show the parts panel</span>
             <span class="help-k">Esc</span><span>Cancel a triad drag / clear selection / close</span>
             <span class="help-k">?</span><span>This help</span>
         </div>

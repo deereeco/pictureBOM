@@ -41,7 +41,30 @@ const app = {
 };
 window.__bomdom = app; // console access for the manual browser checklist
 
-boot();
+boot().catch((e) => { stage('boot failed'); reportUncaught(e); });
+
+// Silent init deaths look exactly like the JS-disabled dead page — the worst
+// failure mode on an iPad, where there are no devtools. Surface the first
+// uncaught error on the page; once a model is up, note it in diagnostics only.
+let uncaughtShown = false;
+function reportUncaught(err) {
+  console.error('[BomDom] uncaught', err);
+  const msg = String((err && err.message) || err || 'unknown error');
+  // A repeating per-event error (pointermove, resize) must not grow the diag
+  // line without bound — record each distinct message once per streak.
+  if (diag.notes[diag.notes.length - 1] !== 'UNCAUGHT: ' + msg) {
+    diag.notes.push('UNCAUGHT: ' + msg);
+  }
+  // Card only while nothing else claimed the viewport: stageError/fatal and
+  // the WebGL2-degraded path write better, purpose-specific cards.
+  if (!uncaughtShown && !app.model && $('viewportCard').classList.contains('hidden')) {
+    uncaughtShown = true;
+    showViewportCard('Viewer hit an unexpected error', msg, true);
+  }
+  updateDiagLine();
+}
+window.addEventListener('error', (ev) => { if (ev.error) reportUncaught(ev.error); });
+window.addEventListener('unhandledrejection', (ev) => reportUncaught(ev.reason));
 
 async function boot() {
   stage('boot (BomDom viewer)');

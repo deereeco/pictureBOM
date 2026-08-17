@@ -68,7 +68,7 @@ const buildOptions = {
   write: false,
   format: 'iife',
   platform: 'browser',
-  target: ['chrome109', 'edge109'],
+  target: ['chrome109', 'edge109', 'safari16'],
   charset: 'utf8',
   legalComments: 'none',
   absWorkingDir: webDir,

@@ -117,7 +117,9 @@ html.theme-transition *::after {
     html.theme-transition, html.theme-transition * { transition: none !important; }
 }
 
-#app { display: flex; flex-direction: column; height: 100vh; }
+/* dvh, where supported, excludes mobile browser chrome — with plain 100vh,
+   iPad Safari sits the statusbar behind its toolbar with no way to reach it. */
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 
 /* ---------- app bar ---------- */
 .appbar {
@@ -132,32 +134,17 @@ html.theme-transition *::after {
 }
 .appbar-left { display: flex; align-items: center; gap: 10px; min-width: fit-content; overflow: hidden; }
 .wordmark { flex: none; }
-/* Drop decorations before they collide with the toolbar on narrow windows.
-   Breakpoints re-measured 2026-08-12 after the Assembly button joined the
-   toolbar (~90px wider than before). */
-@media (max-width: 1500px) { .gen-chip { display: none; } }
-@media (max-width: 1200px) { .asm-name { display: none; } }
-@media (max-width: 1120px) { #explodeSlider { display: none; } }
+/* Narrow windows (portrait iPad, split screen): the appbar wraps and the
+   toolbar takes a full second row — every control stays labeled and
+   reachable instead of clipping off a hidden-overflow page edge. */
+@media (max-width: 1100px) {
+    .appbar { flex-wrap: wrap; row-gap: 8px; }
+    .appbar-center { max-width: none; }
+    .toolbar { order: 5; flex-basis: 100%; flex-wrap: wrap; }
+}
 .wordmark { font-size: 17px; font-weight: 400; color: var(--text); white-space: nowrap; }
 .wm-a { font-weight: 400; }
 .wm-b { font-weight: 700; }
-.asm-name {
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 26vw;
-}
-.gen-chip {
-    font-family: "Cascadia Code", Consolas, monospace;
-    font-size: 10.5px;
-    color: var(--text-faint);
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 1px 8px;
-    white-space: nowrap;
-}
 .appbar-center { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 340px; }
 .input {
     min-width: 0;
@@ -173,7 +160,6 @@ html.theme-transition *::after {
 .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 .search-input { flex: 1; }
 .search-count { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
-.appbar-right { display: flex; align-items: center; gap: 10px; }
 .toolbar { display: flex; align-items: center; gap: 6px; }
 .tb-btn {
     border: 1px solid var(--border);
@@ -195,7 +181,7 @@ html.theme-transition *::after {
 .tb-primary { background: var(--accent); border-color: transparent; color: var(--on-accent); }
 .tb-primary:hover { background: var(--accent-hover); color: var(--on-accent); }
 .tb-icon { width: 28px; padding: 5px 0; text-align: center; }
-.explode-slider { width: 90px; accent-color: var(--accent); cursor: pointer; }
+.explode-slider { accent-color: var(--accent); cursor: pointer; }
 .icon-btn {
     display: inline-flex;
     align-items: center;
@@ -287,7 +273,10 @@ html.theme-transition *::after {
 #gl.is-assembly { cursor: pointer; }
 #gl.is-move { cursor: move; }
 #gl.is-dragging { cursor: grabbing; }
-#splitter { flex: none; width: 5px; cursor: col-resize; background: var(--border); }
+/* touch-action:none keeps iOS from hijacking the drag; the ::after pad widens
+   the 5px visual line into a ~17px hit target without moving layout. */
+#splitter { flex: none; width: 5px; cursor: col-resize; background: var(--border); position: relative; touch-action: none; }
+#splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: -6px; right: -6px; }
 #splitter:hover { background: var(--accent); }
 #panel {
     flex: none;
@@ -301,6 +290,32 @@ html.theme-transition *::after {
 }
 
 /* ---------- viewport overlays ---------- */
+/* A 360px panel is nearly half a portrait iPad — start slimmer there. */
+@media (max-width: 900px) { #panel { width: 300px; } }
+
+/* Panel hide/show tab: sits at the viewport's right edge — the panel boundary
+   when open, the screen edge when hidden — so it never has to move. */
+.panel-toggle {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 5;
+    width: 22px;
+    height: 64px;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-right: none;
+    border-radius: 9px 0 0 9px;
+    background: var(--surface);
+    color: var(--accent);
+    font-size: 16px;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+}
+.panel-toggle:hover { background: var(--accent-tint); }
+@media (pointer: coarse) { .panel-toggle { width: 28px; height: 78px; } }
+
 .viewport-card, .drop-zone {
     position: absolute;
     inset: 0;
@@ -547,7 +562,9 @@ html.theme-transition *::after {
     box-shadow: var(--shadow);
     padding: 6px;
     max-width: 220px;
-    max-height: 60%;
+    /* Stop above the panel-toggle tab's band (tab: right edge, 50% ± ~39px) —
+       at 60% a long legend ran under it and clicks hit the tab instead. */
+    max-height: calc(50% - 56px);
     overflow-y: auto;
     font-size: 11.5px;
 }
@@ -757,6 +774,26 @@ html.theme-transition *::after {
 }
 .status-stats { font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-spacer { flex: 1; }
+/* Assembly identity lives here now, out of the appbar's way. */
+#statusbar .asm-name {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40vw;
+}
+#statusbar .gen-chip {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+    flex: none;
+}
+@media (max-width: 720px) { #statusbar .gen-chip { display: none; } }
 .diag-btn {
     border: none;
     background: transparent;
