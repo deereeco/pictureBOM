@@ -90,8 +90,10 @@ browser. Requirements and notes:
   .glb exporter). Viewing needs only a browser — any machine, no SolidWorks.
 - Only components **visible** in the model at export time get 3D geometry; hidden
   parts still appear in the list, badged "not in 3D view".
-- Very large assemblies (over ~25 MB projected) are split into an `.html` plus a
-  `.glb` data file — keep the two together; the page asks for the `.glb` when opened.
+- Almost every assembly ships as one self-contained `.html`. Only past ~400 MB —
+  more than a browser can decode from a single file — is the export split into an
+  `.html` plus a `.glb` data file; keep the two together, the page asks for the
+  `.glb` when opened. Files over ~100 MB may open slowly on tablets.
 - To share just part of a machine, run pictureBOM on the subassembly's `.sldasm`.
 - Emailed HTML files carry Windows' mark-of-the-web; if SmartScreen interposes on
   first open, choose "Keep" / "Run anyway" — the file is inert HTML + JavaScript.

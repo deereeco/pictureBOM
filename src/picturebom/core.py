@@ -1755,7 +1755,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  images_dir=None, glb_path=None, debug=False, on_progress=None,
                  on_status=None, overwrite=False, completion_popup=False,
                  output_excel=True, output_html=False,
-                 html_size_limit_mb=25, keep_raw_glb=True, viewer_exports=True,
+                 html_size_limit_mb=400, keep_raw_glb=True, viewer_exports=True,
                  html_sidecar=False, viewer_up_axis="+y",
                  part_properties=None):
     """
@@ -1791,7 +1791,12 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                      SolidWorks 2024+ for the .glb export). 3D failures never
                      block the Excel output — they surface as warnings.
         html_size_limit_mb: Above this projected HTML size, geometry is written
-                            as a sidecar .glb next to the HTML instead of embedded.
+                            as a sidecar .glb next to the HTML instead of
+                            embedded. The default (400) sits just under the
+                            largest base64 string browsers can decode from one
+                            file, so the split only happens when embedding
+                            would actually fail to load; exports over 100 MB
+                            still embed but warn that tablets may open slowly.
         keep_raw_glb: Keep the raw SolidWorks .glb export on disk (default:
                       it took minutes to make, and it feeds glb_path on a
                       later run). False deletes it after the HTML is built.

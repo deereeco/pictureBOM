@@ -62,6 +62,16 @@ _INSTANCE_SUFFIX_RE = re.compile(r"-\d+$")
 THUMBNAIL_MAX_PX = 256
 THUMBNAIL_JPEG_QUALITY = 70
 
+# Auto-sidecar threshold: split only when embedding would actually break.
+# The viewer reads the base64 GLB slot as ONE JavaScript string, and V8
+# (Chrome/Edge) caps strings at ~536M chars — 400 MB of projected HTML
+# keeps ~25% headroom under that. Below it, embedded always boots; the
+# cost of a big single file is a few seconds of decode, not failure.
+HTML_SIZE_LIMIT_MB = 400
+# Above this, still embed but tell the exporting user it may be slow to
+# open on tablets (iPad Safari memory), not shown to readers of the HTML.
+HTML_LARGE_NOTE_MB = 100
+
 # Which model axis the viewer points up on screen. glTF's own convention is
 # +Y; CAD assemblies usually mean +Z, and one modelled sideways can need any
 # of the six. Only the viewer camera is affected -- geometry is never rotated,
@@ -1221,14 +1231,16 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
                        hierarchical_rows, flat_parts, bom_names, bom_mode,
                        images_dir, assembly_file, active_config="",
                        app_version="", generated="", on_status=None,
-                       size_limit_mb=25, template_text=None, viewer_exports=True,
+                       size_limit_mb=HTML_SIZE_LIMIT_MB, template_text=None,
+                       viewer_exports=True,
                        component_colors=None, no_geometry_names=(),
                        census_complete=None, up_axis=DEFAULT_UP_AXIS,
                        property_names=None):
     """Post-process a raw SolidWorks GLB into a BomDom HTML (plus sidecar if huge).
 
     size_limit_mb <= 0 forces sidecar mode (HTML + separate .glb) regardless
-    of size. no_geometry_names: BOM names known to contain no solid bodies,
+    of size; above HTML_LARGE_NOTE_MB the embedded file gets a slow-on-tablets
+    warning for the exporting user. no_geometry_names: BOM names known to contain no solid bodies,
     for accurate missing-part warnings (see match_parts_to_bom). up_axis is
     the model axis the viewer points up when the file is first opened.
     property_names: configured part properties (ordered list) — the viewer
@@ -1351,6 +1363,14 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
         sidecar_path = os.path.join(output_dir, sidecar_name)
         with open(sidecar_path, "wb") as f:
             f.write(glb_bytes)
+
+    if mode == "embedded" and projected_mb > HTML_LARGE_NOTE_MB:
+        # Appended after build_payload on purpose: the note reaches the
+        # exporting user (CLI/GUI warning list), not readers of the HTML.
+        msg = (f"Large 3D BOM ({projected_mb:.0f} MB): fine in desktop "
+               f"browsers, may be slow to open on tablets")
+        warnings.append(msg)
+        status(msg)
 
     status(f"Writing interactive 3D BOM ({len(html) / 1e6:.1f} MB)...")
     with open(html_path, "w", encoding="utf-8") as f:
