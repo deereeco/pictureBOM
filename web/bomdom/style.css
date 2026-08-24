@@ -446,6 +446,56 @@ html.theme-transition *::after {
 .drop-title { font-size: 14.5px; font-weight: 650; }
 .drop-msg { font-size: 12.5px; color: var(--text-muted); overflow-wrap: anywhere; max-width: 380px; }
 
+.loading-card {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
+    transition: opacity .25s ease;
+    /* The .15s delay keeps small, fast-loading files from flashing the card;
+       backwards (not both) so the finished animation can't pin opacity and
+       block the .is-done fade-out transition. */
+    animation: loading-appear .2s ease .15s backwards;
+}
+@keyframes loading-appear { from { opacity: 0; } }
+.loading-card.is-done { opacity: 0; }
+.loading-inner {
+    background: var(--surface);
+    border: 1px solid var(--card-line);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 20px 26px;
+    width: min(340px, 80%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.loading-title { font-size: 14.5px; font-weight: 650; }
+.loading-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+.loading-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width .18s linear;
+}
+.loading-sub {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
 .scope-chip {
     position: absolute;
     top: 10px;

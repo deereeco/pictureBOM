@@ -15,7 +15,9 @@ export class InlineDRACOLoader extends DRACOLoader {
   _loadLibrary(url, responseType) {
     diag.dracoUsed = true;
     if (responseType === 'arraybuffer') {
-      if (!wasmPromise) wasmPromise = gunzipToArrayBuffer(b64ToBytes(DRACO_WASM_GZ_B64));
+      // trackPath=false: this is the wasm, not the GLB — it must not
+      // rewrite the diagnostics line's record of the GLB decode path.
+      if (!wasmPromise) wasmPromise = gunzipToArrayBuffer(b64ToBytes(DRACO_WASM_GZ_B64, false));
       return wasmPromise;
     }
     return Promise.resolve(DRACO_WRAPPER_JS);

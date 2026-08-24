@@ -19,16 +19,17 @@
 </head>
 <body>
 
-<!-- Payload slots. Python (picturebom.bomdom.build_html) fills the three
-     sentinels below; the single-quoted id attributes are a contract with
-     scripts/smoke_bomdom.py. Removed from the DOM after decode. -->
+<!-- Small payload slots. Python (picturebom.bomdom.build_html) fills the
+     sentinels; the single-quoted id attributes are a contract with
+     scripts/smoke_bomdom.py. The multi-MB META and GLB slots live at the
+     END of the body so the app shell (and its loading card) paints before
+     the browser has to stream through them. Removed from the DOM after
+     decode. -->
 <script type='text/plain' id='bomdom-mode'>__BOMDOM_MODE__</script>
 <!-- BomDom options (hand-editable): set "allow_exports" to false to hide the
      Export menu in this file, or back to true to show it again. A missing or
      unparseable value falls back to true. -->
 <script type='text/plain' id='bomdom-config'>__BOMDOM_CONFIG__</script>
-<script type='text/plain' id='bomdom-meta'>__BOMDOM_PAYLOAD_JSON__</script>
-<script type='text/plain' id='bomdom-glb'>__BOMDOM_GLB_GZ_B64__</script>
 
 <!-- Ships with the panel collapsed (panel-hidden + hidden classes) so a
      phone's first paint doesn't flash the 84% drawer + scrim before init;
@@ -115,6 +116,16 @@
             <div id="colorLegend" class="color-legend hidden"></div>
             <div id="axisGizmo" class="axis-gizmo hidden" title="Model axes — click an axis to look down it"></div>
             <div id="viewportCard" class="viewport-card hidden"></div>
+            <!-- Boot progress. Ships hidden; the one-line script after #app
+                 unhides it (JS-gated, so noscript readers never see it) while
+                 the parser is still streaming the payload slots below. -->
+            <div id="loadingCard" class="loading-card hidden">
+                <div class="loading-inner">
+                    <div class="loading-title">Loading 3D BOM&hellip;</div>
+                    <div class="loading-bar"><div id="loadingFill" class="loading-fill"></div></div>
+                    <div class="loading-sub"><span id="loadingStage">Reading file&hellip;</span><span id="loadingPct"></span></div>
+                </div>
+            </div>
             <noscript>
                 <div class="viewport-card">
                     <div class="card-msg">
@@ -196,6 +207,15 @@
 </div>
 
 <div id="printSheet"></div>
+
+<!-- The shell above is fully parsed: show the loading card NOW, before the
+     parser starts streaming the multi-MB payload slots below — on a big
+     export that stream is the longest silent stretch of the whole boot. -->
+<script>document.getElementById('loadingCard').classList.remove('hidden');</script>
+
+<!-- Bulk payload slots (see the note by bomdom-mode at the top). -->
+<script type='text/plain' id='bomdom-meta'>__BOMDOM_PAYLOAD_JSON__</script>
+<script type='text/plain' id='bomdom-glb'>__BOMDOM_GLB_GZ_B64__</script>
 
 <script>%%VIEWER_JS%%</script>
 %%LICENSES%%

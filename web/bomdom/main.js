@@ -1,10 +1,13 @@
 // BomDom viewer entry point. Boot order (each stage degrades independently):
-// theme (inline head script) -> META decode -> panel/chrome (interactive
-// fast) -> WebGL2 probe -> GLB decode or sidecar drop-zone -> parse ->
-// instance graph -> fit camera -> lazy BVH.
+// theme (inline head script) -> loading card (static, unhidden while the
+// parser still streams the payload slots at the end of the file) -> META
+// decode -> panel/chrome (interactive fast) -> WebGL2 probe -> GLB decode
+// or sidecar drop-zone -> parse -> instance graph -> fit camera -> lazy BVH.
+// The loading bar (loading.js) spans decode through instance graph.
 
 import { diag, diagText, stage, timed } from './diag.js';
 import { readMode, readConfig, decodeMeta, decodeGlb, dropRemainingSlots } from './payload.js';
+import { RATES, beginLoading, stageProgress, stageStart, stageDone, finishLoading, hideLoading } from './loading.js';
 import { createEmitter, SelectionModel } from './state.js';
 import { createViewer, normalizeUp, DEFAULT_UP } from './scene.js';
 import * as M from './model.js';
@@ -59,6 +62,7 @@ function reportUncaught(err) {
   // the WebGL2-degraded path write better, purpose-specific cards.
   if (!uncaughtShown && !app.model && $('viewportCard').classList.contains('hidden')) {
     uncaughtShown = true;
+    hideLoading(); // a stuck "Loading…" card must not cover the error
     showViewportCard('Viewer hit an unexpected error', msg, true);
   }
   updateDiagLine();
@@ -111,6 +115,7 @@ async function boot() {
   try { gl2 = document.createElement('canvas').getContext('webgl2'); } catch (e) { /* probe */ }
   if (!gl2) {
     dropRemainingSlots(); // free the multi-MB GLB base64 held in the DOM
+    hideLoading();
     showViewportCard('3D view unavailable',
       'This browser or machine does not provide WebGL2. The parts table, search and exports still work.');
     stage('WebGL2 unavailable — degraded mode');
@@ -121,6 +126,7 @@ async function boot() {
     app.viewer = createViewer($('gl'));
   } catch (e) {
     dropRemainingSlots();
+    hideLoading();
     showViewportCard('3D view unavailable', 'WebGL renderer failed to start: ' + e.message);
     console.error('[BomDom] renderer init failed', e);
     return;
@@ -147,14 +153,23 @@ async function boot() {
   stage('up axis: ' + upAxis);
 
   if (app.mode === 'embedded') {
+    // Weight the loading bar's stages by rough expected duration. The raw
+    // GLB size is known from META before the blob is touched; base64 is
+    // 4/3 of the (barely) gzipped bytes.
+    const raw = (app.meta.geometry && app.meta.geometry.glb_bytes) || 10e6;
+    const tok = beginLoading([
+      { key: 'unpack', label: 'Unpacking 3D data', ms: (raw * 1.3) / RATES.unpack },
+      { key: 'inflate', label: 'Decompressing', ms: raw / RATES.inflate },
+      { key: 'parse', label: 'Building 3D geometry', ms: raw / RATES.parse },
+    ]);
     let buf;
     try {
-      buf = await decodeGlb();
+      buf = await decodeGlb((key, done, total) => stageProgress(tok, key, done, total));
     } catch (e) {
       stageError('GLB decode', e);
       return;
     }
-    await loadModel(buf, 'embedded GLB');
+    await loadModel(buf, 'embedded GLB', tok);
   } else {
     setupDropZone();
   }
@@ -170,12 +185,15 @@ function glbMagicOk(buf) {
   return b[0] === 0x67 && b[1] === 0x6C && b[2] === 0x54 && b[3] === 0x46; // 'glTF'
 }
 
-async function loadModel(buf, sourceLabel) {
+async function loadModel(buf, sourceLabel, loadTok) {
   if (!glbMagicOk(buf)) {
     stageError('GLB validation', new Error(`${sourceLabel} is not a GLB (bad magic bytes)`));
     return false;
   }
   stage(`parsing ${sourceLabel} (${(buf.byteLength / 1e6).toFixed(1)} MB)`);
+  // No progress callback exists for glTF/Draco parsing — this stage of the
+  // loading bar advances on a time estimate and snaps to done afterwards.
+  stageStart(loadTok, 'parse');
   const t0 = performance.now();
   let gltf;
   try {
@@ -193,43 +211,51 @@ async function loadModel(buf, sourceLabel) {
     stageError('instance graph', e);
     return false;
   }
-  if (oldModel) {
-    // Remove AND free the previous scene graph — leaving it would render two
-    // superimposed models and strand every child overlay (edges, veils,
-    // section outlines) with no owner able to hide them. disposeModel also
-    // frees materials, shaded twins, their matCache clones and textures.
-    app.viewer.scene.remove(oldModel.root);
-    M.disposeModel(oldModel);
-    // Record ids are per-model: a stale scope/filter/selection/hover would
-    // hide or tint an arbitrary subset of the NEW records during the
-    // updateVisuals + framing below. The 'model' emit clears these too, but
-    // that runs after framing — clear silently first, then the emit's
-    // handlers re-sync the widgets (scope chip, filter block, rows).
-    app.sel.selected.clear();
-    app.sel.scope = null;
-    app.sel.filter = null;
-    app.sel.hover = null;
-  }
-  app.viewer.scene.add(app.model.root);
-  app.model.edgesOn = app.edgesOn;
-  M.setMaterialStyle(app.model, app.renderStyle);
-  M.applyPositions(app.model, 0);
-  M.updateVisuals(app.model, app.sel);
-  app.model.root.updateWorldMatrix(true, true);
-  const framePts = M.pointsOfRecs(app.model.rootRecs);
-  if (framePts.length) app.viewer.framePoints(framePts);
-  else app.viewer.frameBox(app.model.bounds);
-  // Edges chain after the BVH: both are cosmetic-vs-latency slicers, and
-  // picking speed (gated on the BVH) should win. The staleness check stops
-  // the chain if a sidecar re-drop replaces the model mid-build.
-  const model = app.model;
-  M.buildBVHLazily(model, () => {
-    if (app.model !== model) return; // replaced by a sidecar re-drop mid-build
-    app.events.emit('bvh-ready'); // section outlines + measure snapping wake up
-    if (app.edgesOn) {
-      M.buildEdgesLazily(model, () => app.events.emit('appearance'), () => app.model !== model);
+  // Everything from here to 'model ready' runs with app.model already set,
+  // which disarms reportUncaught's loading-card cleanup — so a throw in this
+  // stretch would otherwise strand the bar at ~98% forever. Catch it here.
+  try {
+    if (oldModel) {
+      // Remove AND free the previous scene graph — leaving it would render two
+      // superimposed models and strand every child overlay (edges, veils,
+      // section outlines) with no owner able to hide them. disposeModel also
+      // frees materials, shaded twins, their matCache clones and textures.
+      app.viewer.scene.remove(oldModel.root);
+      M.disposeModel(oldModel);
+      // Record ids are per-model: a stale scope/filter/selection/hover would
+      // hide or tint an arbitrary subset of the NEW records during the
+      // updateVisuals + framing below. The 'model' emit clears these too, but
+      // that runs after framing — clear silently first, then the emit's
+      // handlers re-sync the widgets (scope chip, filter block, rows).
+      app.sel.selected.clear();
+      app.sel.scope = null;
+      app.sel.filter = null;
+      app.sel.hover = null;
     }
-  }, () => app.model !== model);
+    app.viewer.scene.add(app.model.root);
+    app.model.edgesOn = app.edgesOn;
+    M.setMaterialStyle(app.model, app.renderStyle);
+    M.applyPositions(app.model, 0);
+    M.updateVisuals(app.model, app.sel);
+    app.model.root.updateWorldMatrix(true, true);
+    const framePts = M.pointsOfRecs(app.model.rootRecs);
+    if (framePts.length) app.viewer.framePoints(framePts);
+    else app.viewer.frameBox(app.model.bounds);
+    // Edges chain after the BVH: both are cosmetic-vs-latency slicers, and
+    // picking speed (gated on the BVH) should win. The staleness check stops
+    // the chain if a sidecar re-drop replaces the model mid-build.
+    const model = app.model;
+    M.buildBVHLazily(model, () => {
+      if (app.model !== model) return; // replaced by a sidecar re-drop mid-build
+      app.events.emit('bvh-ready'); // section outlines + measure snapping wake up
+      if (app.edgesOn) {
+        M.buildEdgesLazily(model, () => app.events.emit('appearance'), () => app.model !== model);
+      }
+    }, () => app.model !== model);
+  } catch (e) {
+    stageError('model display', e);
+    return false;
+  }
 
   diag.counts = {
     parts: app.meta.parts.length,
@@ -237,6 +263,8 @@ async function loadModel(buf, sourceLabel) {
     instances: (app.meta.parts || []).reduce((a, p) => a + p.instances, 0),
     triangles: app.model.triangles,
   };
+  stageDone(loadTok, 'parse');
+  finishLoading(loadTok);
   hideViewportCard();
   $('dropZone').classList.add('hidden');
   $('axisGizmo').classList.remove('hidden');
@@ -252,12 +280,14 @@ async function loadModel(buf, sourceLabel) {
 // ---------------------------------------------------------------------------
 
 function setupDropZone() {
+  hideLoading(); // the static "Loading…" card yields to the drop zone
   const zone = $('dropZone');
   const nameEl = $('dropFileName');
   nameEl.textContent = app.meta.geometry.sidecar_filename || 'the exported .glb';
   zone.classList.remove('hidden');
   stage('sidecar mode — waiting for GLB drop');
 
+  let activeReader = null; // a newer drop supersedes an in-flight read
   const takeFile = (file) => {
     if (!file) return;
     if (/\.json$/i.test(file.name)) return; // saved-view drops belong to viewstate.js
@@ -266,11 +296,35 @@ function setupDropZone() {
       return;
     }
     hideViewportCard(); // clear any error card from an earlier attempt
+    if (activeReader) activeReader.abort(); // fires onabort only, never onerror
+    // The drop zone would otherwise paint over the loading card (later
+    // sibling wins the overlay stack) — swap them for the duration.
+    zone.classList.add('hidden');
+    const tok = beginLoading([
+      { key: 'read', label: 'Reading ' + file.name, ms: file.size / RATES.read },
+      { key: 'parse', label: 'Building 3D geometry', ms: file.size / RATES.parse },
+    ]);
     const reader = new FileReader();
-    reader.onerror = () => app.ui.toast('Could not read the dropped file');
+    activeReader = reader;
+    const superseded = () => activeReader !== reader;
+    reader.onprogress = (ev) => {
+      if (ev.lengthComputable) stageProgress(tok, 'read', ev.loaded, ev.total);
+    };
+    reader.onerror = () => {
+      if (superseded()) return;
+      hideLoading(tok);
+      zone.classList.remove('hidden'); // let the user try again
+      app.ui.toast('Could not read the dropped file');
+    };
     reader.onload = async () => {
-      const ok = await loadModel(reader.result, file.name);
-      if (!ok) app.ui.toast(`"${file.name}" could not be loaded as a model`);
+      if (superseded()) return;
+      stageDone(tok, 'read');
+      const ok = await loadModel(reader.result, file.name, tok);
+      if (superseded()) return; // a newer drop owns the zone/card now
+      if (!ok) {
+        zone.classList.remove('hidden');
+        app.ui.toast(`"${file.name}" could not be loaded as a model`);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -419,6 +473,7 @@ function hideViewportCard() {
 function stageError(stageName, err) {
   console.error(`[BomDom] stage "${stageName}" failed`, err);
   diag.notes.push(`FAILED at ${stageName}: ${err.message}`);
+  hideLoading();
   showViewportCard(`3D load failed at: ${stageName}`,
     `${err.message} — the parts table, search and exports still work.`, true);
   updateDiagLine();
@@ -426,6 +481,7 @@ function stageError(stageName, err) {
 
 function fatal(stageName, err) {
   console.error(`[BomDom] fatal at "${stageName}"`, err);
+  hideLoading();
   showViewportCard(`Failed at: ${stageName}`, String(err && err.message || err), true);
   const list = $('partsList');
   if (list) {
