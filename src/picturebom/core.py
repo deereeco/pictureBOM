@@ -8,6 +8,7 @@ Use cli.py for the command-line interface or app.py for the web GUI.
 """
 
 import array
+from contextlib import contextmanager
 import csv
 from datetime import datetime
 import logging
@@ -16,6 +17,7 @@ import os
 import re
 import time
 from urllib.parse import quote
+import winreg
 
 import pythoncom
 import win32com.client
@@ -30,6 +32,7 @@ log = logging.getLogger(__name__)
 SW_DOC_PART = 1
 SW_DOC_ASSEMBLY = 2
 SW_OPEN_DOC_OPTIONS_SILENT = 1
+SW_OPEN_DOC_OPTIONS_READ_ONLY = 2
 SW_VIEW_ISOMETRIC = 7
 
 # --- Excel export styling ---
@@ -136,15 +139,24 @@ def connect_to_solidworks():
     return win32com.client.dynamic.Dispatch(sw_app._oleobj_)
 
 
-def open_document(sw_app, file_path, doc_type):
-    """Open a SolidWorks document silently. Returns the IModelDoc2 or None."""
+def open_document(sw_app, file_path, doc_type, read_only=False):
+    """Open a SolidWorks document silently. Returns the IModelDoc2 or None.
+
+    read_only is for transient opens (per-part image capture): a read-only
+    document can never be dirtied, so nothing — SolidWorks or an add-in —
+    has grounds to ask about saving it on close. The top assembly must NOT
+    be opened read-only: it stays open for the user to keep working in.
+    """
+    options = SW_OPEN_DOC_OPTIONS_SILENT
+    if read_only:
+        options |= SW_OPEN_DOC_OPTIONS_READ_ONLY
     errors = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
     warnings = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
 
     model_doc = sw_app.OpenDoc6(
         file_path,
         doc_type,
-        SW_OPEN_DOC_OPTIONS_SILENT,
+        options,
         "",       # default configuration
         errors,
         warnings,
@@ -155,6 +167,82 @@ def open_document(sw_app, file_path, doc_type):
 def close_document(sw_app, model_doc):
     """Close a document without saving."""
     sw_app.CloseDoc(model_doc.GetTitle)
+
+
+def _find_cam_addin_dlls():
+    """DLL paths of registered SOLIDWORKS CAM / CAMWorks add-ins.
+
+    Add-ins are keyed by CLSID under HKLM\\SOFTWARE\\SolidWorks\\AddIns —
+    except SOLIDWORKS CAM itself, which lives under the version-specific
+    key (e.g. "SolidWorks 2024\\AddIns"), so both get scanned. The DLL path
+    is the CLSID's InprocServer32 default value.
+    """
+    addins_paths = [r"SOFTWARE\SolidWorks\AddIns"]
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\SolidWorks") as key:
+            for i in range(winreg.QueryInfoKey(key)[0]):
+                sub = winreg.EnumKey(key, i)
+                if re.fullmatch(r"SolidWorks \d{4}", sub, re.IGNORECASE):
+                    addins_paths.append(rf"SOFTWARE\SolidWorks\{sub}\AddIns")
+    except OSError:
+        pass
+
+    dlls = []
+    for addins_path in addins_paths:
+        try:
+            addins_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, addins_path)
+        except OSError:
+            continue
+        with addins_key:
+            for i in range(winreg.QueryInfoKey(addins_key)[0]):
+                clsid = winreg.EnumKey(addins_key, i)
+                try:
+                    names = []
+                    with winreg.OpenKey(addins_key, clsid) as key:
+                        for value_name in ("Title", "Description"):
+                            try:
+                                names.append(str(winreg.QueryValueEx(key, value_name)[0]))
+                            except OSError:
+                                pass
+                    if not any(re.search(r"\bCAM", n, re.IGNORECASE) for n in names):
+                        continue
+                    with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
+                                        rf"CLSID\{clsid}\InprocServer32") as key:
+                        dll = str(winreg.QueryValueEx(key, "")[0])
+                    if dll and dll not in dlls:
+                        dlls.append(dll)
+                except OSError:
+                    continue
+    return dlls
+
+
+@contextmanager
+def cam_addin_suspended(sw_app):
+    """Unload SOLIDWORKS CAM / CAMWorks for the capture loop, then restore.
+
+    The CAM add-in processes every part the capture loop opens, marks it
+    modified, and interrupts CloseDoc with its own "save changes?" dialog —
+    one modal per part, which kills unattended runs. UnloadAddIn returns 0
+    only when the add-in was actually loaded, so only those get reloaded on
+    the way out and an add-in the user had off stays off.
+
+    Yields the list of suspended DLLs (empty when no CAM add-in was loaded).
+    """
+    unloaded = []
+    for dll in _find_cam_addin_dlls():
+        try:
+            if sw_app.UnloadAddIn(dll) == 0:
+                unloaded.append(dll)
+        except Exception:
+            log.debug("UnloadAddIn failed for %s", dll, exc_info=True)
+    try:
+        yield unloaded
+    finally:
+        for dll in unloaded:
+            try:
+                sw_app.LoadAddIn(dll)
+            except Exception:
+                log.warning("Could not reload SolidWorks add-in: %s", dll)
 
 
 def activate_document(sw_app, model_doc):
@@ -577,7 +665,7 @@ def _build_flat_from_hierarchical(rows, root_assembly_name="Assembly"):
 
 def capture_component(sw_app, file_path, doc_type, output_path, width, height):
     """Open a component, set isometric view, and export a JPG image."""
-    model_doc = open_document(sw_app, file_path, doc_type)
+    model_doc = open_document(sw_app, file_path, doc_type, read_only=True)
     if model_doc is None:
         return False
 
@@ -1968,9 +2056,13 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     capture_start = time.time()
     if not has_images and total > 0:
         status(f"Capturing images ({total} components)...")
-        captured_count, _ = capture_all_components(
-            sw_app, components, output_dir, width, height, on_progress=on_progress,
-        )
+        with cam_addin_suspended(sw_app) as suspended:
+            if suspended:
+                status("SOLIDWORKS CAM add-in suspended during capture "
+                       "(restored afterward).")
+            captured_count, _ = capture_all_components(
+                sw_app, components, output_dir, width, height, on_progress=on_progress,
+            )
         status(f"{captured_count}/{total} images captured.")
     elif has_images:
         status(f"Using existing images from: {img_dir}")
