@@ -592,6 +592,22 @@ export function applyPositions(model, f) {
   model.root.updateMatrixWorld(true);
 }
 
+// Every displaced record bit-exactly at its home pose — explode collapsed,
+// drag offsets and rotations undone — WITHOUT touching the stored offsets: a
+// silent, temporary reset for captures (the instruction sheet's "finished
+// assembly" inset, issue #22). Visits exactly the records applyPositions
+// writes, so applyPositions(model, model.explodeF) puts everything back
+// exactly as it was.
+export function applyHomePose(model) {
+  for (const rec of model.records) {
+    if (rec.explodeVec.lengthSq() === 0 && rec.dragDelta.lengthSq() === 0
+        && isIdentityQuat(rec.dragQuat) && !rec.flags.moved) continue;
+    rec.object.position.copy(rec.homePos);
+    rec.object.quaternion.copy(rec.homeQuat);
+  }
+  model.root.updateMatrixWorld(true);
+}
+
 // Rotate a record rigidly about a world-space pivot. The orientation offset
 // and the position swing both land in dragQuat/dragDelta, so explode
 // composition, snap back and reset keep working unchanged. start is the

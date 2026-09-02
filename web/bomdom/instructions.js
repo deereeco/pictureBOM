@@ -1,7 +1,8 @@
 // Instruction mode (issue #12): balloons every visible part like an assembly
-// drawing, numbers the parts list to match, and prints a landscape sheet —
-// ballooned view + numbered checklist — through the browser's print dialog
-// (Save as PDF is one click there). Numbering follows the decisions locked on
+// drawing, numbers the parts list to match, and saves a landscape sheet —
+// ballooned view + numbered checklist — as a PDF file (issue #23; written in
+// the page by instrpdf.js, with the browser's print dialog kept as the
+// alternative). Numbering follows the decisions locked on
 // the issue: one number per unique part (quantity in the list), kept
 // subassemblies are one balloon + one row, flatten-all or per-subassembly
 // flattening folds their parts into the numbering instead. Everything is
@@ -9,6 +10,8 @@
 
 import * as THREE from 'three';
 import * as M from './model.js';
+import { buildInstructionsPdf, PAPER } from './instrpdf.js';
+import { download, sanitizeFile, fileStamp } from './exports.js';
 
 const $ = (id) => document.getElementById(id);
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -21,13 +24,14 @@ const PRINT_KEY = 'picturebom-bomdom-instr-print';
 
 function readPrintSettings() {
   const def = {
-    orient: 'landscape', layout: 'one', assembled: true,
+    paper: 'a4', orient: 'landscape', layout: 'one', assembled: true,
     cols: { desc: true, vendor: false, thumb: true },
   };
   try {
     const s = JSON.parse(localStorage.getItem(PRINT_KEY) || 'null');
     if (!s) return def;
     return {
+      paper: s.paper === 'letter' ? 'letter' : 'a4',
       orient: s.orient === 'portrait' ? 'portrait' : 'landscape',
       layout: s.layout === 'split' ? 'split' : 'one',
       assembled: s.assembled !== false,
@@ -589,7 +593,7 @@ export function initInstructions(app) {
     headRow.className = 'overlay-head';
     const title = document.createElement('span');
     title.className = 'overlay-title';
-    title.textContent = 'Print instructions (PDF)';
+    title.textContent = 'Instructions PDF';
     headRow.appendChild(title);
     const x = document.createElement('button');
     x.className = 'banner-close';
@@ -630,42 +634,52 @@ export function initInstructions(app) {
       card.appendChild(lab);
     };
     head('Paper');
+    radio('icPaper', 'a4', p.paper !== 'letter', 'A4', (v) => { p.paper = v; });
+    radio('icPaper', 'letter', p.paper === 'letter', 'Letter (US)', (v) => { p.paper = v; });
+    head('Orientation');
     radio('icOrient', 'landscape', p.orient === 'landscape', 'Landscape (fits the view best)', (v) => { p.orient = v; });
     radio('icOrient', 'portrait', p.orient !== 'landscape', 'Portrait', (v) => { p.orient = v; });
     head('Layout');
     radio('icLayout', 'one', p.layout === 'one', 'Everything on one page when it fits', (v) => { p.layout = v; });
     radio('icLayout', 'split', p.layout !== 'one', 'View on page 1, list follows', (v) => { p.layout = v; });
-    check('"Finished assembly" inset (when exploded)', p.assembled, (v) => { p.assembled = v; });
+    check('"Finished assembly" inset (when parts are moved or exploded)', p.assembled, (v) => { p.assembled = v; });
     head('List columns');
     check('Pictures', p.cols.thumb, (v) => { p.cols.thumb = v; });
     check('Description', p.cols.desc, (v) => { p.cols.desc = v; });
     check('Vendor', p.cols.vendor, (v) => { p.cols.vendor = v; });
     const note = document.createElement('div');
     note.className = 'pop-note';
-    note.textContent = 'The sheet prints the balloons exactly as arranged on screen. Long lists continue on page 2 automatically; with many columns the list starts there for clarity. Choose "Save as PDF" in the print dialog.';
+    note.textContent = 'The sheet shows the balloons exactly as arranged on screen. Long lists continue on page 2 automatically; with many columns the list starts there for clarity. "Save PDF" writes the file to your downloads; "Print…" opens the browser\'s print dialog instead.';
     card.appendChild(note);
 
     const btns = document.createElement('div');
     btns.className = 'pop-actions';
+    const save = document.createElement('button');
+    save.className = 'pop-btn pop-btn-primary';
+    save.textContent = 'Save PDF';
+    save.addEventListener('click', () => { closePrintSetup(); savePdf(); });
     const go = document.createElement('button');
-    go.className = 'pop-btn pop-btn-primary';
+    go.className = 'pop-btn';
     go.textContent = 'Print…';
+    go.title = 'Use the browser\'s print dialog instead';
     go.addEventListener('click', () => { closePrintSetup(); printInstructions(); });
     const cancel = document.createElement('button');
     cancel.className = 'pop-btn';
     cancel.textContent = 'Cancel';
     cancel.addEventListener('click', closePrintSetup);
+    btns.appendChild(save);
     btns.appendChild(go);
     btns.appendChild(cancel);
     card.appendChild(btns);
   }
 
-  // ---- print ----------------------------------------------------------------
+  // ---- captures -----------------------------------------------------------
   // The GL buffer is not preserved: render, then read the pixels immediately,
   // then draw the balloons on top in 2D canvas space. The capture always uses
   // a white background — a dark-theme viewport would print as a toner-black
-  // rectangle, the opposite of the drawing look this sheet is for.
-  function captureBallooned() {
+  // rectangle, the opposite of the drawing look this sheet is for. Returns
+  // the composited canvas: the PDF reads its pixels, print wants a data URL.
+  function renderBallooned() {
     const prevBg = viewer.scene.background;
     viewer.scene.background = new THREE.Color('#ffffff');
     viewer.renderer.render(viewer.scene, viewer.camera);
@@ -713,19 +727,23 @@ export function initInstructions(app) {
     }
     viewer.scene.background = prevBg;
     invalidate(); // repaint the themed background on the next frame
-    return out.toDataURL('image/png');
+    return out;
   }
+  const captureBallooned = () => renderBallooned().toDataURL('image/png');
 
-  // The "finished assembly" inset: the same camera with the explode silently
-  // collapsed — no events fire (measurements must not stale-flap), the pose
+  // The "finished assembly" inset: the same camera with every part silently
+  // put back where it belongs — explode collapsed AND hand moves/rotations
+  // undone (issue #22: people arrange a view by hand more often than with the
+  // explode slider, and the inset must still show the real finished
+  // assembly). No events fire (measurements must not stale-flap), the pose
   // is reapplied bit-exactly, and the explode trails sit the shot out.
-  function captureAssembled() {
+  function renderAssembled() {
     const model = app.model;
     const f = model.explodeF;
     const trailsGroup = viewer.scene.children.find((c) => c.name === 'bomdom-explode-trails');
     const trailsWere = trailsGroup ? trailsGroup.visible : false;
     if (trailsGroup) trailsGroup.visible = false;
-    M.applyPositions(model, 0);
+    M.applyHomePose(model);
     const prevBg = viewer.scene.background;
     viewer.scene.background = new THREE.Color('#ffffff');
     viewer.renderer.render(viewer.scene, viewer.camera);
@@ -736,24 +754,65 @@ export function initInstructions(app) {
     out.getContext('2d').drawImage(gl, 0, 0);
     viewer.scene.background = prevBg;
     if (trailsGroup) trailsGroup.visible = trailsWere;
-    M.applyPositions(model, f);
+    M.applyPositions(model, f); // restores explode + drag offsets bit-exactly
     invalidate();
-    return out.toDataURL('image/png');
+    return out;
+  }
+  const captureAssembled = () => renderAssembled().toDataURL('image/png');
+
+  // Is anything out of place in the view being instructed? An engaged
+  // explode, or a hand-moved (or rotated) part that is actually showing —
+  // that is when the inset earns its corner.
+  function anyDisplaced() {
+    const model = app.model;
+    if (!model) return false;
+    if (model.explodeF > 0.01) return true;
+    return M.movedRecs(model).some((r) => !M.isEffectivelyHidden(r, sel.scope, sel.filter));
   }
 
-  async function printInstructions() {
-    if (!st.items.length) { app.ui.toast('Nothing visible to print'); return; }
-    const p = st.print;
+  // One-page (view beside list) only works in landscape — portrait's width
+  // can't seat both, so it stacks instead.
+  function onePageFor(p) {
     const optionalCols = (p.cols.thumb ? 1 : 0) + (p.cols.desc ? 1 : 0) + (p.cols.vendor ? 1 : 0);
-    // One-page (view beside list) only works in landscape — portrait's width
-    // can't seat both, so it stacks instead.
-    const onePage = p.layout === 'one'
+    return p.layout === 'one'
       && p.orient === 'landscape'
       && st.items.length <= ONE_PAGE_ROW_LIMIT
       && optionalCols <= ONE_PAGE_COL_LIMIT;
-    pageStyle.textContent = `@media print { @page { size: A4 ${p.orient}; margin: 10mm; } }`;
+  }
 
-    const asm = (app.meta.assembly && app.meta.assembly.name) || 'assembly';
+  const asmName = () => (app.meta.assembly && app.meta.assembly.name) || 'assembly';
+
+  // ---- save PDF (the default, issue #23) -----------------------------------
+  // Same content as the printed sheet, written in the page by instrpdf.js
+  // and handed over as a download — no print dialog to click through.
+  async function savePdf() {
+    if (!st.items.length) { app.ui.toast('Nothing visible to export'); return; }
+    const p = st.print;
+    const name = `${sanitizeFile(asmName())}_instructions_${fileStamp()}.pdf`;
+    try {
+      const view = renderBallooned();
+      const assembled = p.assembled && anyDisplaced() ? renderAssembled() : null;
+      const blob = await buildInstructionsPdf({
+        items: st.items, settings: p, onePage: onePageFor(p),
+        view, assembled, asmName: asmName(), version: app.meta.app_version || '',
+      });
+      download(blob, name);
+      app.ui.toast(`Saved ${name}`);
+    } catch (e) {
+      console.error('[BomDom] instructions PDF failed', e);
+      app.ui.toast('PDF export failed: ' + e.message);
+    }
+  }
+
+  // ---- print (the browser's dialog, kept as the alternative) ---------------
+  async function printInstructions() {
+    if (!st.items.length) { app.ui.toast('Nothing visible to print'); return; }
+    const p = st.print;
+    const onePage = onePageFor(p);
+    const paper = PAPER[p.paper] || PAPER.a4;
+    pageStyle.textContent = `@media print { @page { size: ${paper.label} ${p.orient}; margin: 10mm; } }`;
+
+    const asm = asmName();
     const sheet = $('printSheet');
     sheet.replaceChildren();
     sheet.className = 'instr-print' + (onePage ? ' is-onepage' : '');
@@ -777,10 +836,11 @@ export function initInstructions(app) {
     img.src = captureBallooned();
     img.alt = '';
     fig.appendChild(img);
-    // Exploded sheets get a small "this is what it should look like" inset —
-    // the same camera with the explode collapsed (Dominic's IKEA instinct).
+    // Exploded or hand-arranged sheets get a small "this is what it should
+    // look like" inset — the same camera, every part back home (Dominic's
+    // IKEA instinct).
     let insetImg = null;
-    if (p.assembled && app.model.explodeF > 0.01) {
+    if (p.assembled && anyDisplaced()) {
       const inset = document.createElement('div');
       inset.className = 'ip-inset';
       insetImg = document.createElement('img');
@@ -919,7 +979,7 @@ export function initInstructions(app) {
       }
       rebuild();
       applyQueryToList();
-      app.ui.toast('Instructions — drag balloons to arrange (Shift+drag moves all); print from the Export menu (Esc to exit)');
+      app.ui.toast('Instructions — drag balloons to arrange (Shift+drag moves all); save the PDF from the Export menu (Esc to exit)');
     } else {
       closePrintSetup();
       clearBalloons();

@@ -111,6 +111,7 @@ Third-party components bundled in this file:
   Google Draco decoder wasm (Apache License 2.0, (c) Google LLC)
   write-excel-file 2.3.2 (MIT License, (c) Nikolay Kuchumov)
   jszip 3.10 (MIT License, (c) 2009-2016 Stuart Knightley et al; bundled by write-excel-file)
+  pako 1.0.11 (MIT License, (c) 2014-2017 Vitaly Puzrin, Andrey Tupitsin; jszip's deflate, also used for PDF image streams)
   file-saver 2.0 (MIT License, (c) 2016 Eli Grey; bundled by write-excel-file)
 -->`;
 
@@ -123,7 +124,9 @@ for (const [slot, content] of [
   if (!html.includes(slot)) fail(`shell.html is missing the ${slot} slot`);
   html = html.replace(slot, () => content); // function form: content may contain $-patterns
 }
-if (html.includes('%%')) fail('unfilled %% slot remains in the assembled template');
+// Slots are %%NAME%%; a bare "%%" is legitimate content (the PDF writer's
+// %%EOF trailer marker lives in the bundle).
+if (/%%[A-Z_]+%%/.test(html)) fail('unfilled %% slot remains in the assembled template');
 
 // The runtime sentinels must survive exactly once each, and the payload slots
 // must keep the single-quoted id attributes scripts/smoke_bomdom.py extracts by.

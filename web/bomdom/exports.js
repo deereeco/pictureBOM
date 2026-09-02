@@ -46,12 +46,13 @@ export function initExports(app) {
     const info = scopeInfo();
     const def = info.selected ? 'selected' : (info.anyHidden && info.visible) ? 'visible' : 'full';
     menu.innerHTML = '';
-    // Instruction mode's printable sheet is an export like the others, so it
-    // lives here (per Dominic) — the button opens the page-setup window.
+    // Instruction mode's sheet is an export like the others, so it lives
+    // here (per Dominic) — the button opens the page-setup window, whose
+    // default action saves the PDF file (issue #23).
     if (app.instructions && app.instructions.on) {
       const b = document.createElement('button');
       b.className = 'menu-item';
-      b.textContent = 'Print instructions (PDF)…';
+      b.textContent = 'Instructions PDF…';
       b.addEventListener('click', () => {
         menu.classList.add('hidden');
         app.instructions.openPrintSetup();
@@ -356,7 +357,7 @@ function exportPrint(app, scope) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function download(blob, filename) {
+export function download(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -367,11 +368,11 @@ function download(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-function sanitizeFile(name) {
+export function sanitizeFile(name) {
   return (name || 'assembly').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'assembly';
 }
 
-function fileStamp() {
+export function fileStamp() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;

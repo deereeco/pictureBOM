@@ -8,6 +8,7 @@
   },
   "devDependencies": {
     "esbuild": "0.25.8",
+    "pako": "1.0.11",
     "three": "0.178.0",
     "three-mesh-bvh": "0.9.1",
     "write-excel-file": "2.3.2"
