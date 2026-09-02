@@ -44,7 +44,11 @@
     --axis-z: #3a72d4;
     --axis-on: #ffffff;
     /* Part edge lines in the 3D view. Plain hex only — the value is fed to
-       THREE.Color, which takes no alpha. */
+       THREE.Color, which takes no alpha. Deliberately NOT overridden in the
+       dark theme: edges draw on the lit part surfaces, not the backdrop, so
+       dark ink reads well in both themes and the model looks the same when
+       the theme flips (issue #27 — light-grey dark-mode edges were the one
+       thing that changed with the theme). */
     --edge3d: #38404c;
 }
 :root[data-theme="dark"] {
@@ -82,7 +86,6 @@
     --axis-y: #57b98a;
     --axis-z: #6fa8f5;
     --axis-on: #101720;
-    --edge3d: #9aa4b0;
 }
 
 /* ---------- base ---------- */

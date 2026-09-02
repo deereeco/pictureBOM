@@ -714,7 +714,10 @@ const edgeLineCache = new WeakMap(); // mesh -> LineSegments child
 // toneMapped false: the CSS-picked colour must survive ACES tone mapping.
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x38404c, toneMapped: false });
 
-// Mirrors scene.js's theme-reactive background: --edge3d tracks data-theme.
+// Same shape as scene.js's theme-reactive background: read --edge3d, re-read
+// on data-theme flips. Today the token is theme-independent on purpose (see
+// style.css / issue #27 — edges stay dark ink in dark mode), so the observer
+// is a no-op in practice; it stays so a future per-theme value still applies.
 export function initEdgeColor(invalidate) {
   const apply = () => {
     const c = getComputedStyle(document.documentElement).getPropertyValue('--edge3d').trim();
