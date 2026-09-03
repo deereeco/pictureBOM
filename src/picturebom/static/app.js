@@ -122,28 +122,114 @@
     const readyTally = document.getElementById("readyTally");
     const node1 = document.getElementById("node1");
 
+    // Only the checks for the current input type count: the SolidWorks
+    // checklist for .sldasm files, the FreeCAD line for STEP files.
+    function visibleReadyChecks() {
+        return readyChecks.filter(c => c.offsetParent !== null);
+    }
+
     function updateReady() {
-        const n = readyChecks.filter(c => c.checked).length;
-        readyTally.textContent = n + " of " + readyChecks.length + " ready";
-        readyTally.classList.toggle("ok", n === readyChecks.length);
-        setNodeDone(node1, n === readyChecks.length, "1");
+        const checks = visibleReadyChecks();
+        const n = checks.filter(c => c.checked).length;
+        readyTally.textContent = n + " of " + checks.length + " ready";
+        readyTally.classList.toggle("ok", n === checks.length);
+        setNodeDone(node1, n === checks.length, "1");
     }
     readyChecks.forEach(c => c.addEventListener("change", updateReady));
 
     // Step 2 — files
     const node2 = document.getElementById("node2");
 
+    // STEP input — the file is scanned the moment it's chosen (structure
+    // only, no CAD engine) so the engine row and the part-or-assembly
+    // question can appear before the run starts.
+    const stepPanel = document.getElementById("stepPanel");
+    const stepInfo = document.getElementById("stepInfo");
+    const stepAsField = document.getElementById("stepAsField");
+    const stepBodyCount = document.getElementById("stepBodyCount");
+    const engineMsg = document.getElementById("engineMsg");
+    const engineFreecadHint = document.getElementById("engineFreecadHint");
+    const engineFreecadRadio = document.querySelector('input[name="engine"][value="freecad"]');
+    const readySolidworks = document.getElementById("readySolidworks");
+    const readyStep = document.getElementById("readyStep");
+    const readyStepCheck = document.getElementById("readyStepCheck");
+    const readyStepText = document.getElementById("readyStepText");
+    const freecadPathInput = document.getElementById("freecad_path");
+    let inspectTimer = null;
+    let inspectSeq = 0;
+
+    function isStepPath(p) {
+        return /\.(step|stp)$/i.test(p);
+    }
+
+    function setStepMode(on) {
+        stepPanel.classList.toggle("hidden", !on);
+        readySolidworks.classList.toggle("hidden", on);
+        readyStep.classList.toggle("hidden", !on);
+        updateReady();
+    }
+
+    function inspectStep(path) {
+        const seq = ++inspectSeq;
+        stepInfo.textContent = "Reading the STEP file…";
+        stepAsField.classList.add("hidden");
+        hideFieldMsg(engineMsg);
+        postJson("/api/inspect-step", { path, freecad_path: freecadPathInput.value.trim() })
+            .then(r => r.json())
+            .then(data => {
+                if (seq !== inspectSeq) return;
+                if (data.error) {
+                    stepInfo.textContent = "";
+                    showFieldMsg(assemblyMsg, "err", data.error);
+                } else {
+                    stepInfo.textContent = data.summary;
+                    if (data.needs_choice) {
+                        stepBodyCount.textContent = data.body_count;
+                        stepAsField.classList.remove("hidden");
+                    }
+                }
+                const fc = data.freecad || {};
+                if (fc.found) {
+                    const v = fc.version ? "FreeCAD " + fc.version : "FreeCAD";
+                    engineFreecadHint.textContent = v + " found" + (fc.source === "setting" ? " at your path" : "");
+                    engineFreecadRadio.disabled = false;
+                    engineFreecadRadio.checked = true;
+                    readyStepCheck.checked = true;
+                    readyStepText.textContent = v + " is installed — STEP files are read by FreeCAD, SolidWorks is not needed";
+                    if (fc.warning) showFieldMsg(engineMsg, "warn", fc.warning);
+                } else {
+                    engineFreecadHint.textContent = "not found";
+                    showFieldMsg(engineMsg, "err", fc.message || "FreeCAD was not found on this machine.");
+                    readyStepCheck.checked = false;
+                    readyStepText.textContent = "Install FreeCAD (winget install FreeCAD.FreeCAD) or set its location under Advanced";
+                }
+                updateReady();
+            })
+            .catch(() => {
+                if (seq === inspectSeq) stepInfo.textContent = "Could not read the STEP file.";
+            });
+    }
+
     function refreshAssemblyField() {
         const value = assemblyInput.value.trim();
         setNodeDone(node2, value !== "", "2");
-        if (value && !/\.sldasm$/i.test(value)) {
+        const step = value !== "" && isStepPath(value);
+        if (value && !step && !/\.sldasm$/i.test(value)) {
             showFieldMsg(assemblyMsg, "warn",
-                "That doesn't look like a .sldasm file — pictureBOM needs the assembly, not a part or drawing.");
+                "That doesn't look like a .sldasm or STEP file — pictureBOM needs the assembly " +
+                "(or a .step / .stp), not a part or drawing.");
         } else {
             hideFieldMsg(assemblyMsg);
         }
+        setStepMode(step);
+        clearTimeout(inspectTimer);
+        if (step) inspectTimer = setTimeout(() => inspectStep(value), 350);
     }
     assemblyInput.addEventListener("input", refreshAssemblyField);
+    freecadPathInput.addEventListener("change", () => {
+        const value = assemblyInput.value.trim();
+        if (value && isStepPath(value)) inspectStep(value);
+    });
 
     // -----------------------------------------------------------------------
     // "?" explanations on the Advanced options
@@ -423,8 +509,10 @@
     // retyping it. part_properties IS persisted — it's configuration the user
     // sets once (which custom properties their parts carry), not a stale-path
     // hazard.
+    // freecad_path is a machine setting (where FreeCAD lives), and the
+    // STEP panel echoes what was found, so it is never invisible state.
     const settingsFields = [
-        "assembly_path", "output_dir", "part_properties",
+        "assembly_path", "output_dir", "part_properties", "freecad_path",
     ];
 
     function loadSettings() {
@@ -722,7 +810,7 @@
         const offlineReady = csvPath && imagesDir && (glbPath || !outputs.html);
         if (!assemblyPath && !offlineReady) {
             showFieldMsg(assemblyMsg, "err",
-                "Choose your assembly file first — click Browse to find the .sldasm. " +
+                "Choose your assembly or STEP file first — click Browse to find the .sldasm or .step. " +
                 "(Or fill in every Advanced field to rebuild a BOM without SolidWorks.)");
             assemblyInput.focus();
             assemblyInput.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -785,6 +873,10 @@
             html_sidecar: outputs.htmlSidecar,
             viewer_up_axis: outputs.upAxis,
             part_properties: document.getElementById("part_properties").value.trim(),
+            engine: (document.querySelector('input[name="engine"]:checked') || {}).value || "auto",
+            step_as: stepAsField.classList.contains("hidden") ? ""
+                : ((document.querySelector('input[name="step_as"]:checked') || {}).value || ""),
+            freecad_path: freecadPathInput.value.trim(),
         };
 
         postJson("/api/run", params)
@@ -904,6 +996,9 @@
                 if (r.html_path && r.html_projected_mb) {
                     resLine += ` &mdash; 3D BOM: ${r.html_projected_mb} MB`;
                 }
+                if (r.engine === "freecad") {
+                    resLine += " &mdash; read with FreeCAD";
+                }
                 resultInfo.innerHTML = resLine;
 
                 if (openFolderBtn) openFolderBtn.classList.remove("hidden");
@@ -928,7 +1023,7 @@
                     // next run.
                     appendLog("Parts list also saved as " + basename(r.bom_csv_path) +
                         " — put it (or the .xlsx) in Advanced > Existing BOM to rerun " +
-                        "without SolidWorks.");
+                        "without " + (r.engine === "freecad" ? "FreeCAD" : "SolidWorks") + ".");
                 }
 
                 const warnings = (r.warnings || []).slice();

@@ -3,6 +3,7 @@ pictureBOM CLI — Command-line interface for pictureBOM.
 
 Usage:
     picturebom "C:\\path\\to\\assembly.sldasm" -o "C:\\output"
+    picturebom "C:\\path\\to\\model.step" -o "C:\\output" --html
     picturebom --csv "bom.csv" --images "C:\\images" -o "C:\\output"
 """
 
@@ -11,6 +12,7 @@ import logging
 import os
 import sys
 
+from . import stepfile
 from .core import PictureBOMError, run_pipeline
 
 
@@ -23,9 +25,34 @@ def main():
         "assembly",
         nargs="?",
         default=None,
-        help="Path to the SolidWorks assembly file (.sldasm). May be omitted "
-             "when --csv, --images and (for --html) --glb are all provided — "
-             "that combination runs without SolidWorks.",
+        help="Path to the SolidWorks assembly file (.sldasm), or a STEP file "
+             "(.step/.stp — read with FreeCAD, no SolidWorks needed). May be "
+             "omitted when --csv, --images and (for --html) --glb are all "
+             "provided — that combination runs without any CAD program.",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["auto", "freecad", "solidworks"],
+        default="auto",
+        help="CAD engine for a STEP input: auto (FreeCAD when installed) or "
+             "freecad. Reading STEP files through SolidWorks arrives in a "
+             "later version. Ignored for .sldasm input.",
+    )
+    parser.add_argument(
+        "--step-as",
+        choices=["part", "assembly"],
+        default=None,
+        help="For a STEP file that is one part with several bodies: list it "
+             "as one part, or as an assembly with one row per body. Asked "
+             "interactively when omitted.",
+    )
+    parser.add_argument(
+        "--freecad",
+        default=None,
+        metavar="PATH",
+        help="freecad.exe (or its install folder) when pictureBOM does not "
+             "find FreeCAD by itself. Also read from the PICTUREBOM_FREECAD "
+             "environment variable.",
     )
     parser.add_argument(
         "-o", "--output-dir",
@@ -129,6 +156,13 @@ def main():
             args.csv and args.images and (args.glb or not args.html)):
         parser.error("assembly is required unless --csv, --images and "
                      "(for --html) --glb are all provided")
+    is_step = bool(args.assembly) and stepfile.is_step_file(args.assembly)
+    if not is_step:
+        for flag, present in [("--step-as", args.step_as is not None),
+                              ("--freecad", args.freecad is not None),
+                              ("--engine", args.engine != "auto")]:
+            if present:
+                parser.error(f"{flag} only applies to STEP (.step/.stp) input")
 
     # Set up logging for CLI output
     level = logging.DEBUG if args.debug else logging.INFO
@@ -160,6 +194,23 @@ def main():
     if bom_mode is None:
         bom_mode = "nested" if args.include_subassemblies else "flat"
 
+    # A STEP that is one part with several bodies: ask how to list it (the
+    # GUI asks the same question the moment the file is picked).
+    step_as = args.step_as
+    if is_step and os.path.isfile(args.assembly):
+        try:
+            info = stepfile.inspect(args.assembly)
+        except stepfile.StepError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        print(stepfile.describe(info))
+        if step_as is None and stepfile.needs_part_or_assembly_choice(info):
+            answer = input(
+                f"This STEP file is one part with {info['body_count']} bodies. "
+                "List it as one (p)art or as an (a)ssembly of its bodies? [p/a]: "
+            ).strip().lower()
+            step_as = "assembly" if answer.startswith("a") else "part"
+
     try:
         result = run_pipeline(
             assembly_path=args.assembly,
@@ -180,6 +231,9 @@ def main():
             viewer_exports=not args.no_viewer_exports,
             viewer_up_axis=args.up_axis,
             part_properties=args.properties,
+            engine=args.engine,
+            step_as=step_as,
+            freecad_path=args.freecad,
         )
         if result["excel_path"]:
             print(f"\nDone! BOM saved to: {result['excel_path']}")

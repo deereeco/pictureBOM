@@ -133,14 +133,62 @@ def browse():
             title="Select 3D Model File",
             filetypes=[("3D model (glTF binary)", "*.glb"), ("All files", "*.*")],
         )
+    elif mode == "freecad":
+        path = filedialog.askopenfilename(
+            title="Locate freecad.exe",
+            filetypes=[("FreeCAD", "freecad.exe FreeCAD.exe"), ("Programs", "*.exe"),
+                       ("All files", "*.*")],
+        )
     else:
         path = filedialog.askopenfilename(
-            title="Select SolidWorks Assembly",
-            filetypes=[("SolidWorks Assembly", "*.sldasm"), ("All files", "*.*")],
+            title="Select SolidWorks Assembly or STEP File",
+            filetypes=[("Assembly or STEP", "*.sldasm *.step *.stp"),
+                       ("SolidWorks Assembly", "*.sldasm"),
+                       ("STEP files", "*.step *.stp"), ("All files", "*.*")],
         )
 
     root.destroy()
     return jsonify({"path": path or ""})
+
+
+@app.route("/api/inspect-step", methods=["POST"])
+def inspect_step():
+    """Scan a STEP file's structure (text only, no CAD engine) and report
+    whether FreeCAD is available to read it."""
+    from . import freecad_engine, stepfile
+
+    params = request.json or {}
+    path = (params.get("path") or "").strip()
+    freecad_path = ((params.get("freecad_path") or "").strip()
+                    or _load_settings().get("freecad_path") or None)
+
+    found = freecad_engine.find_freecad(freecad_path)
+    freecad = {"found": bool(found)}
+    if found:
+        freecad.update(exe=found["exe"], version=found["version"], source=found["source"])
+        warning = freecad_engine.check_version(found)
+        if found.get("ignored"):
+            warning = (f"No FreeCAD at the configured location {found['ignored']!r} — "
+                       f"using {found['exe']} instead. Fix or clear the FreeCAD "
+                       "location under Advanced." + (f" {warning}" if warning else ""))
+        if warning:
+            freecad["warning"] = warning
+    else:
+        freecad["message"] = freecad_engine.describe_missing(freecad_path)
+
+    if not path or not os.path.isfile(path):
+        return jsonify({"error": f"File not found: {path}", "freecad": freecad})
+    try:
+        info = stepfile.inspect(path)
+    except (stepfile.StepError, OSError) as e:
+        return jsonify({"error": str(e), "freecad": freecad})
+    return jsonify({
+        "info": info,
+        "summary": stepfile.describe(info),
+        "needs_choice": stepfile.needs_part_or_assembly_choice(info),
+        "body_count": info.get("body_count"),
+        "freecad": freecad,
+    })
 
 
 @app.route("/api/run", methods=["POST"])
@@ -197,6 +245,10 @@ def run_job():
                 keep_raw_glb=bool(params.get("keep_raw_glb", True)),
                 html_sidecar=bool(params.get("html_sidecar", False)),
                 part_properties=params.get("part_properties") or None,
+                engine=params.get("engine") or "auto",
+                step_as=params.get("step_as") or None,
+                freecad_path=(params.get("freecad_path")
+                              or _load_settings().get("freecad_path") or None),
             )
             # Persist timing history for future estimates (skip if no capture data)
             timing = result.get("timing", {})

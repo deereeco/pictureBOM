@@ -101,7 +101,8 @@ browser. Requirements and notes:
 ## Requirements
 
 - **Windows** (SolidWorks is Windows-only)
-- **SolidWorks** installed and running before you click Run
+- **SolidWorks** installed and running before you click Run — for `.sldasm` assemblies
+- **FreeCAD 1.0 or newer** (free: `winget install FreeCAD.FreeCAD`) — only for **STEP files**, which pictureBOM reads without SolidWorks (see [STEP files](#step-files))
 - **Microsoft 365 Excel** (or Excel 2024+) to see the in-cell pictures — older Excel versions show `#VALUE!` in the Picture column
 
 That's it — no Python installation needed; the installer takes care of everything else.
@@ -142,7 +143,7 @@ uv tool uninstall picturebom
 
 1. Open SolidWorks with your assembly (or have it accessible on disk).
 2. Launch pictureBOM from the Start Menu (or run `picturebom-gui` in a terminal).
-3. Set the **Assembly File** path to your `.sldasm` file.
+3. Set the **Assembly or STEP file** path to your `.sldasm` — or to a `.step` / `.stp` file (see [STEP files](#step-files) below).
 4. Set the **Output Directory** where images and the Excel BOM will be saved (defaults to `Documents\pictureBOM`).
 5. Choose your **Image Quality** and **Assembly Mode**:
    - **Parts only (flat)** -- every unique part listed once with total quantity
@@ -162,6 +163,30 @@ takes seconds instead of minutes. Edit the CSV first and the rebuilt BOM picks u
 your changes; rerun from the `.xlsx` instead and anything you have marked in its
 **Status** column comes across too.
 
+### STEP files
+
+Point pictureBOM at a `.step` / `.stp` file instead of a `.sldasm` and it reads the
+file with **FreeCAD** (free and open source — `winget install FreeCAD.FreeCAD`). The
+part names, assembly tree and quantities come from the STEP file itself; FreeCAD
+renders the part pictures and exports the 3D model for the interactive BOM.
+SolidWorks is not involved, so this works on any Windows machine with FreeCAD
+installed — handy for assemblies that arrive as STEP from a vendor or customer,
+for single vendor parts, and for machines without a SolidWorks licence.
+
+- A STEP file carries **no SolidWorks custom properties**, so Description, Vendor and
+  Vendor Part No come out blank (the dropdowns and product links still work once you
+  fill them in), and part properties configured under *Advanced* stay empty.
+- Pictures come from FreeCAD's renderer: shaded with dark feature edges on white,
+  isometric — close to SolidWorks' captures, not pixel-identical.
+- A STEP that is **one part with several bodies** (vendors often flatten an assembly
+  this way) asks, as soon as you pick the file, whether to list it as one part or as
+  an assembly with one row and picture per body (`--step-as` on the CLI).
+- pictureBOM finds FreeCAD in the usual install folders. If it lives elsewhere, set
+  *FreeCAD location* under *Advanced* (`--freecad` on the CLI). FreeCAD runs with its
+  own private settings, so your FreeCAD preferences are never touched.
+- Reading STEP files through SolidWorks instead of FreeCAD is planned for a later
+  version; the engine choice is already in the UI.
+
 ### Compare BOMs
 
 The **Compare BOMs** panel shows which parts you still need to order: pick the BOM for parts you already have and the BOM for the assembly you want to build, and it produces a shortage list (on screen and as an Excel file).
@@ -177,6 +202,7 @@ For scripting or automation, a CLI is also available:
 
 ```
 picturebom path\to\assembly.sldasm -o output_folder
+picturebom path\to\model.step -o output_folder --html      # read with FreeCAD
 ```
 
 Run `picturebom --help` for all options.
