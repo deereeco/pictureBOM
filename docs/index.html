@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pictureBOM live demos</title>
+<meta name="description" content="Open a real BomDom — pictureBOM's single-file interactive 3D bill of materials — straight in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232b9187' stroke-width='1.9' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M8 4.5 13.5 7.5V13.5L8 16.5 2.5 13.5V7.5Z'/%3E%3Cpath d='M2.5 7.5 8 10.5 13.5 7.5M8 10.5V16.5'/%3E%3Cpath d='M16.5 8.5H21.5M16.5 12.5H21.5M16.5 16.5H21.5'/%3E%3C/svg%3E">
+<script>
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("picturebom-theme"); } catch (e) {}
+  if (t !== "light" && t !== "dark") {
+    t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
+<style>
+  :root {
+    --paper: #f2f6f5;
+    --card: #ffffff;
+    --ink: #1d2a28;
+    --muted: #5c6f6b;
+    --line: #d7e1de;
+    --accent: #2b9187;
+    --accent-hover: #237a72;
+    --on-accent: #ffffff;
+    --tint: rgba(43, 145, 135, 0.09);
+    --code-bg: #e9f0ee;
+    --shadow: 0 1px 2px rgba(29, 42, 40, 0.06), 0 10px 28px -18px rgba(29, 42, 40, 0.3);
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --paper: #101b19;
+    --card: #172521;
+    --ink: #e2ecea;
+    --muted: #93a8a3;
+    --line: #2b403b;
+    --accent: #58bdb2;
+    --accent-hover: #74cbc1;
+    --on-accent: #0c1614;
+    --tint: rgba(88, 189, 178, 0.14);
+    --code-bg: #0d1614;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -18px rgba(0, 0, 0, 0.7);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { font: 15px/1.55 "Segoe UI Variable Text", "Segoe UI", "Avenir Next", system-ui, sans-serif; }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 22px 20px 72px; }
+
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+  .brand { display: flex; align-items: center; gap: 9px; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; font-size: 19px; }
+  .brand .a { font-weight: 400; color: var(--muted); }
+  .brand .b { font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
+  .bar-right { display: flex; align-items: center; gap: 8px; }
+  .ghost, .themebtn {
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px;
+    padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .ghost:hover, .themebtn:hover { border-color: var(--accent); }
+  .themebtn .moon, :root[data-theme="dark"] .themebtn .sun { display: none; }
+  :root[data-theme="dark"] .themebtn .moon { display: inline; }
+
+  h1 { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; font-size: 36px; line-height: 1.1; font-weight: 700; letter-spacing: -0.015em; margin: 44px 0 12px; text-wrap: balance; }
+  .lede { font-size: 17px; color: var(--muted); max-width: 60ch; margin: 0 0 30px; }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  .demos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .demo { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 20px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; }
+  .demo h2 { margin: 0; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+  .demo p { margin: 0; color: var(--muted); font-size: 14px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+  .fact { font-size: 12px; color: var(--muted); background: var(--tint); border-radius: 999px; padding: 3px 9px; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 8px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none; border-radius: 9px; padding: 10px 15px;
+    font-weight: 600; font-size: 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn svg { flex: none; }
+
+  .how { margin-top: 40px; }
+  .how h3 { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; font-size: 17px; margin: 0 0 8px; }
+  .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 22px; margin: 0; padding: 0; list-style: none; }
+  .keys li { display: flex; gap: 10px; align-items: baseline; color: var(--muted); font-size: 14px; }
+  kbd { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 6px; color: var(--ink); background: var(--card); flex: none; }
+  .note { margin-top: 26px; color: var(--muted); font-size: 13.5px; max-width: 66ch; }
+  footer { margin-top: 44px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <a class="brand" href="https://github.com/deereeco/pictureBOM" aria-label="pictureBOM on GitHub">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+        <path d="M8 4.5 13.5 7.5V13.5L8 16.5 2.5 13.5V7.5Z"/><path d="M2.5 7.5 8 10.5 13.5 7.5M8 10.5V16.5"/><path d="M16.5 8.5H21.5M16.5 12.5H21.5M16.5 16.5H21.5"/>
+      </svg>
+      <span><span class="a">picture</span><span class="b">BOM</span></span>
+    </a>
+    <div class="bar-right">
+      <a class="ghost" href="https://github.com/deereeco/pictureBOM">GitHub</a>
+      <button class="themebtn" id="themeBtn" type="button" aria-label="Switch between light and dark theme">
+        <svg class="sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        <svg class="moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        Theme
+      </button>
+    </div>
+  </div>
+
+  <h1>A bill of materials you can pick up and turn over</h1>
+  <p class="lede">A <b>BomDom</b> is pictureBOM's interactive 3D BOM: one HTML file holding the whole assembly, its parts list and a picture of every part. No install, no upload, no account. The two below are real exports — open one and click a part.</p>
+
+  <div class="demos">
+    <article class="demo">
+      <span class="eyebrow">From a STEP file · read with FreeCAD</span>
+      <h2>Domitron 3D printer</h2>
+      <p>A 3D printer designed in 2019: 8020 extrusion frame, drylin bearings, an E3D V6 hot end and an MK8 extruder. Exported from SolidWorks as one STEP file and turned into a BOM without SolidWorks.</p>
+      <div class="facts"><span class="fact">64 unique parts</span><span class="fact">329 instances</span><span class="fact">4 levels deep</span><span class="fact">3.7 MB, self-contained</span></div>
+      <div class="actions">
+        <a class="btn primary" href="samples/Domitron-3d-Printer_BomDom.html">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 3 21 8v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+          Open the 3D BOM
+        </a>
+        <a class="btn" href="samples/Domitron-3d-Printer_pictureBOM.xlsx">Excel picture BOM</a>
+      </div>
+    </article>
+
+    <article class="demo">
+      <span class="eyebrow">From a SolidWorks assembly</span>
+      <h2>Thorlabs cage stack</h2>
+      <p>A 30 mm optical cage assembly: cage plates, rods, a cage cube and kinematic and rotation mounts, exported straight from SolidWorks. Small and quick — a good first look at hover, isolate and explode.</p>
+      <div class="facts"><span class="fact">SolidWorks 2024 export</span><span class="fact">sub-assembly included</span></div>
+      <div class="actions">
+        <a class="btn primary" href="samples/Cage2-sjm_BomDom.html">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 3 21 8v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+          Open the 3D BOM
+        </a>
+        <a class="btn" href="samples/Cage2-sjm_pictureBOM.xlsx">Excel picture BOM</a>
+      </div>
+    </article>
+  </div>
+
+  <section class="how">
+    <h3>Things to try once it opens</h3>
+    <ul class="keys">
+      <li><kbd>click</kbd> a part to light up its row in the parts list, or hover a row to find the part</li>
+      <li><kbd>H</kbd> hide, <kbd>I</kbd> isolate — for one instance or every copy at once</li>
+      <li><kbd>A</kbd> assembly mode: select whole sub-assemblies and open them</li>
+      <li><kbd>D</kbd> measure between corners, edges and hole centres, with true fitted diameters</li>
+      <li><kbd>X</kbd> section view along any axis, with the cut faces outlined</li>
+      <li><kbd>slider</kbd> explode the assembly, then drag parts aside and snap them back</li>
+      <li><kbd>Export</kbd> your own parts list as Excel, CSV or a printable order sheet</li>
+    </ul>
+  </section>
+
+  <p class="note">Each file works completely offline too: save it and double-click. The pictures, the 3D model and the parts list are all inside the one HTML file. pictureBOM itself runs on Windows with SolidWorks, or with the free <a href="https://www.freecad.org/">FreeCAD</a> for STEP files — see the <a href="https://github.com/deereeco/pictureBOM#readme">README</a>.</p>
+
+  <footer>
+    <span>pictureBOM · MIT licence</span>
+    <span>Domitron 3D printer design © Dominic Raico, shared as a demo</span>
+  </footer>
+</div>
+<script>
+(function () {
+  var KEY = "picturebom-theme";
+  var btn = document.getElementById("themeBtn");
+  btn.addEventListener("click", function () {
+    var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem(KEY, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

@@ -17,7 +17,9 @@ Automatically capture isometric images of every part in a SolidWorks assembly an
 <!-- TODO: demo video of the BomDom viewer (recorded walkthrough) -->
 
 
-**Try the real thing** (generated from the example cage assembly, no install needed):
+**See it live, no install needed:** [**deereeco.github.io/pictureBOM**](https://deereeco.github.io/pictureBOM/) — open the 3D BOM of a complete 3D printer (64 parts, read from a STEP file with FreeCAD) or of the example cage stack, right in your browser.
+
+**Or try the files themselves:**
 [**⬇ Cage2-sjm_BomDom.html**](docs/samples/Cage2-sjm_BomDom.html) — download the raw file and double-click it (works fully offline) · [**⬇ Cage2-sjm_pictureBOM.xlsx**](docs/samples/Cage2-sjm_pictureBOM.xlsx) — the matching Excel picture BOM (Microsoft 365 Excel shows the in-cell pictures).
 
 ## What it does
