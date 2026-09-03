@@ -1235,8 +1235,11 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
                        viewer_exports=True,
                        component_colors=None, no_geometry_names=(),
                        census_complete=None, up_axis=DEFAULT_UP_AXIS,
-                       property_names=None):
+                       property_names=None, engine_label="SolidWorks"):
     """Post-process a raw SolidWorks GLB into a BomDom HTML (plus sidecar if huge).
+
+    engine_label names the program that wrote the GLB in user-facing
+    warnings ("SolidWorks" for native runs, "FreeCAD" for STEP input).
 
     size_limit_mb <= 0 forces sidecar mode (HTML + separate .glb) regardless
     of size; above HTML_LARGE_NOTE_MB the embedded file gets a slow-on-tablets
@@ -1298,7 +1301,7 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
         glb_bytes, recolored = inject_component_colors(
             glb_bytes, repack["parts"], component_colors or {}, sampler)
         if recolored:
-            msg = (f"SolidWorks exported no appearances (all parts default gray); "
+            msg = (f"{engine_label} exported no appearances (all parts default gray); "
                    f"recovered per-part colors from the model for {recolored} part(s). "
                    f"Face-level colors and textures are not available in this mode.")
             warnings.append(msg)

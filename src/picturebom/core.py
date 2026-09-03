@@ -24,6 +24,8 @@ import xlsxwriter
 from xlsxwriter.utility import xl_col_to_name
 from openpyxl import load_workbook
 
+from . import stepfile
+
 log = logging.getLogger(__name__)
 
 # SolidWorks constants
@@ -845,6 +847,54 @@ def _flat_parts_from_csv(bom_rows):
             "properties": properties,
         })
     return parts, prop_names
+
+
+def _color_from_hex(hex_color):
+    """'#rrggbb' -> the 9-double MaterialPropertyValues shape bomdom expects."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except (AttributeError, ValueError, IndexError):
+        return None
+    return (r, g, b, 1.0, 1.0, 0.3, 0.3, 0.0, 0.0)
+
+
+def _freecad_job(step_path, components, images_dir, width, height, glb_path,
+                 structure, step_as, want_images):
+    """Describe one FreeCAD run: which products to census, picture and export."""
+    seen = set()
+    parts = []
+    for comp in components.values():
+        key = comp["step_product"]
+        if key not in seen:
+            seen.add(key)
+            parts.append({"product": key,
+                          "is_assembly": bool(comp.get("step_is_assembly"))})
+    images = []
+    if want_images:
+        for comp in components.values():
+            images.append({
+                "name": comp["name"],
+                "product": comp["step_product"],
+                "is_assembly": bool(comp.get("step_is_assembly")),
+                "body_index": comp.get("step_body_index"),
+                "image_path": os.path.join(
+                    images_dir, f"{sanitize_filename(comp['name'])}.jpg"),
+            })
+    root = structure.root()
+    body_names = ([c["name"] for c in components.values() if c.get("step_body_index")]
+                  if step_as == "assembly" else [])
+    return {
+        "step_path": step_path,
+        "parts": parts,
+        "images": images,
+        "width": width,
+        "height": height,
+        "glb_path": glb_path,
+        "root_product": root.name if root else "",
+        "body_names": body_names,
+        "line_width": 2.0,
+    }
 
 
 def get_solidworks_year(sw_app):
@@ -1757,12 +1807,25 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                  output_excel=True, output_html=False,
                  html_size_limit_mb=400, keep_raw_glb=True, viewer_exports=True,
                  html_sidecar=False, viewer_up_axis="+y",
-                 part_properties=None):
+                 part_properties=None, engine="auto", step_as=None,
+                 freecad_path=None):
     """
     Run the full pictureBOM pipeline.
 
     Args:
-        assembly_path: Path to the .sldasm file.
+        assembly_path: Path to the .sldasm file, or a STEP file (.step/.stp).
+                  A STEP file is read by a CAD engine chosen with `engine`
+                  (FreeCAD today); it carries part names, hierarchy and
+                  quantities but no SolidWorks custom properties, so
+                  Description/Vendor columns come out blank.
+        engine: which CAD engine reads a STEP input — "auto" (FreeCAD when
+                installed), "freecad", or "solidworks" (not yet available
+                for STEP). Ignored for .sldasm inputs.
+        step_as: for a STEP file that is one product with several bodies,
+                 "part" (one BOM row, default) or "assembly" (one row per
+                 body). Ignored for STEP assemblies.
+        freecad_path: optional path to freecad.exe or its install folder
+                      when the automatic search does not find it.
         output_dir: Directory for images and BOM output.
         width: Image export width in pixels.
         height: Image export height in pixels.
@@ -1884,21 +1947,33 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                 warnings.append(msg)
                 status(msg)
 
-    # SolidWorks is only needed for what the user hasn't already provided:
+    # A CAD engine is only needed for what the user hasn't already provided:
     # BOM data (CSV), part images (images folder) and the 3D model (GLB).
-    # With all of those in hand the run is fully offline.
-    use_solidworks = not (has_csv and has_images
-                          and (has_glb or not output_html))
+    # With all of those in hand the run is fully offline. Which engine
+    # depends on the input: SolidWorks for its own assemblies, FreeCAD for
+    # STEP files.
+    need_cad = not (has_csv and has_images and (has_glb or not output_html))
+    is_step = bool(assembly_path) and stepfile.is_step_file(assembly_path)
+    use_solidworks = need_cad and not is_step
+    use_freecad = need_cad and is_step
+    engine = (engine or "auto").lower()
 
     assembly_path = os.path.abspath(assembly_path) if assembly_path else None
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    if use_solidworks:
+    if need_cad:
         if not assembly_path or not os.path.isfile(assembly_path):
             raise PictureBOMError(f"File not found: {assembly_path}")
-        if not assembly_path.lower().endswith(".sldasm"):
-            raise PictureBOMError("Input file must be a SolidWorks assembly (.sldasm)")
+        if not is_step and not assembly_path.lower().endswith(".sldasm"):
+            raise PictureBOMError("Input file must be a SolidWorks assembly "
+                                  "(.sldasm) or a STEP file (.step/.stp)")
+    if use_freecad and engine == "solidworks":
+        raise PictureBOMError(
+            "Reading STEP files through SolidWorks is not available yet — "
+            "choose the FreeCAD engine for STEP input.")
+    if use_freecad and engine not in ("auto", "freecad"):
+        raise PictureBOMError(f"Unknown engine {engine!r} (use freecad)")
 
     # Where images live
     img_dir = os.path.abspath(images_dir) if has_images else output_dir
@@ -1906,7 +1981,9 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     # Build Excel filename from assembly name + timestamp. Offline runs may
     # have no assembly path — fall back to the GLB (then CSV) for naming.
     name_source = assembly_path or glb_path or csv_path
-    root_name = os.path.splitext(os.path.basename(name_source))[0]
+    # Trimmed: a file saved as "Printer .STEP" must not put that space in
+    # the middle of every output name.
+    root_name = os.path.splitext(os.path.basename(name_source))[0].strip() or "BOM"
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     excel_name = f"{root_name}_{timestamp}.xlsx"
     excel_path = os.path.join(output_dir, excel_name)
@@ -1943,6 +2020,50 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         hierarchical_rows, components = traverse_assembly_hierarchical(
             assy_doc, debug=debug, extra_props=part_properties)
         status(f"Found {len(components)} unique component(s)")
+    elif use_freecad:
+        # STEP input: the BOM structure comes straight from the file's text
+        # (names, tree, quantities, body census); FreeCAD supplies pictures
+        # and the 3D model further down.
+        from . import freecad_engine  # lazy: keeps module import light
+        status(f"Reading STEP structure: {assy_name}")
+        try:
+            step_struct = stepfile.read_structure(assembly_path)
+        except stepfile.StepError as e:
+            raise PictureBOMError(str(e))
+        for msg in step_struct.warnings:
+            warnings.append(msg)
+            status(msg)
+        root_prod = step_struct.root()
+        if (step_struct.single_product and root_prod is not None
+                and root_prod.body_count > 1 and step_as not in ("part", "assembly")):
+            step_as = "part"
+            msg = (f"{root_prod.name} is one part with {root_prod.body_count} "
+                   "bodies — listed as a single part (read it as an assembly "
+                   "to get one row per body).")
+            warnings.append(msg)
+            status(msg)
+        hierarchical_rows, components = stepfile.build_rows(
+            step_struct, step_as or "part")
+        status(f"Found {len(components)} unique component(s) — "
+               + stepfile.describe(stepfile.inspect(assembly_path)))
+        if part_properties:
+            msg = ("STEP files carry no SolidWorks custom properties — the "
+                   "configured part properties (" + ", ".join(part_properties)
+                   + ") stay blank for this run.")
+            warnings.append(msg)
+            status(msg)
+        freecad = freecad_engine.find_freecad(freecad_path)
+        if freecad is None:
+            raise PictureBOMError(freecad_engine.describe_missing(freecad_path))
+        if freecad.get("ignored"):
+            msg = (f"No FreeCAD at the configured location {freecad['ignored']!r} — "
+                   f"using {freecad['exe']} instead.")
+            warnings.append(msg)
+            status(msg)
+        vmsg = freecad_engine.check_version(freecad)
+        if vmsg:
+            warnings.append(vmsg)
+            status(vmsg)
     else:
         status("SolidWorks not needed — using the provided CSV, images"
                + (" and 3D model" if has_glb else ""))
@@ -1966,7 +2087,47 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     # Capture images (skip if user provided existing images)
     captured_count = 0
     capture_start = time.time()
-    if not has_images and total > 0:
+    step_glb = None  # FreeCAD's glTF export lands here (one FreeCAD run does both)
+    if use_freecad:
+        want_images = not has_images and total > 0
+        want_glb = output_html and not has_glb
+        if want_images or want_glb:
+            if want_glb:
+                step_glb = os.path.join(output_dir, f"{root_name}_{timestamp}_raw.glb")
+            job = _freecad_job(assembly_path, components, output_dir, width, height,
+                               step_glb, step_struct, step_as, want_images)
+            status("Starting FreeCAD"
+                   + (f" {freecad['version']}" if freecad.get("version") else "")
+                   + (f" — {total} pictures" if want_images else "")
+                   + (" + 3D model" if want_glb else "") + "...")
+            try:
+                fc_result = freecad_engine.run_job(
+                    freecad, job, on_status=status, on_progress=on_progress)
+            except freecad_engine.FreeCADError as e:
+                raise PictureBOMError(str(e))
+            for msg in fc_result.get("warnings", []):
+                warnings.append(msg)
+                status(msg)
+            # Fold FreeCAD's census and colours back into the components.
+            for comp in components.values():
+                info = fc_result.get("parts", {}).get(comp["step_product"])
+                if not info:
+                    continue
+                if info.get("color"):
+                    comp["color"] = _color_from_hex(info["color"])
+                if comp.get("step_body_index") is None:
+                    if info.get("solids") is not None:
+                        comp["solid_bodies"] = info["solids"]
+                    if info.get("shells") is not None:
+                        comp["surface_bodies"] = info["shells"]
+            if want_images:
+                captured_count = sum(1 for v in fc_result.get("images", {}).values() if v)
+                status(f"{captured_count}/{total} images captured.")
+            if want_glb and not fc_result.get("glb"):
+                step_glb = None
+        if has_images:
+            status(f"Using existing images from: {img_dir}")
+    elif not has_images and total > 0:
         status(f"Capturing images ({total} components)...")
         captured_count, _ = capture_all_components(
             sw_app, components, output_dir, width, height, on_progress=on_progress,
@@ -2064,6 +2225,10 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             raw_glb = glb_path
             glb_ok, glb_err = True, ""
             status(f"Using the provided 3D model: {os.path.basename(raw_glb)}")
+        elif use_freecad:
+            raw_glb = step_glb
+            glb_ok = bool(step_glb) and os.path.isfile(step_glb)
+            glb_err = "" if glb_ok else "FreeCAD wrote no 3D model"
         else:
             status("Exporting 3D model (single step — may take a few minutes)...")
             # SolidWorks' glTF exporter rewrites its target filename
@@ -2085,7 +2250,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         glb_elapsed = time.time() - glb_start
 
         if not glb_ok:
-            sw_year = get_solidworks_year(sw_app)
+            sw_year = get_solidworks_year(sw_app) if sw_app is not None else None
             hint = (f" 3D export needs SolidWorks 2024 or newer (detected {sw_year})."
                     if sw_year is not None and sw_year < 2024 else "")
             msg = f"3D export skipped: {glb_err}.{hint}"
@@ -2122,9 +2287,17 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     # as empty nodes — name them so the warning says why.
                     # A part whose census failed (None) has UNKNOWN bodies:
                     # it must not be called "hidden" with confidence.
-                    no_geometry = [c["name"] for c in components.values()
-                                   if c.get("doc_type") == SW_DOC_PART
-                                   and c.get("solid_bodies") == 0]
+                    if use_freecad:
+                        # FreeCAD exports surface bodies too — only parts
+                        # with no bodies at all come out empty.
+                        no_geometry = [c["name"] for c in components.values()
+                                       if c.get("doc_type") == SW_DOC_PART
+                                       and c.get("solid_bodies") == 0
+                                       and (c.get("surface_bodies") or 0) == 0]
+                    else:
+                        no_geometry = [c["name"] for c in components.values()
+                                       if c.get("doc_type") == SW_DOC_PART
+                                       and c.get("solid_bodies") == 0]
                     census_complete = all(
                         c.get("solid_bodies") is not None
                         for c in components.values()
@@ -2135,7 +2308,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     recoverable = [c["name"] for c in components.values()
                                    if c["name"] in set(no_geometry)
                                    and (c.get("surface_bodies") or 0) > 0]
-                    if recoverable and not has_glb:
+                    if recoverable and not has_glb and assy_doc is not None:
                         status(f"Recovering {len(recoverable)} surface-only "
                                "part(s) from SolidWorks' display tessellation...")
                         try:
@@ -2201,6 +2374,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     no_geometry_names=no_geometry,
                     census_complete=census_complete,
                     property_names=html_property_names,
+                    engine_label="FreeCAD" if use_freecad else "SolidWorks",
                 )
                 html_elapsed = time.time() - html_start
                 warnings.extend(res.pop("warnings", []))
@@ -2247,6 +2421,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         "html_mode": html_result["html_mode"],
         "sidecar_path": html_result["sidecar_path"],
         "html_projected_mb": html_result["html_projected_mb"],
+        "engine": ("freecad" if use_freecad else
+                   "solidworks" if use_solidworks else None),
         "warnings": warnings,
         "timing": {
             "capture_seconds": round(capture_elapsed, 2),

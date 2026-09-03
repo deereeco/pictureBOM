@@ -64,8 +64,13 @@
                                 <h2 class="card-title">Before you run</h2>
                                 <span class="tally" id="readyTally">0 of 2 ready</span>
                             </div>
-                            <label class="check"><input type="checkbox" class="ready-check"> SolidWorks is open on this machine</label>
-                            <label class="check"><input type="checkbox" class="ready-check"> Pack and Go your assembly to a local folder &mdash; files locked in PDM won't open</label>
+                            <div id="readySolidworks">
+                                <label class="check"><input type="checkbox" class="ready-check"> SolidWorks is open on this machine</label>
+                                <label class="check"><input type="checkbox" class="ready-check"> Pack and Go your assembly to a local folder &mdash; files locked in PDM won't open</label>
+                            </div>
+                            <div id="readyStep" class="hidden">
+                                <label class="check"><input type="checkbox" class="ready-check" id="readyStepCheck"> <span id="readyStepText">FreeCAD is installed &mdash; STEP files are read by FreeCAD, SolidWorks is not needed</span></label>
+                            </div>
                         </div>
                     </li>
 
@@ -77,12 +82,46 @@
                                 <h2 class="card-title">Choose files</h2>
                             </div>
                             <div class="field">
-                                <label class="label" for="assembly_path">Assembly file (.sldasm)</label>
+                                <label class="label" for="assembly_path">Assembly or STEP file (.sldasm, .step)</label>
                                 <div class="row">
-                                    <input class="input" type="text" id="assembly_path" name="assembly_path" placeholder="C:\path\to\assembly.sldasm">
+                                    <input class="input" type="text" id="assembly_path" name="assembly_path" placeholder="C:\path\to\assembly.sldasm  or  C:\path\to\model.step">
                                     <button type="button" class="btn btn-neutral btn-browse" data-target="assembly_path" data-mode="file">Browse&hellip;</button>
                                 </div>
                                 <p class="field-msg hidden" id="assemblyMsg"></p>
+                                <div id="stepPanel" class="step-panel hidden">
+                                    <p class="step-info" id="stepInfo"></p>
+                                    <div class="step-engine">
+                                        <span class="label">Read the STEP with</span>
+                                        <div class="radios radios-inline">
+                                            <label class="radio">
+                                                <input type="radio" name="engine" value="freecad" checked>
+                                                <span><span class="radio-name">FreeCAD</span>
+                                                <span class="radio-hint" id="engineFreecadHint">checking&hellip;</span></span>
+                                            </label>
+                                            <label class="radio is-disabled" title="Reading STEP files through SolidWorks arrives in a later version">
+                                                <input type="radio" name="engine" value="solidworks" disabled>
+                                                <span><span class="radio-name">SolidWorks</span>
+                                                <span class="radio-hint">not yet available for STEP</span></span>
+                                            </label>
+                                        </div>
+                                        <p class="field-msg hidden" id="engineMsg"></p>
+                                    </div>
+                                    <div class="step-as hidden" id="stepAsField">
+                                        <span class="label">This file is one part with <span id="stepBodyCount">several</span> bodies &mdash; treat it as</span>
+                                        <div class="radios radios-inline">
+                                            <label class="radio">
+                                                <input type="radio" name="step_as" value="part" checked>
+                                                <span><span class="radio-name">One part</span>
+                                                <span class="radio-hint">a single BOM row and picture</span></span>
+                                            </label>
+                                            <label class="radio">
+                                                <input type="radio" name="step_as" value="assembly">
+                                                <span><span class="radio-name">An assembly of its bodies</span>
+                                                <span class="radio-hint">one row and picture per body</span></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
                                 <p class="ihint">
                                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.5v3.5M8 5.1v.2"/></svg>
                                     <span>The file picker opens in a separate window &mdash; if you don't see it, check behind this window or in the taskbar.</span>
@@ -98,7 +137,7 @@
                             <details class="adv">
                                 <summary>
                                     <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5 7 5 3.5 8.5"/></svg>
-                                    Advanced &mdash; reuse an existing BOM, part images or 3D model
+                                    Advanced &mdash; reuse an existing BOM, part images or 3D model; FreeCAD location
                                 </summary>
                                 <div class="adv-body">
                                     <div class="field">
@@ -124,6 +163,14 @@
                                             <button type="button" class="btn btn-neutral btn-browse" data-target="glb_path" data-mode="glb">Browse&hellip;</button>
                                         </div>
                                         <p class="hint">Skip the slow 3D export &mdash; reuse the <span class="mono">_raw.glb</span> an earlier run kept (or a .glb saved from SolidWorks via File &gt; Save As). With BOM + images + 3D model all filled in, the run doesn't need SolidWorks at all.</p>
+                                    </div>
+                                    <div class="field">
+                                        <label class="label" for="freecad_path">FreeCAD location (for STEP files)</label>
+                                        <div class="row">
+                                            <input class="input" type="text" id="freecad_path" name="freecad_path" placeholder="Found automatically &mdash; only needed if pictureBOM can't find FreeCAD">
+                                            <button type="button" class="btn btn-neutral btn-browse" data-target="freecad_path" data-mode="freecad">Browse&hellip;</button>
+                                        </div>
+                                        <p class="hint">pictureBOM looks in the usual install folders. Point it at <span class="mono">freecad.exe</span> (or its folder) if FreeCAD lives somewhere else. Missing FreeCAD? <span class="mono">winget install FreeCAD.FreeCAD</span></p>
                                     </div>
                                 </div>
                             </details>
