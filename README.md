@@ -2,25 +2,24 @@
 
 Automatically capture isometric images of every part in a SolidWorks assembly and generate an Excel Bill of Materials with embedded thumbnails — plus an interactive **3D BOM in a single HTML file** anyone can open in a browser.
 
-**The Excel picture BOM** — a thumbnail of every part embedded in its row, with quantities, vendors, tracking dropdowns and product links:
+**The Excel picture BOM** — a thumbnail of every part embedded in its row, with quantities, where-used, vendor columns and a tracking dropdown. This one is a complete 3D printer read from a STEP file, so the vendor columns start out blank:
 
 <p align="center">
-  <img src="docs/media/picturebom-excel.png" alt="Excel picture BOM: in-cell part thumbnails with part numbers, descriptions, quantities and where-used" width="900">
+  <img src="docs/media/picturebom-excel-domitron.png" alt="Excel picture BOM of the Domitron 3D printer: in-cell part thumbnails with part numbers, quantities and where-used" width="900">
 </p>
 
-**The 3D interactive BOM (BomDom)** — one HTML file with a live 3D view synced to the parts list; here mid-explode with all 16 cage rods selected:
+**The 3D interactive BOM (BomDom)** — one HTML file with a live 3D view synced to the parts list; here the same printer mid-explode with all seven frame extrusions selected:
 
 <p align="center">
-  <img src="docs/media/bomdom-exploded.jpg" alt="BomDom viewer: plane-constrained radial explode with the parts list alongside" width="900">
+  <img src="docs/media/bomdom-domitron-exploded.jpg" alt="BomDom viewer: the Domitron 3D printer mid-explode with its seven frame extrusions selected and the parts list alongside" width="900">
 </p>
 
 <!-- TODO: demo video of the BomDom viewer (recorded walkthrough) -->
 
 
-**See it live, no install needed:** [**deereeco.github.io/pictureBOM**](https://deereeco.github.io/pictureBOM/) — open the 3D BOM of a complete 3D printer (64 parts, read from a STEP file with FreeCAD) or of the example cage stack, right in your browser.
+**See it live, no install needed:** [**deereeco.github.io/pictureBOM**](https://deereeco.github.io/pictureBOM/) — the 3D BOM of that printer (64 parts, read from a STEP file with FreeCAD) opens straight in your browser. It is one self-contained HTML file: save the page and it works offline too.
 
-**Or try the files themselves:**
-[**⬇ Cage2-sjm_BomDom.html**](docs/samples/Cage2-sjm_BomDom.html) — download the raw file and double-click it (works fully offline) · [**⬇ Cage2-sjm_pictureBOM.xlsx**](docs/samples/Cage2-sjm_pictureBOM.xlsx) — the matching Excel picture BOM (Microsoft 365 Excel shows the in-cell pictures).
+**The matching Excel file:** [**⬇ Domitron-3d-Printer_pictureBOM.xlsx**](docs/samples/Domitron-3d-Printer_pictureBOM.xlsx) — the Excel picture BOM of the same printer (Microsoft 365 Excel shows the in-cell pictures).
 
 ## What it does
 
