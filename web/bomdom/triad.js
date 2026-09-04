@@ -43,21 +43,8 @@ const MIN_TICK_PX = 34;         // ruler ticks never sit closer than this
 const CLICK_SLOP_PX = 4;
 const CENTER_COLOR = 0xc9a227;  // fixed, like measure's canvas marker colours
 
-// Display units mirror the measure tool's (world units are meters).
-const UNITS_KEY = 'picturebom-bomdom-units';
-const UNITS = {
-  mm: { scale: 1000, suffix: 'mm', freeDec: 1 },
-  cm: { scale: 100, suffix: 'cm', freeDec: 2 },
-  m: { scale: 1, suffix: 'm', freeDec: 4 },
-  in: { scale: 1000 / 25.4, suffix: 'in', freeDec: 2 },
-};
-
-function readUnit() {
-  try {
-    const u = localStorage.getItem(UNITS_KEY);
-    return UNITS[u] ? u : 'mm';
-  } catch { return 'mm'; }
-}
+// Display units are the measure tool's (shared table + stored preference).
+import { UNITS, readUnit, formatLength, trimNum } from './units.js';
 
 // Smallest 1-2-5 step (in display units) whose ticks are at least
 // MIN_TICK_PX apart on screen at the current zoom. Exported for
@@ -87,9 +74,6 @@ export function lineParam(origin, dir, rayOrigin, rayDir) {
 }
 
 export { UNITS, MIN_TICK_PX }; // verifier needs the contract, not copies
-
-// Drop float junk from tick labels: 15.000000000002 -> "15".
-const trimNum = (n) => String(parseFloat(n.toFixed(6)));
 
 export function initTriad(app) {
   const viewer = app.viewer;
@@ -365,11 +349,9 @@ export function initTriad(app) {
   }
   const hideChip = () => chip.classList.add('hidden');
 
-  function fmtLen(worldVal, unit, snapped) {
-    const u = UNITS[unit];
-    const disp = worldVal * u.scale;
-    return (snapped ? trimNum(disp) : disp.toFixed(u.freeDec)) + ' ' + u.suffix;
-  }
+  // Snapped values are exact 1-2-5 multiples: print them without float junk.
+  const fmtLen = (worldVal, unit, snapped) =>
+    formatLength(worldVal, unit, UNITS[unit].freeDec, snapped);
   const fmtDeg = (deg, snapped) => (snapped ? String(Math.round(deg)) : deg.toFixed(1)) + '°';
 
   // ---- applying moves -------------------------------------------------------

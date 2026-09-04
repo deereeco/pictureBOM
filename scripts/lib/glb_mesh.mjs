@@ -1,7 +1,9 @@
-// Shared pipeline: BomDom HTML -> embedded GLB -> Draco-decoded, world-space
-// mesh instances. Used by scripts/verify_measure_math.mjs (and ad-hoc analysis
-// scripts). Plain Node, no npm deps at the repo root — the Draco decoder is
-// loaded from web/node_modules/three.
+// Shared pipeline: BomDom HTML -> embedded GLB -> decoded, world-space mesh
+// instances. Used by scripts/verify_measure_math.mjs (and ad-hoc analysis
+// scripts). Plain Node, no npm deps at the repo root. Handles both geometry
+// flavours pictureBOM ships: SolidWorks exports are Draco-compressed (decoder
+// loaded from web/node_modules/three), FreeCAD/STEP exports are plain float32
+// accessors (no decoder needed — see usesDraco()).
 
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -92,9 +94,49 @@ function readIndices(draco, decoder, dmesh) {
   return out;
 }
 
+// True when any primitive needs the Draco decoder (SolidWorks-origin GLBs).
+export function usesDraco(gltf) {
+  return (gltf.meshes || []).some((m) => m.primitives.some(
+    (p) => p.extensions && p.extensions.KHR_draco_mesh_compression));
+}
+
+// Plain accessor -> typed array (interleaved byteStride honoured; DataView so
+// unaligned offsets never matter). Floats stay Float32, integers widen to Uint32.
+const COMP = {
+  5120: ['getInt8', 1], 5121: ['getUint8', 1], 5122: ['getInt16', 2],
+  5123: ['getUint16', 2], 5125: ['getUint32', 4], 5126: ['getFloat32', 4],
+};
+const NCOMP = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+function readAccessor(gltf, bin, accIndex) {
+  const acc = gltf.accessors[accIndex];
+  if (acc.bufferView === undefined) throw new Error(`accessor ${accIndex} has no bufferView (sparse/zero-filled accessors unsupported)`);
+  const bv = gltf.bufferViews[acc.bufferView];
+  const [getter, cb] = COMP[acc.componentType];
+  const nc = NCOMP[acc.type];
+  const stride = bv.byteStride || cb * nc;
+  const base = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+  const dv = new DataView(bin.buffer, bin.byteOffset, bin.byteLength);
+  const out = new (acc.componentType === 5126 ? Float32Array : Uint32Array)(acc.count * nc);
+  for (let i = 0; i < acc.count; i++) {
+    const at = base + i * stride;
+    for (let c = 0; c < nc; c++) out[i * nc + c] = dv[getter](at + c * cb, true);
+  }
+  return out;
+}
+
+function decodePlainPrimitive(gltf, bin, prim) {
+  if (prim.mode !== undefined && prim.mode !== 4) throw new Error(`primitive mode ${prim.mode} unsupported (triangles only)`);
+  const positions = readAccessor(gltf, bin, prim.attributes.POSITION);
+  let indices;
+  if (prim.indices !== undefined) indices = readAccessor(gltf, bin, prim.indices);
+  else { indices = new Uint32Array(positions.length / 3); for (let i = 0; i < indices.length; i++) indices[i] = i; }
+  return { positions, indices };
+}
+
 function decodePrimitive(draco, gltf, bin, prim) {
   const ext = prim.extensions && prim.extensions.KHR_draco_mesh_compression;
-  if (!ext) throw new Error('non-Draco primitive found; this pipeline only handles KHR_draco_mesh_compression');
+  if (!ext) return decodePlainPrimitive(gltf, bin, prim);
+  if (!draco) throw new Error('Draco primitive found but no decoder was loaded (call loadDraco when usesDraco(gltf))');
   const bv = gltf.bufferViews[ext.bufferView];
   const bytes = bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength);
   const dbuf = new draco.DecoderBuffer();
@@ -170,6 +212,7 @@ function aabbOf(positions) {
 
 // Decode each mesh once (primitives merged), then instance it per node of the
 // default scene. Every instance gets baked world-space Float64 vertices.
+// `draco` may be null for plain (non-Draco) GLBs.
 export function collectInstances(draco, gltf, bin) {
   const meshGeom = (gltf.meshes || []).map((mesh) => {
     let nVerts = 0, nIdx = 0;

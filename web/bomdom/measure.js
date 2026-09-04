@@ -18,17 +18,14 @@ import {
   lineLineClosest, distPointSegment, segSegClosest,
   planeCircleMinMax, parallelWallMinMax,
 } from './fitmath.js';
+// Display units are shared with the move triad (one reader preference).
+import {
+  UNITS, DEFAULT_UNIT, readUnit, storeUnit, decimalsFor, formatLength, formatError,
+} from './units.js';
 
 const $ = (id) => document.getElementById(id);
 
-const UNITS_KEY = 'picturebom-bomdom-units'; // reader preference, like edges
-const XYZ_KEY = 'picturebom-bomdom-xyz';     // ΔXYZ readout, same idea; missing -> off
-const UNITS = {
-  mm: { scale: 1000, suffix: 'mm', maxDec: 3 },
-  cm: { scale: 100, suffix: 'cm', maxDec: 4 },
-  m: { scale: 1, suffix: 'm', maxDec: 6 },
-  in: { scale: 1000 / 25.4, suffix: 'in', maxDec: 4 },
-};
+const XYZ_KEY = 'picturebom-bomdom-xyz';     // ΔXYZ readout: reader preference like units; missing -> off
 
 const SNAP_PX = 12;             // screen-space snap radius
 const QUANT_DIVISOR = 16383;    // 14-bit Draco position grid (measured)
@@ -60,15 +57,6 @@ export function initMeasure(app) {
   const invalidate = () => { if (app.viewer) app.viewer.invalidate(); };
 
   // ---- units ------------------------------------------------------------
-  function readUnit() {
-    try {
-      const u = localStorage.getItem(UNITS_KEY);
-      return UNITS[u] ? u : 'mm';
-    } catch { return 'mm'; }
-  }
-  function storeUnit(u) {
-    try { localStorage.setItem(UNITS_KEY, u); } catch { /* ignore */ }
-  }
   function readXyz() {
     try { return localStorage.getItem(XYZ_KEY) === 'on'; } catch { return false; }
   }
@@ -77,19 +65,9 @@ export function initMeasure(app) {
   }
 
   // Value + error (meters) -> display string. The last displayed digit is
-  // never finer than the error estimate.
-  function fmt(valM, errM) {
-    const u = UNITS[st.unit];
-    const v = valM * u.scale;
-    const e = Math.abs(errM) * u.scale;
-    let dec = u.maxDec;
-    if (e > 0) dec = Math.max(0, Math.min(u.maxDec, Math.ceil(-Math.log10(e))));
-    return `${v.toFixed(dec)} ${u.suffix}`;
-  }
-  function fmtErr(errM) {
-    const u = UNITS[st.unit];
-    return `±${(errM * u.scale).toPrecision(1)} ${u.suffix}`;
-  }
+  // never finer than the error estimate (rule lives in units.js, verified).
+  const fmt = (valM, errM) => formatLength(valM, st.unit, decimalsFor(errM, st.unit));
+  const fmtErr = (errM) => formatError(errM, st.unit);
 
   // ---- accuracy ----------------------------------------------------------
   // Per-geometry quantization step from the trusted (recomputed) bounds.
@@ -1516,7 +1494,7 @@ export function initMeasure(app) {
   const unitSel = $('measureUnits');
   unitSel.value = st.unit;
   unitSel.addEventListener('change', () => {
-    st.unit = UNITS[unitSel.value] ? unitSel.value : 'mm';
+    st.unit = UNITS[unitSel.value] ? unitSel.value : DEFAULT_UNIT;
     storeUnit(st.unit);
     for (const m of st.measurements) if (!m.stale) refreshLabel(m);
     if (st.pending && pendingLabel) pendingLabel.textContent = entityLabel(st.pending);

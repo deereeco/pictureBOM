@@ -74,7 +74,8 @@ parts list. Send that one file to a teammate — they double-click it and can:
   picks snap to corners and feature edges, hole rims and bores read back as true
   fitted diameters, flat faces measure face-to-face, and hole readouts offer
   center/min/max just like SolidWorks Measure. Every value carries an honest
-  ± bound (about ±0.01 mm on typical parts) and a mm/cm/m/inch switcher
+  ± bound (about ±0.01 mm on typical parts) and a unit switcher (µm, mm, cm,
+  m, in, ft, feet + inches)
 - **Section view** (press `X`): cut the model open along any model axis with a
   position slider and flip control — cut cross-sections are outlined so the
   open interiors read clearly
