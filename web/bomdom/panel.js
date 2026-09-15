@@ -314,8 +314,11 @@ export function initPanel(app) {
   function syncTreeRows() {
     if (treeMode !== 'model' || !app.model) return;
     const hoverIds = new Set(app.sel.hover ? app.sel.hover.ids : []);
+    const anchor = app.sel.scope && app.sel.scope.anchorId != null
+      ? app.model.records[app.sel.scope.anchorId] : null;
     const walk = (node) => {
       if (node.el) {
+        node.el.classList.toggle('is-scope', !!anchor && node.recs.includes(anchor));
         node.el.classList.toggle('is-selected',
           node.recs.some((r) => !!M.selectedAncestorOf(app.sel.selected, r)));
         node.el.classList.toggle('is-hover', node.recs.some((r) => hoverIds.has(r.id)));
@@ -452,6 +455,20 @@ export function initPanel(app) {
     }
   }
 
+  // The Structure tab follows every level change: the viewed assembly's row
+  // is expanded (its parts in view) and scrolled to, so the tree and the 3D
+  // view never disagree about where you are.
+  function revealScope() {
+    if (treeMode !== 'model' || !app.model || !app.sel.scope || app.sel.scope.anchorId == null) return;
+    const node = nodeByRecId.get(app.sel.scope.anchorId);
+    if (!node) return;
+    expandAncestors(node);
+    let depth = 0;
+    for (let p = node.parent; p; p = p.parent) depth += 1;
+    if (node.children.length) toggleNode(node, depth, true);
+    if (node.el) node.el.scrollIntoView({ block: 'start' });
+  }
+
   function revealSelection() {
     if (!app.model || !app.sel.selected.size) return;
     const first = app.model.records[[...app.sel.selected][0]];
@@ -573,7 +590,7 @@ export function initPanel(app) {
     if (activeTab === 'structure') revealSelection();
   });
   app.events.on('appearance', () => { syncRows(); syncTreeRows(); });
-  app.events.on('scope', () => { syncRows(); syncTreeRows(); });
+  app.events.on('scope', () => { syncRows(); syncTreeRows(); revealScope(); });
   app.events.on('model', () => {
     buildTree(); // the instance tree exists only once a model is in
     syncRows();

@@ -1,4 +1,5 @@
-// Canvas picking: BVH-accelerated click select, double-click frame,
+// Canvas picking: BVH-accelerated click select, double-click frame (or
+// open, in assembly mode),
 // right-click context menu (only when not dragged). Deliberately no hover
 // pick — moving the pointer over the model must not recolour anything; the
 // BOM list on the right is the only thing that drives hover highlighting.
@@ -184,6 +185,12 @@ export function initPicking(app) {
     // must not frame the part that happens to sit behind the gizmo.
     if (app.triad && app.triad.hitTest(ev)) return;
     const hit = pick(ev);
-    if (hit) viewer.frameBox(boxOfRecs([app.assemblyMode ? assemblyTarget(hit.rec) : hit.rec]));
+    if (!hit) return;
+    const rec = app.assemblyMode ? assemblyTarget(hit.rec) : hit.rec;
+    // Assembly mode: the hover already promises a subassembly, so a double
+    // click opens it (the level stack climbs back out). A bare part, or
+    // plain mode, still frames.
+    if (app.assemblyMode && rec.children.length && app.actions) { app.actions.openRecs([rec]); return; }
+    viewer.frameBox(boxOfRecs([rec]));
   });
 }

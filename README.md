@@ -61,16 +61,19 @@ parts list. Send that one file to a teammate — they double-click it and can:
   **all instances at once**
 - **Assembly mode** (press `A`): hovering highlights the subassembly under the
   cursor and a click selects it whole — then hide (`H`), isolate (`I`) or **open**
-  (`O`) it. Opening scopes the view to just that subassembly, with *up a level* and
-  *top* buttons in the corner to climb back out; the Structure tab mirrors the real
+  (`O`) it, or double-click it to open. Opening scopes the view to just that
+  subassembly; the **Top / Up / Down** stack at the left edge (or `↑` `↓`, `Shift+↑`
+  for the top) climbs back out and back in — Down heads for whatever you have
+  selected, or retraces the way you came. The Structure tab mirrors the real
   assembly tree (each subassembly copy its own row, duplicate parts rolled up ×N)
+  and marks the assembly you are viewing
 - **Filter by your part properties** (set them under *Advanced* before running):
   click a value chip — say *Process: Machined* — and everything else ghosts out
   (or hides, for clean screenshots). Filters stack, the search box matches
   property values too, and a **color-by-property** mode paints the assembly by
   value with a legend — instant "which parts are machined" for a design review
 - Drag parts aside and snap them back; explode the whole assembly with a slider
-- **Measure** (press `D`): click two points for distances with live X/Y/Z deltas —
+- **Measure** (press `M`): click two points for distances with live X/Y/Z deltas —
   picks snap to corners and feature edges, hole rims and bores read back as true
   fitted diameters, flat faces measure face-to-face, and hole readouts offer
   center/min/max just like SolidWorks Measure. Every value carries an honest

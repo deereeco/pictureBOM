@@ -61,8 +61,8 @@
                     <button type="button" id="btnSection" class="tb-btn" title="Cut the model open along an axis (X)">Section &#9662;</button>
                     <div id="sectionMenu" class="dropdown section-pop hidden"></div>
                 </div>
-                <button type="button" id="btnMeasure" class="tb-btn" title="Measure distances and hole diameters (D)">Measure</button>
-                <button type="button" id="btnMove" class="tb-btn" title="Move mode — drag parts freely, select one for the move/rotate triad (M)">Move</button>
+                <button type="button" id="btnMeasure" class="tb-btn" title="Measure distances and hole diameters (M)">Measure</button>
+                <button type="button" id="btnMove" class="tb-btn" title="Move mode — drag parts freely, select one for the move/rotate triad (D)">Move</button>
                 <button type="button" id="btnAssembly" class="tb-btn" title="Assembly mode — hover a part to highlight its subassembly, click to select it; with Move also on, drags move the whole subassembly (A)">Assembly</button>
                 <button type="button" id="btnInstructions" class="tb-btn" title="Instruction mode — numbered balloons, a checklist, and a printable sheet">Instructions</button>
                 <button type="button" id="btnReset" class="tb-btn" title="Reset appearance, positions and explode (R)">Reset</button>
@@ -95,10 +95,13 @@
         <section id="viewport">
             <canvas id="gl" tabindex="0"></canvas>
             <div id="marquee" class="marquee hidden"></div>
-            <div id="scopeChip" class="scope-chip hidden">
-                <span id="scopeLabel"></span>
-                <button type="button" id="scopeUp" class="hidden" title="Back up one assembly level">&#8593; up a level</button>
-                <button type="button" id="scopeClose" title="Back to the full assembly">&#10005; top</button>
+            <!-- Level stack: Top / Up / Down between assembly levels. Shown
+                 whenever the export has subassemblies; a direction with
+                 nowhere to go is disabled, never removed. -->
+            <div id="levelNav" class="level-nav hidden" role="group" aria-label="Assembly levels">
+                <button type="button" id="lvlTop" class="lvl-btn" disabled><span class="lvl-ic" aria-hidden="true">&#10514;</span><span class="lvl-l">Top asm</span></button>
+                <button type="button" id="lvlUp" class="lvl-btn" disabled><span class="lvl-ic" aria-hidden="true">&#8593;</span><span class="lvl-l">Up 1</span></button>
+                <button type="button" id="lvlDown" class="lvl-btn" disabled><span class="lvl-ic" aria-hidden="true">&#8595;</span><span class="lvl-l">Down 1</span></button>
             </div>
             <div id="measureChip" class="measure-chip hidden">
                 <span>Measure</span>
@@ -185,21 +188,23 @@
             <span class="help-k">Wheel</span><span>Zoom</span>
             <span class="help-k">Click</span><span>Select (Ctrl adds)</span>
             <span class="help-k">Ctrl + drag</span><span>Box select (adds to selection)</span>
-            <span class="help-k">Double-click</span><span>Frame part</span>
+            <span class="help-k">Double-click</span><span>Frame part &mdash; in Assembly mode, open the subassembly</span>
             <span class="help-k">Axis gizmo (bottom left)</span><span>Click an axis to look down it; caption shows which way is up</span>
             <span class="help-k">1 &hellip; 6 / 0</span><span>Front, Back, Left, Right, Top, Bottom / Isometric</span>
             <span class="help-k">Right-click</span><span>Context menu (acts on selection)</span>
             <span class="help-k">Shift + drag part</span><span>Move part / selection (the whole subassembly in Assembly mode)</span>
-            <span class="help-k">M</span><span>Move mode — hover previews the drag target; selecting shows a move/rotate triad</span>
+            <span class="help-k">D</span><span>Move mode — hover previews the drag target; selecting shows a move/rotate triad</span>
             <span class="help-k">Triad arrows / rings</span><span>Slide / turn the selection — near the ruler snaps to steps; click one to type an exact value</span>
-            <span class="help-k">A</span><span>Assembly mode — hover highlights a subassembly, click selects it; combine with M to drag whole subassemblies</span>
+            <span class="help-k">A</span><span>Assembly mode — hover highlights a subassembly, click selects it; combine with D to drag whole subassemblies</span>
             <span class="help-k">E</span><span>Part edges on/off</span>
             <span class="help-k">X</span><span>Section view on/off</span>
-            <span class="help-k">D</span><span>Measure mode — click two points; corners, edges, holes and faces snap; hole readouts offer center/min/max</span>
+            <span class="help-k">M</span><span>Measure mode — click two points; corners, edges, holes and faces snap; hole readouts offer center/min/max</span>
             <span class="help-k">H</span><span>Hide selection</span>
             <span class="help-k">Shift + H</span><span>Unhide the last hidden part(s)</span>
             <span class="help-k">I</span><span>Isolate selection</span>
-            <span class="help-k">O</span><span>Open the selection — view it alone; the chip's buttons go back up</span>
+            <span class="help-k">O</span><span>Open the selection — view it alone; &#8593; or Top asm climbs back out</span>
+            <span class="help-k">&#8593; / &#8595;</span><span>Up one assembly level / down one &mdash; Down heads for the selection, or back the way you came</span>
+            <span class="help-k">Shift + &#8593; / Shift + &#8595;</span><span>Top assembly / dive to the selection's own subassembly</span>
             <span class="help-k">F</span><span>Frame selection (or all)</span>
             <span class="help-k">R</span><span>Reset appearance, positions and explode</span>
             <span class="help-k">P</span><span>Hide / show the parts panel</span>

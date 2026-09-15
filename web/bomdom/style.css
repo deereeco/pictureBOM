@@ -499,37 +499,53 @@ html.theme-transition *::after {
     font-variant-numeric: tabular-nums;
 }
 
-.scope-chip {
+/* ---------- level navigation stack (Top / Up / Down) ---------- */
+.level-nav {
     position: absolute;
-    top: 10px;
     left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
     z-index: 5;
     display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.lvl-btn {
+    width: 60px;
+    height: 54px;
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    gap: 3px;
+    padding: 0;
     background: var(--surface);
     border: 1px solid var(--accent);
-    border-radius: 999px;
+    border-radius: 10px;
     box-shadow: var(--shadow);
-    padding: 3px 6px 3px 12px;
-    font-size: 12px;
-    font-weight: 600;
     color: var(--text-secondary);
-    max-width: calc(100% - 20px);
-}
-.scope-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scope-chip button {
-    border: none;
-    background: var(--accent-tint);
-    color: var(--accent);
-    border-radius: 999px;
-    font-size: 11.5px;
+    font-size: 10.5px;
     font-weight: 600;
-    padding: 2px 8px;
+    line-height: 1;
     cursor: pointer;
-    white-space: nowrap;
 }
-.scope-chip button:hover { background: var(--accent); color: var(--on-accent); }
+.lvl-btn .lvl-ic { font-size: 19px; line-height: 1; color: var(--accent); }
+.lvl-btn:hover:not(:disabled) { background: var(--accent-tint); }
+.lvl-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lvl-btn:disabled {
+    border-color: var(--border);
+    box-shadow: none;
+    color: var(--text-faint);
+    cursor: default;
+}
+.lvl-btn:disabled .lvl-ic { color: var(--text-faint); }
+@media (pointer: coarse) { .lvl-btn { width: 64px; height: 58px; } }
+/* Short viewports (a phone on its side): icons only, so the stack clears
+   the axis gizmo below it. */
+@media (max-height: 480px) {
+    .lvl-btn { width: 44px; height: 40px; }
+    .lvl-btn .lvl-l { display: none; }
+}
 
 /* ---------- axis triad gizmo ---------- */
 .axis-gizmo {
@@ -879,6 +895,10 @@ html.theme-transition *::after {
 .tree-row.is-selected { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
 .tree-row.is-dim { opacity: 0.35; }
 .tree-row.is-off { opacity: 0.45; }
+/* The level in view (Top / Up / Down stack): the tree is where the current
+   assembly is named, so its row reads unmistakably. */
+.tree-row.is-scope > .tree-name { color: var(--accent); font-weight: 700; }
+.tree-row.is-scope > .tree-icon { color: var(--accent); }
 .tree-chevron {
     flex: none;
     width: 16px;
@@ -1097,7 +1117,7 @@ html.theme-transition *::after {
 #gl.is-measure { cursor: crosshair; }
 .measure-chip {
     position: absolute;
-    bottom: 12px; /* top-left belongs to the scope chip; bottom-left to the axis gizmo */
+    bottom: 12px; /* the left edge belongs to the level stack and the axis gizmo */
     left: 50%;
     transform: translateX(-50%);
     z-index: 5;

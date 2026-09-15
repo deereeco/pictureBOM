@@ -96,6 +96,60 @@ export function initInteractions(app) {
     return roots.length === 1 ? displayName(roots[0]) : `${roots.length} selected`;
   };
 
+  // ---- level navigation state ------------------------------------------
+  // The level in view: the opened subassembly record, or null at the top.
+  const currentLevelRec = () => (sel.scope && sel.scope.anchorId != null && app.model)
+    ? app.model.records[sel.scope.anchorId] || null : null;
+  // The records a loose (multi-piece) scope was opened on.
+  const scopeRoots = () => (sel.scope && sel.scope.rootIds && app.model)
+    ? sel.scope.rootIds.map((id) => app.model.records[id]).filter(Boolean) : [];
+  // Nearest record whose subtree holds every rec (null: only the top does).
+  const commonAncestor = (recs) => {
+    if (!recs.length) return null;
+    const holds = (a, r) => { for (let x = r; x; x = x.parent) if (x === a) return true; return false; };
+    for (let a = recs[0].parent; a; a = a.parent) if (recs.every((r) => holds(a, r))) return a;
+    return null;
+  };
+  // Direct child of `level` — null meaning the top: the root wrapper's
+  // children, or the loose root records when the export has no wrapper.
+  const isChildOfLevel = (rec, level) => level
+    ? rec.parent === level
+    : (!rec.parent || rec.parent === M.rootWrapper(app.model));
+  // Levels climbed out of, nearest first. Down retraces them when nothing is
+  // selected to steer by, so up-up then down-down lands where you started.
+  let downTrail = [];
+  // Where Down would go, or null: the child of the current level holding the
+  // selection, else the head of the retrace trail. Never a bare part — the
+  // stack moves between assembly levels; O still opens a single part.
+  function downTargetOf() {
+    if (!app.model) return null;
+    const cur = currentLevelRec();
+    const roots = selectionRoots(selectedRecs());
+    if (roots.length) {
+      const lca = roots.length === 1 ? roots[0] : commonAncestor(roots);
+      if (lca && lca !== cur) {
+        const t = M.levelTargetOf(app.model, lca, cur);
+        if (t !== cur && t.children.length && isChildOfLevel(t, cur)) return t;
+      }
+    }
+    const head = downTrail.length ? app.model.records[downTrail[0]] : null;
+    return head && head.children.length && isChildOfLevel(head, cur) ? head : null;
+  }
+  // Every level change funnels through here: scope, selection tidy-up, camera.
+  function applyScope(recs, label, anchorId) {
+    const roots = selectionRoots(recs);
+    sel.setScope({ label, recIds: M.scopeSetFor(recs), anchorId, rootIds: roots.map((r) => r.id) });
+    // A selection that IS the new scope (or reaches outside it) would tint
+    // everything in view — that reads as a render bug. A part deeper inside
+    // stays selected: it keeps steering Down on the next press.
+    const strictlyInside = (id) => {
+      for (let r = app.model.records[id]; r; r = r.parent) if (r.id === anchorId) return id !== anchorId;
+      return false;
+    };
+    if (anchorId == null || ![...sel.selected].every(strictlyInside)) sel.clearSelection();
+    actions.frame(recs);
+  }
+
   app.edgesOn = readStoredEdges();
   app.renderStyle = readStoredStyle();
 
@@ -184,24 +238,62 @@ export function initInteractions(app) {
     },
     open(recs, label) {
       if (!app.model || !recs.length) return;
-      // A single-root scope is anchored: "up a level" walks its parent chain.
+      // A single-root scope is anchored: Up walks its parent chain.
       const roots = selectionRoots(recs);
       const anchorId = roots.length === 1 ? roots[0].id : null;
-      sel.setScope({ label, recIds: M.scopeSetFor(recs), anchorId });
-      // Everything now in view was just selected — a fully tinted scope reads
-      // as a render bug, and the chip already says what you're looking at.
-      sel.clearSelection();
-      actions.frame(recs);
+      // Opening the level the retrace trail points at IS a Down step, so the
+      // rest of the trail survives; opening anything else starts a new path.
+      downTrail = anchorId != null && downTrail[0] === anchorId ? downTrail.slice(1) : [];
+      applyScope(recs, label, anchorId);
     },
+    openRecs(recs) { actions.open(recs, openLabelFor(recs)); },
     upScope() {
       if (!sel.scope || !app.model) return;
-      const anchor = sel.scope.anchorId != null ? app.model.records[sel.scope.anchorId] : null;
-      const parent = anchor ? anchor.parent : null;
+      const anchor = currentLevelRec();
+      // A loose multi-part scope has no anchor: climb to the level that holds
+      // all its pieces instead.
+      const parent = anchor ? anchor.parent : commonAncestor(scopeRoots());
       if (!parent || parent === M.rootWrapper(app.model)) { actions.closeScope(); return; }
-      actions.open([parent], displayName(parent));
+      if (anchor) downTrail.unshift(anchor.id);
+      applyScope([parent], displayName(parent), parent.id);
+    },
+    downScope() {
+      const t = downTargetOf();
+      if (!t) return;
+      if (downTrail[0] === t.id) downTrail.shift(); else downTrail = [];
+      applyScope([t], displayName(t), t.id);
+    },
+    // Shift+↓: straight to the selection's own subassembly — or, with nothing
+    // selected, to the far end of the retrace trail.
+    diveScope() {
+      if (!app.model) return;
+      const cur = currentLevelRec();
+      const wrapper = M.rootWrapper(app.model);
+      const roots = selectionRoots(selectedRecs());
+      let target = null;
+      let used = 0;
+      if (roots.length) {
+        const lca = roots.length === 1 ? roots[0] : commonAncestor(roots);
+        target = lca && lca.children.length ? lca : (lca ? lca.parent : null);
+      } else {
+        let level = cur;
+        for (; used < downTrail.length; used++) {
+          const r = app.model.records[downTrail[used]];
+          if (!r || !r.children.length || !isChildOfLevel(r, level)) break;
+          level = r; target = r;
+        }
+      }
+      if (!target || target === wrapper || target === cur) return;
+      downTrail = roots.length ? [] : downTrail.slice(used);
+      applyScope([target], displayName(target), target.id);
     },
     closeScope() {
       if (!sel.scope) return;
+      // Remember the chain being climbed out of so Down can retrace it.
+      const wrapper = app.model ? M.rootWrapper(app.model) : null;
+      const chain = [];
+      for (let r = currentLevelRec(); r && r !== wrapper; r = r.parent) chain.unshift(r.id);
+      downTrail = chain.length ? [...chain, ...downTrail] : [];
       sel.setScope(null);
       if (app.model) actions.frame(null);
     },
@@ -248,6 +340,7 @@ export function initInteractions(app) {
       if (app.ui.clearFilters) app.ui.clearFilters();
       if (!app.model) return;
       sel.setScope(null);
+      downTrail = []; // a reset is a fresh start, not a level to climb back into
       sel.clearSelection();
       hideHistory.length = 0; // everything is visible again; nothing to undo
       M.resetAppearance(app.model);
@@ -308,10 +401,10 @@ export function initInteractions(app) {
       if (app.triad) app.triad.refresh();
       if (on) {
         app.ui.toast(app.assemblyMode
-          ? 'Move + assembly — drag any part to move its whole subassembly (M to exit)'
+          ? 'Move + assembly — drag any part to move its whole subassembly (D to exit)'
           : sel.selected.size
-            ? 'Move mode — drag the triad to slide or turn, drag a part to move it freely (M to exit)'
-            : 'Move mode — drag parts freely, or select one for the move/rotate triad (M to exit)');
+            ? 'Move mode — drag the triad to slide or turn, drag a part to move it freely (D to exit)'
+            : 'Move mode — drag parts freely, or select one for the move/rotate triad (D to exit)');
       }
     },
     setEdges(on) {
@@ -370,6 +463,7 @@ export function initInteractions(app) {
     // silently (before framing), so this emit is what actually hides the
     // scope chip. Harmless on first load — the chip is already hidden.
     sel.setScope(null);
+    downTrail = [];
     sel.clearSelection();
   });
 
@@ -1078,7 +1172,7 @@ export function initInteractions(app) {
         { label: multi ? `Isolate ${n} selected (ghost rest)` : 'Isolate (ghost rest)', onClick: () => actions.isolate(targets, true) },
         { label: multi ? `Make ${n} selected transparent` : 'Make transparent', onClick: () => actions.cycleOpacity(targets) },
         { sep: true },
-        { label: 'Move', onClick: () => { actions.setMoveMode(true); app.ui.toast(app.assemblyMode ? 'Move mode on — drag moves the whole subassembly (M to exit)' : multi ? 'Move mode on — drag any selected part to move all (M to exit)' : 'Move mode on — drag the part (M to exit)'); } },
+        { label: 'Move', onClick: () => { actions.setMoveMode(true); app.ui.toast(app.assemblyMode ? 'Move mode on — drag moves the whole subassembly (D to exit)' : multi ? 'Move mode on — drag any selected part to move all (D to exit)' : 'Move mode on — drag the part (D to exit)'); } },
         anyMoved
           ? { label: multi ? `Snap back ${n} selected` : 'Snap back', onClick: () => actions.snapBack(movedIn) } : null,
         { sep: true },
@@ -1100,15 +1194,37 @@ export function initInteractions(app) {
   // containment guard and the info-empty keep-vectors path make it a no-op.)
   app.events.on('filter', afterVisibilityChange);
 
-  // ---- scope chip ------------------------------------------------------
-  app.events.on('scope', (scope) => {
-    $('scopeChip').classList.toggle('hidden', !scope);
-    if (scope) $('scopeLabel').textContent = 'Viewing: ' + scope.label;
-    // "Up a level" needs a parent chain to walk — anchored scopes only.
-    $('scopeUp').classList.toggle('hidden', !scope || scope.anchorId == null);
-  });
-  $('scopeUp').addEventListener('click', () => actions.upScope());
-  $('scopeClose').addEventListener('click', () => actions.closeScope());
+  // ---- level navigation stack (Top / Up / Down) -------------------------
+  // Always on screen once the export has subassemblies; a direction with
+  // nowhere to go greys out rather than disappearing, so the buttons never
+  // shift under the cursor. The Structure tab names the level in view.
+  const lvlTop = $('lvlTop'), lvlUp = $('lvlUp'), lvlDown = $('lvlDown');
+  function syncLevelNav() {
+    const model = app.model;
+    const hasLevels = !!model && M.topRecs(model).some((r) => r.children.length);
+    $('levelNav').classList.toggle('hidden', !hasLevels);
+    if (!hasLevels) return;
+    const cur = currentLevelRec();
+    const inScope = !!sel.scope;
+    lvlTop.disabled = !inScope;
+    lvlTop.title = inScope ? 'Back to the full assembly (Shift+↑)' : 'Already viewing the full assembly';
+    lvlUp.disabled = !inScope;
+    const parent = cur ? cur.parent : (inScope ? commonAncestor(scopeRoots()) : null);
+    const upName = parent && parent !== M.rootWrapper(model) ? displayName(parent) : 'the full assembly';
+    lvlUp.title = inScope ? `Up to ${upName} (↑)` : 'Already at the top level';
+    const down = downTargetOf();
+    lvlDown.disabled = !down;
+    lvlDown.title = down
+      ? `Down into ${displayName(down)} (↓)`
+      : 'Select a part to head toward it, or climb up first — Down retraces the way you came (↓)';
+  }
+  app.events.on('scope', syncLevelNav);
+  app.events.on('selection', syncLevelNav);
+  app.events.on('model', syncLevelNav);
+  lvlTop.addEventListener('click', () => actions.closeScope());
+  lvlUp.addEventListener('click', () => actions.upScope());
+  lvlDown.addEventListener('click', () => actions.downScope());
+  syncLevelNav();
 
   // ---- keyboard --------------------------------------------------------
   window.addEventListener('keydown', (ev) => {
@@ -1148,12 +1264,20 @@ export function initInteractions(app) {
     // CAD-style number keys for the standard views.
     const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 5: 'top', 6: 'bottom', 0: 'iso' };
     if (VIEW_KEYS[ev.key]) { actions.setView(VIEW_KEYS[ev.key]); return; }
-    if (key === 'm') actions.setMoveMode(!app.moveMode);
+    // Level navigation: ↑ / ↓ one level, Shift+↑ top, Shift+↓ dive.
+    if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+      ev.preventDefault(); // otherwise a focused panel list scrolls too
+      if (ev.key === 'ArrowUp') { if (ev.shiftKey) actions.closeScope(); else actions.upScope(); }
+      else if (ev.shiftKey) actions.diveScope();
+      else actions.downScope();
+      return;
+    }
+    if (key === 'm') { if (app.measure) app.measure.toggle(); }
+    else if (key === 'd') actions.setMoveMode(!app.moveMode);
     else if (key === 'a') actions.setAssemblyMode(!app.assemblyMode);
     else if (key === 'o') { const t = selectedRecs(); if (t.length) actions.open(t, openLabelFor(t)); }
     else if (key === 'e') actions.setEdges(!app.edgesOn);
     else if (key === 'x') { if (app.sectionApi) app.sectionApi.toggle(); }
-    else if (key === 'd') { if (app.measure) app.measure.toggle(); }
     else if (key === 'h') {
       if (ev.shiftKey) actions.unhideLast();
       else { const t = selectedRecs(); if (t.length) actions.hide(t); }
