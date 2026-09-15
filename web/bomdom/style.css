@@ -774,9 +774,10 @@ html.theme-transition *::after {
 
 .part-row {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px 10px;
     align-items: center;
+    min-height: 34px; /* seats the action strip on one-line rows */
     padding: 5px 8px;
     border-radius: 6px;
     cursor: pointer;
@@ -785,23 +786,6 @@ html.theme-transition *::after {
 .part-row:hover, .part-row.is-hover { background: var(--accent-tint); }
 .part-row.is-selected { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
 .part-row.is-off { opacity: 0.45; }
-.part-thumb {
-    width: 44px;
-    height: 44px;
-    object-fit: contain;
-    background: #ffffff; /* captures have white backgrounds — deliberate plate in both themes */
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    flex: none;
-}
-.part-thumb.is-blank {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-faint);
-    background: var(--surface-sunken);
-    font-size: 10px;
-}
 .part-main { min-width: 0; }
 .part-no {
     font-family: "Cascadia Code", Consolas, monospace;
@@ -841,7 +825,8 @@ html.theme-transition *::after {
 .row-actions {
     position: absolute;
     right: 6px;
-    top: 4px;
+    top: 50%;
+    transform: translateY(-50%);
     display: none;
     gap: 2px;
     background: var(--surface);
@@ -853,12 +838,15 @@ html.theme-transition *::after {
 .part-row:hover .row-actions, .tree-row:hover .row-actions { display: flex; }
 /* Keep the qty pill readable while the hover actions are showing */
 .part-side { transition: margin-right 0.12s ease; }
-.part-row:hover .part-side { margin-right: 118px; }
+.part-row:hover .part-side { margin-right: 144px; }
+/* Rows with no 3D geometry offer only the copy button — a narrower strip. */
+.part-row:hover:has(.row-actions-solo) .part-side { margin-right: 36px; }
 /* No hover on touch: keep every row's actions visible instead of behind
    iOS's sticky tap-to-hover two-step. */
 @media (pointer: coarse) {
     .row-actions { display: flex; }
-    .part-row .part-side { margin-right: 132px; }
+    .part-row .part-side { margin-right: 176px; }
+    .part-row:has(.row-actions-solo) .part-side { margin-right: 42px; }
 }
 .ra-btn {
     border: none;
@@ -875,6 +863,7 @@ html.theme-transition *::after {
     justify-content: center;
 }
 .ra-btn:hover { background: var(--btn-neutral-bg); color: var(--text); }
+.ra-btn.is-done, .ra-btn.is-done:hover { color: var(--accent); }
 .row-dim { display: none; }
 .is-searching .row-dim { display: block; opacity: 0.35; }
 .is-searching .row-hit { display: block; }

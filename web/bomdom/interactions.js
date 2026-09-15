@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import * as M from './model.js';
+import { copyText, joinPartNumbers, copiedToast } from './clipboard.js';
 import { normalizeUp, DEFAULT_UP } from './scene.js';
 
 const $ = (id) => document.getElementById(id);
@@ -80,6 +81,21 @@ export function initInteractions(app) {
     const part = rec.partId !== null && app.model ? app.model.partById.get(rec.partId) : null;
     return part ? (part.bom_name || part.name) : (M.instanceLabel(rec.name) || 'part');
   };
+
+  // What "Copy part number" puts on the clipboard (issue #32): the BOM name
+  // for a part, the instance-suffix-free name for a subassembly.
+  const partNumberOf = (rec) => {
+    const part = rec.partId !== null && app.model ? app.model.partById.get(rec.partId) : null;
+    return part ? (part.bom_name || part.name) : (M.cleanName(rec.name) || rec.name || '');
+  };
+  const uniquePartNumbers = (recs) => [...new Set(recs.map(partNumberOf).filter(Boolean))];
+  async function copyPartNumbers(recs) {
+    const names = uniquePartNumbers(recs);
+    if (!names.length) return false;
+    const ok = await copyText(joinPartNumbers(names));
+    app.ui.toast(ok ? copiedToast(names) : 'Copy failed — the browser blocked clipboard access');
+    return ok;
+  }
 
   // Records none of whose ancestors are also in the set — the units a
   // selection is made of (a selected subassembly counts once, not per part).
@@ -1163,8 +1179,12 @@ export function initInteractions(app) {
       const movedIn = [...new Set(targets.flatMap((r) => M.subtree(r)))]
         .filter((r) => r.flags.moved || r.dragDelta.lengthSq() > 0);
       const anyMoved = movedIn.length > 0;
+      const copyNames = uniquePartNumbers(selectionRoots(targets));
       items.push(
         { head: label },
+        { label: copyNames.length > 1 ? `Copy ${copyNames.length} part numbers` : 'Copy part number',
+          onClick: () => copyPartNumbers(selectionRoots(targets)), disabled: !copyNames.length },
+        { sep: true },
         { label: multi ? `Hide ${n} selected` : 'Hide', onClick: () => actions.hide(targets) },
         !multi && insts.length > 1
           ? { label: `Hide all instances (${insts.length})`, onClick: () => actions.hide(insts) } : null,
@@ -1259,6 +1279,17 @@ export function initInteractions(app) {
     // A live drag (triad, free move, marquee) froze its camera frame at
     // pointerdown: view keys or mode flips underneath it teleport parts.
     if (app.dragging) return;
+    // Ctrl+C with parts selected copies their part numbers — unless text is
+    // highlighted somewhere, which is the browser's copy to make.
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === 'c') {
+      const t = selectedRecs();
+      const textHighlighted = !!(window.getSelection && String(window.getSelection()));
+      if (t.length && !textHighlighted) {
+        ev.preventDefault();
+        copyPartNumbers(selectionRoots(t));
+      }
+      return;
+    }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return; // never shadow browser shortcuts
     const key = ev.key.toLowerCase();
     // CAD-style number keys for the standard views.

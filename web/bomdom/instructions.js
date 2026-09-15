@@ -411,15 +411,6 @@ export function initInstructions(app) {
       num.textContent = String(item.n);
       el.appendChild(num);
 
-      const thumbUri = item.part && item.part.thumbnail;
-      if (thumbUri) {
-        const img = document.createElement('img');
-        img.className = 'part-thumb';
-        img.src = thumbUri;
-        img.alt = '';
-        el.appendChild(img);
-      }
-
       const main = document.createElement('div');
       main.className = 'part-main';
       const name = document.createElement('div');

@@ -4,6 +4,7 @@
 
 import * as M from './model.js';
 import { buildBomTree } from './bom.js';
+import { copyText, copiedToast } from './clipboard.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,6 +14,8 @@ const ICON_ISOLATE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none
 const ICON_CHEVRON = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
 const ICON_PART = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 4v10l-7 4-7-4V7z"/><path d="M5 7l7 4 7-4M12 11v10"/></svg>';
 const ICON_ASM = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/></svg>';
+const ICON_COPY = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_CHECK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
 
 export function initPanel(app) {
   const meta = app.meta;
@@ -50,21 +53,54 @@ export function initPanel(app) {
     if (app.model && recs.length) fn(recs);
   }
 
-  function rowActionButtons(getRecs, label, vendorUrl) {
+  // The part number is what people take away from this list (issue #32):
+  // one click puts it on the clipboard for an ERP search or a purchase
+  // request. Works from META alone — no 3D model needed.
+  async function copyPartNo(partNo, btn) {
+    const ok = await copyText(partNo);
+    if (!ok) { app.ui.toast('Copy failed — the browser blocked clipboard access'); return; }
+    app.ui.toast(copiedToast([partNo]));
+    if (!btn) return;
+    btn.innerHTML = ICON_CHECK;
+    btn.classList.add('is-done');
+    setTimeout(() => { btn.innerHTML = ICON_COPY; btn.classList.remove('is-done'); }, 1200);
+  }
+
+  function actionButton(wrap, html, title, onClick) {
+    const b = document.createElement('button');
+    b.className = 'ra-btn';
+    b.innerHTML = html;
+    b.title = title;
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      onClick(ev);
+    });
+    wrap.appendChild(b);
+    return b;
+  }
+
+  function copyButton(wrap, partNo) {
+    const b = actionButton(wrap, ICON_COPY, `Copy part number (${partNo})`, () => copyPartNo(partNo, b));
+    b.classList.add('ra-copy');
+    return b;
+  }
+
+  // BOM rows with no geometry (hidden in the model, or never matched) still
+  // carry a part number worth copying — that is their whole action strip.
+  function copyOnlyActions(partNo) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row-actions row-actions-solo';
+    copyButton(wrap, partNo);
+    return wrap;
+  }
+
+  // partNo defaults to the row label; instance-tree rows pass the clean BOM
+  // name because their label carries a "#2" instance suffix.
+  function rowActionButtons(getRecs, label, vendorUrl, partNo = label) {
     const wrap = document.createElement('div');
     wrap.className = 'row-actions';
-    const mk = (html, title, onClick) => {
-      const b = document.createElement('button');
-      b.className = 'ra-btn';
-      b.innerHTML = html;
-      b.title = title;
-      b.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        onClick(ev);
-      });
-      wrap.appendChild(b);
-      return b;
-    };
+    const mk = (html, title, onClick) => actionButton(wrap, html, title, onClick);
+    copyButton(wrap, partNo);
     mk(ICON_EYE, 'Hide / show', () => withRecs(getRecs(), (r) => app.actions.toggleHidden(r)));
     mk(ICON_GHOST, 'Transparency cycle (100/50/15)', () => withRecs(getRecs(), (r) => app.actions.cycleOpacity(r)));
     mk(ICON_ISOLATE, 'Isolate', () => withRecs(getRecs(), (r) => app.actions.isolate(r, false)));
@@ -72,6 +108,8 @@ export function initPanel(app) {
       const recs = getRecs();
       app.ui.showMenu(ev.clientX, ev.clientY, [
         { head: label },
+        { label: 'Copy part number', onClick: () => copyPartNo(partNo, null) },
+        { sep: true },
         { label: 'Hide all instances', onClick: () => withRecs(recs, (r) => app.actions.hide(r)), disabled: !recs.length },
         { label: 'Isolate (ghost rest)', onClick: () => withRecs(recs, (r) => app.actions.isolate(r, true)), disabled: !recs.length },
         { label: 'Make transparent', onClick: () => withRecs(recs, (r) => app.actions.cycleOpacity(r)), disabled: !recs.length },
@@ -100,20 +138,6 @@ export function initPanel(app) {
       const name = entry.name;
       const row = entry.row;
       const part = entry.part || null;
-
-      const thumbUri = part && part.thumbnail;
-      if (thumbUri) {
-        const img = document.createElement('img');
-        img.className = 'part-thumb';
-        img.src = thumbUri; // data URI from META — no request
-        img.alt = '';
-        el.appendChild(img);
-      } else {
-        const ph = document.createElement('div');
-        ph.className = 'part-thumb is-blank';
-        ph.textContent = 'no img';
-        el.appendChild(ph);
-      }
 
       const main = document.createElement('div');
       main.className = 'part-main';
@@ -174,6 +198,8 @@ export function initPanel(app) {
           app.sel.select(recs.map((r) => r.id), { additive: ev.ctrlKey || ev.metaKey });
         });
         el.addEventListener('dblclick', () => withRecs(getRecs(), (r) => app.actions.frame(r)));
+      } else {
+        el.appendChild(copyOnlyActions(name));
       }
 
       entry.el = el;
@@ -280,7 +306,10 @@ export function initPanel(app) {
     }
 
     const getRecs = () => node.recs;
-    el.appendChild(rowActionButtons(getRecs, node.name, node.row && node.row.vendor_url));
+    const partNo = node.row ? node.row.name
+      : node.part ? (node.part.bom_name || node.part.name)
+      : (M.cleanName(node.recs[0].name) || node.name);
+    el.appendChild(rowActionButtons(getRecs, node.name, node.row && node.row.vendor_url, partNo));
 
     el.addEventListener('pointerenter', () => app.sel.setHover({ ids: node.recs.map((r) => r.id) }));
     el.addEventListener('pointerleave', () => app.sel.setHover(null));

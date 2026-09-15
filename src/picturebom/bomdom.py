@@ -1313,8 +1313,9 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
         wanted = {p.get("bom_name") or p["name"] for p in repack["parts"]}
         thumbs = make_thumbnails(images_dir, sorted(wanted))
         if not thumbs:
-            warnings.append("Thumbnails could not be generated; the 3D BOM panel "
-                            "will show part names only")
+            warnings.append("Thumbnails could not be generated; the 3D BOM's "
+                            "Excel export and instructions PDF will have no "
+                            "part pictures")
 
     template = template_text if template_text is not None else load_viewer_template()
 

@@ -82,6 +82,9 @@ parts list. Send that one file to a teammate — they double-click it and can:
 - **Section view** (press `X`): cut the model open along any model axis with a
   position slider and flip control — cut cross-sections are outlined so the
   open interiors read clearly
+- **Copy a part number** to the clipboard with the button on any list row, from the
+  right-click menu on a part in 3D, or with `Ctrl+C` on whatever is selected (several
+  parts paste one per line) — ready for an ERP search, an email or a purchase request
 - Export their own parts list straight from the viewer (Excel with thumbnails, CSV,
   or a printable order sheet) — scoped to what they have selected or visible.
   Don't want recipients re-exporting? Uncheck *Allow exporting parts lists from
