@@ -784,6 +784,11 @@ export function updateVisuals(model, sel) {
   const filterIds = sel.filter ? sel.filter.recIds : null;
   const filterHide = !!(sel.filter && sel.filter.hide);
   const recColor = sel.colorBy ? sel.colorBy.recColor : null;
+  // Look colors (look.js): a whole-model scheme plus per-part paint, both
+  // remembered per assembly. Color-by-property is an analytical overlay the
+  // reader toggles on top, so it wins while it is on and the look returns
+  // untouched when it is cleared.
+  const lookColor = model.lookColor || null;
   const pickables = [];
   let hiddenInstances = 0;
 
@@ -802,7 +807,8 @@ export function updateVisuals(model, sel) {
     const hovered = inhHover || hoverSet.has(rec.id);
     const selected = inhSel || selSet.has(rec.id);
     const hl = hovered ? HL_HOVER : selected ? HL_SELECTED : HL_NONE;
-    const tint = recColor ? (recColor.has(rec.id) ? recColor.get(rec.id) : null) : null;
+    const tint = recColor && recColor.has(rec.id) ? recColor.get(rec.id)
+      : lookColor && lookColor.has(rec.id) ? lookColor.get(rec.id) : null;
     for (const mesh of rec.meshes) {
       if (mesh.userData.__base) {
         // forceDoubleSide: the section view clips closed solids open — back

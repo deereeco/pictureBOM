@@ -857,6 +857,16 @@ export function initInteractions(app) {
     realistic.appendChild(document.createTextNode(' Realistic shading (reflections)'));
     viewMenu.appendChild(realistic);
 
+    // Colors & lighting (issue #25) live in their own popover so this menu
+    // stays short; it opens in place and offers a way back.
+    const lookItem = document.createElement('button');
+    lookItem.type = 'button';
+    lookItem.className = 'menu-item';
+    lookItem.textContent = 'Colors & lighting…';
+    lookItem.title = 'Background, brightness, contrast and part colors — remembered for this assembly';
+    lookItem.addEventListener('click', () => { if (app.ui.openLookMenu) app.ui.openLookMenu(); });
+    viewMenu.appendChild(lookItem);
+
     popHead(viewMenu, 'Standard views');
     const grid = document.createElement('div');
     grid.className = 'view-grid';
@@ -1086,6 +1096,7 @@ export function initInteractions(app) {
     $('explodeMenu').classList.add('hidden');
     $('sectionMenu').classList.add('hidden');
     viewMenu.classList.add('hidden');
+    $('lookMenu').classList.add('hidden');
   }
   app.ui.closeMenus = closeMenus;
   // Toolbar popovers anchor right:0 to their button. On the wrapped narrow
@@ -1130,12 +1141,15 @@ export function initInteractions(app) {
     return el;
   }
 
-  // items: {label,onClick,href,disabled} | {head} | {sep}. null items skipped.
+  // items: {label,onClick,href,disabled} | {head} | {sep} | {node} (a ready
+  // element, e.g. the paint swatch row). null items skipped.
   app.ui.showMenu = (x, y, items) => {
     ctxMenu.innerHTML = '';
     for (const it of items) {
       if (!it) continue;
-      if (it.sep) {
+      if (it.node) {
+        ctxMenu.appendChild(it.node);
+      } else if (it.sep) {
         const s = document.createElement('div');
         s.className = 'menu-sep';
         ctxMenu.appendChild(s);
@@ -1191,6 +1205,11 @@ export function initInteractions(app) {
         { label: multi ? `Isolate ${n} selected` : 'Isolate', onClick: () => actions.isolate(targets, false) },
         { label: multi ? `Isolate ${n} selected (ghost rest)` : 'Isolate (ghost rest)', onClick: () => actions.isolate(targets, true) },
         { label: multi ? `Make ${n} selected transparent` : 'Make transparent', onClick: () => actions.cycleOpacity(targets) },
+        { sep: true },
+        // Paint (issue #25): one part paints all its instances; a selection
+        // or an assembly-mode unit paints everything inside it.
+        app.look ? { head: multi ? `Paint ${n} selected` : (insts.length > 1 ? `Paint (all ${insts.length} instances)` : 'Paint') } : null,
+        app.look ? { node: app.look.swatchRow(targets) } : null,
         { sep: true },
         { label: 'Move', onClick: () => { actions.setMoveMode(true); app.ui.toast(app.assemblyMode ? 'Move mode on — drag moves the whole subassembly (D to exit)' : multi ? 'Move mode on — drag any selected part to move all (D to exit)' : 'Move mode on — drag the part (D to exit)'); } },
         anyMoved
@@ -1260,7 +1279,7 @@ export function initInteractions(app) {
       // An open dropdown is its own layer: Esc closes it and STOPS — falling
       // through would also drop a pending measurement point or exit measure
       // mode with the same keypress.
-      const menuOpen = ['ctxMenu', 'exportMenu', 'explodeMenu', 'sectionMenu', 'viewMenu']
+      const menuOpen = ['ctxMenu', 'exportMenu', 'explodeMenu', 'sectionMenu', 'viewMenu', 'lookMenu']
         .some((id) => !$(id).classList.contains('hidden'));
       closeMenus();
       if (menuOpen) return;
