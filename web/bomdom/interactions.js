@@ -1427,10 +1427,6 @@ export function initInteractions(app) {
     setTheme(next);
     try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
   });
-  // Follow OS theme changes only until the user makes an explicit choice.
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    let stored = null;
-    try { stored = localStorage.getItem(THEME_KEY); } catch (err) { /* ignore */ }
-    if (stored !== 'light' && stored !== 'dark') setTheme(e.matches ? 'dark' : 'light');
-  });
+  // The viewer opens dark regardless of the OS (see the head script in
+  // shell.html), so an OS theme flip mid-session is deliberately ignored.
 }

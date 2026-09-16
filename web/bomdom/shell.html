@@ -9,9 +9,9 @@
 (function () {
     var t = null;
     try { t = localStorage.getItem("picturebom-theme"); } catch (e) {}
-    if (t !== "light" && t !== "dark") {
-        t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    }
+    // Dark by default (it frames the spotlight backdrop); the toggle top
+    // right remembers an explicit choice. The launcher keeps following the OS.
+    if (t !== "light" && t !== "dark") t = "dark";
     document.documentElement.setAttribute("data-theme", t);
 })();
 </script>

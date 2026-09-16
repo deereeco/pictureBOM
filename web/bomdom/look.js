@@ -21,9 +21,13 @@ export const SWATCHES = ['#f08a24', '#e34948', '#eda100', '#1baf7a', '#2a78d6',
 const BG_PRESETS = { white: '#ffffff', grey: '#6f7782', black: '#000000' };
 const BG_KINDS = ['theme', 'white', 'grey', 'black', 'custom', 'gradient'];
 const SCHEMES = ['original', 'part', 'subasm'];
+// The default backdrop is a spotlight: black at the edges, mid grey at the
+// centre (Dominic, 2026-09-16: "a really nice almost spot-like look"). It
+// pairs with the dark theme the viewer now opens in; "Theme" stays a click
+// away for anyone who wants the flat backdrop back.
 const DEFAULTS = {
-  bg: 'theme', bgColor: '#ffffff',
-  gradA: '#cfd8e2', gradB: '#ffffff', gradShape: 'linear',
+  bg: 'gradient', bgColor: '#ffffff',
+  gradA: '#000000', gradB: '#6b7380', gradShape: 'radial',
   brightness: 50, contrast: 50,
   scheme: 'original',
   colors: {}, // paint key ('p<partId>' | 'n<recId>') -> '#rrggbb'
@@ -396,7 +400,7 @@ export function initLook(app) {
     reset.type = 'button';
     reset.className = 'pop-btn';
     reset.textContent = 'Reset look';
-    reset.title = 'Back to the exported colors, theme background and tuned lighting for this assembly';
+    reset.title = 'Back to the exported colors, spotlight background and tuned lighting for this assembly';
     reset.disabled = isDefault();
     reset.addEventListener('click', () => { resetLook(); build(); });
     actions.appendChild(reset);
