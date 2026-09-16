@@ -71,18 +71,19 @@
                     <button type="button" id="btnExport" class="tb-btn tb-primary" title="Export BOM">Export &#9662;</button>
                     <div id="exportMenu" class="dropdown hidden"></div>
                 </div>
-                <button type="button" id="btnHelp" class="tb-btn tb-icon" title="Mouse and keyboard help (?)">?</button>
                 <div class="toolbar-fade" aria-hidden="true"></div>
             </div>
-            <button type="button" id="themeToggle" class="icon-btn" title="Switch between light and dark theme" aria-label="Switch theme">
-                <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="4"/>
-                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-                </svg>
-                <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-                </svg>
-            </button>
+            <!-- Settings gear (issue #31): reader preferences (theme, units,
+                 animations, diagnostics), the help sheet and the about line.
+                 A direct appbar child like the theme toggle it replaced, so it
+                 keeps the top row on phones instead of riding the toolbar strip.
+                 settings.js fills the popover on every open. -->
+            <div class="menu-anchor appbar-settings">
+                <button type="button" id="btnSettings" class="icon-btn" title="Settings (,)" aria-label="Settings" aria-haspopup="true" aria-expanded="false">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </button>
+                <div id="settingsMenu" class="dropdown settings-pop hidden"></div>
+            </div>
     </header>
 
     <div id="warnBanner" class="warn-banner hidden">
@@ -193,7 +194,7 @@
             <span class="help-k">Axis gizmo (bottom left)</span><span>Click an axis to look down it; caption shows which way is up</span>
             <span class="help-k">1 &hellip; 6 / 0</span><span>Front, Back, Left, Right, Top, Bottom / Isometric</span>
             <span class="help-k">Right-click</span><span>Context menu (acts on selection) &mdash; hide, isolate, paint a color&hellip;</span>
-            <span class="help-k">View &#9656; Part colors</span><span>One color per part or per subassembly &mdash; remembered for this assembly; the theme toggle switches the backdrop</span>
+            <span class="help-k">View &#9656; Part colors</span><span>One color per part or per subassembly &mdash; remembered for this assembly; the theme (Settings) switches chrome and backdrop together</span>
             <span class="help-k">Ctrl + C</span><span>Copy the selected part number(s) &mdash; the clipboard button on a list row copies that one</span>
             <span class="help-k">Shift + drag part</span><span>Move part / selection (the whole subassembly in Assembly mode)</span>
             <span class="help-k">D</span><span>Move mode — hover previews the drag target; selecting shows a move/rotate triad</span>
@@ -212,6 +213,7 @@
             <span class="help-k">R</span><span>Reset appearance, positions and explode</span>
             <span class="help-k">P</span><span>Hide / show the parts panel</span>
             <span class="help-k">Esc</span><span>Cancel a triad drag / clear selection / close</span>
+            <span class="help-k">,</span><span>Settings &mdash; theme, units, animations, diagnostics line</span>
             <span class="help-k">?</span><span>This help</span>
         </div>
     </div>

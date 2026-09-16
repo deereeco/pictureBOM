@@ -1,5 +1,6 @@
-// Toolbar, keyboard, context menu, drag-move, explode, splitter, help,
-// theme toggle and the "Open" viewing scope. Exposes app.actions — the one
+// Toolbar, keyboard, context menu, drag-move, explode, splitter, help
+// overlay and the "Open" viewing scope; the theme lives in settings.js.
+// Exposes app.actions — the one
 // set of operations panel rows, menus and keys all call.
 
 import * as THREE from 'three';
@@ -1101,6 +1102,11 @@ export function initInteractions(app) {
     $('explodeMenu').classList.add('hidden');
     $('sectionMenu').classList.add('hidden');
     viewMenu.classList.add('hidden');
+    // The settings gear (settings.js) is a popover like the others; its
+    // button carries the open state.
+    $('settingsMenu').classList.add('hidden');
+    $('btnSettings').classList.remove('is-on');
+    $('btnSettings').setAttribute('aria-expanded', 'false');
   }
   app.ui.closeMenus = closeMenus;
   // Toolbar popovers anchor right:0 to their button. On the wrapped narrow
@@ -1279,14 +1285,19 @@ export function initInteractions(app) {
       if (app.anchorPickMode) { exitAnchorPick(); return; }
       // A focused text field and an open help overlay outrank measure mode:
       // Esc while typing must blur, not silently drop a measurement point.
-      if (inField) { ev.target.blur(); return; }
+      // A field inside an open popover (units select, look sliders) is the
+      // exception: there Esc means "close the popover", so fall through.
+      if (inField) {
+        ev.target.blur();
+        if (!ev.target.closest('.dropdown')) return;
+      }
       // A live triad gesture: Esc aborts it and puts the parts back — it must
       // not also clear the selection the user is about to keep working with.
       if (app.triad && app.triad.dragging()) { app.triad.cancelDrag(); return; }
       // An open dropdown is its own layer: Esc closes it and STOPS — falling
       // through would also drop a pending measurement point or exit measure
       // mode with the same keypress.
-      const menuOpen = ['ctxMenu', 'exportMenu', 'explodeMenu', 'sectionMenu', 'viewMenu']
+      const menuOpen = ['ctxMenu', 'exportMenu', 'explodeMenu', 'sectionMenu', 'viewMenu', 'settingsMenu']
         .some((id) => !$(id).classList.contains('hidden'));
       closeMenus();
       if (menuOpen) return;
@@ -1343,11 +1354,12 @@ export function initInteractions(app) {
     else if (key === 'f') actions.frame(selectedRecs());
     else if (key === 'r') actions.resetAll();
     else if (key === 'p') setPanelHidden(!panelHidden);
+    else if (ev.key === ',') { if (app.ui.toggleSettings) app.ui.toggleSettings(); }
     else if (ev.key === '?') $('helpOverlay').classList.toggle('hidden');
   });
 
   // ---- help ------------------------------------------------------------
-  $('btnHelp').addEventListener('click', () => $('helpOverlay').classList.toggle('hidden'));
+  // The sheet opens from the settings gear (settings.js) or the ? key.
   $('helpClose').addEventListener('click', () => $('helpOverlay').classList.add('hidden'));
   $('helpOverlay').addEventListener('click', (ev) => {
     if (ev.target === $('helpOverlay')) $('helpOverlay').classList.add('hidden');
@@ -1418,27 +1430,4 @@ export function initInteractions(app) {
   // NOT persist — one search keystroke must not overwrite the phone default
   // of leading with the 3D.
   app.ui.setPanelHidden = (hidden) => setPanelHidden(hidden, false);
-
-  // ---- theme toggle (mirrors pictureBOM's static/app.js) ---------------
-  const THEME_KEY = 'picturebom-theme'; // must match the inline boot script
-  let themeTransitionTimer = null;
-  function setTheme(theme) {
-    document.documentElement.classList.add('theme-transition');
-    document.documentElement.setAttribute('data-theme', theme);
-    clearTimeout(themeTransitionTimer);
-    themeTransitionTimer = setTimeout(
-      () => document.documentElement.classList.remove('theme-transition'), 300);
-  }
-  $('themeToggle').addEventListener('click', () => {
-    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
-  });
-  // The viewer opens dark (see the head script in shell.html); only a stored
-  // "system" choice follows OS theme changes mid-session.
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    let stored = null;
-    try { stored = localStorage.getItem(THEME_KEY); } catch (err) { /* ignore */ }
-    if (stored === 'system') setTheme(e.matches ? 'dark' : 'light');
-  });
 }

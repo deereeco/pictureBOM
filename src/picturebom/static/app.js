@@ -39,15 +39,20 @@
     let lastRunSidecar = false; // was sidecar explicitly requested this run?
 
     // -----------------------------------------------------------------------
-    // Theme toggle — persisted per browser, defaults to the OS preference
-    // (an inline <head> script sets data-theme before first paint)
+    // Settings gear — theme (Light / Dark / System) and the about line.
+    // The theme is persisted per browser under the key the BomDom viewer
+    // shares. All three values are stored explicitly ("system" = follow the
+    // OS); with nothing stored the launcher follows the OS while the BomDom
+    // viewer opens dark, so an unset key must not be mistaken for a choice.
     // -----------------------------------------------------------------------
 
     const THEME_KEY = "picturebom-theme"; // must match the inline boot script in index.html
-    const themeToggle = document.getElementById("themeToggle");
+    const settingsBtn = document.getElementById("btnSettings");
+    const settingsMenu = document.getElementById("settingsMenu");
     let themeTransitionTimer = null;
 
-    function setTheme(theme) {
+    function paintTheme(theme) {
+        if (document.documentElement.getAttribute("data-theme") === theme) return;
         document.documentElement.classList.add("theme-transition");
         document.documentElement.setAttribute("data-theme", theme);
         clearTimeout(themeTransitionTimer);
@@ -56,19 +61,58 @@
         }, 300);
     }
 
-    if (themeToggle) {
-        themeToggle.addEventListener("click", () => {
-            const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-            setTheme(next);
-            try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    function readThemeMode() {
+        let t = null;
+        try { t = localStorage.getItem(THEME_KEY); } catch (e) {}
+        return t === "light" || t === "dark" || t === "system" ? t : "system";
+    }
+
+    function syncThemeSeg() {
+        const mode = readThemeMode();
+        document.querySelectorAll("[data-theme-mode]").forEach(b => {
+            const on = b.dataset.themeMode === mode;
+            b.classList.toggle("is-active", on);
+            b.setAttribute("aria-checked", on ? "true" : "false");
         });
     }
 
-    // Follow OS theme changes only until the user makes an explicit choice
+    function applyThemeMode(mode) {
+        if (mode !== "light" && mode !== "dark") mode = "system";
+        try { localStorage.setItem(THEME_KEY, mode); } catch (e) {}
+        const osDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        paintTheme(mode === "light" || mode === "dark" ? mode : (osDark ? "dark" : "light"));
+        syncThemeSeg();
+    }
+
+    function setSettingsOpen(open) {
+        if (!settingsMenu) return;
+        settingsMenu.classList.toggle("hidden", !open);
+        settingsBtn.classList.toggle("is-on", open);
+        settingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) syncThemeSeg();
+    }
+
+    if (settingsBtn && settingsMenu) {
+        settingsBtn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            setSettingsOpen(settingsMenu.classList.contains("hidden"));
+        });
+        document.querySelectorAll("[data-theme-mode]").forEach(b => {
+            b.addEventListener("click", () => applyThemeMode(b.dataset.themeMode));
+        });
+        settingsMenu.querySelector(".gh-link").addEventListener("click", () => setSettingsOpen(false));
+        document.addEventListener("pointerdown", (ev) => {
+            const t = ev.target instanceof Element ? ev.target : null;
+            if (!t || !t.closest(".menu-anchor")) setSettingsOpen(false);
+        });
+        document.addEventListener("keydown", (ev) => {
+            if (ev.key === "Escape" && !settingsMenu.classList.contains("hidden")) setSettingsOpen(false);
+        });
+    }
+
+    // Follow OS theme changes only while no explicit choice is stored
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
-        let stored = null;
-        try { stored = localStorage.getItem(THEME_KEY); } catch (err) {}
-        if (stored !== "light" && stored !== "dark") setTheme(e.matches ? "dark" : "light");
+        if (readThemeMode() === "system") paintTheme(e.matches ? "dark" : "light");
     });
 
     // -----------------------------------------------------------------------

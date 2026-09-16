@@ -118,6 +118,7 @@ export function createViewer(canvas) {
   // ---- on-demand render loop + tweens --------------------------------
   let pending = false;
   const tweens = [];
+  let animations = true; // settings gear: off lands every tween on its last frame
   const cameraListeners = [];
   let controls = makeControls();
 
@@ -153,7 +154,7 @@ export function createViewer(canvas) {
     pending = false;
     for (let i = tweens.length - 1; i >= 0; i--) {
       const tw = tweens[i];
-      const k = Math.max(0, Math.min(1, (now - tw.start) / tw.duration));
+      const k = tw.duration > 0 ? Math.max(0, Math.min(1, (now - tw.start) / tw.duration)) : 1;
       tw.update(tw.ease(k));
       if (k >= 1) {
         tweens.splice(i, 1);
@@ -209,9 +210,14 @@ export function createViewer(canvas) {
   }
 
   function addTween({ duration = 300, delay = 0, update, done, ease = easeInOut }) {
+    // Animations off: the tween still runs through the loop (same callbacks,
+    // same ordering, same supersede tokens) but resolves on the next frame.
+    if (!animations) { duration = 0; delay = 0; }
     tweens.push({ start: performance.now() + delay, duration, update, done, ease });
     invalidate();
   }
+
+  function setAnimations(on) { animations = !!on; }
 
   // Establish the default look once the render-loop state above exists
   // (setRenderStyle invalidates, which touches `pending`).
@@ -334,7 +340,7 @@ export function createViewer(canvas) {
 
   return {
     renderer, scene, camera, invalidate, addTween, frameBox, framePoints,
-    onCameraChange, setUpAxis, setView, setRenderStyle,
+    onCameraChange, setUpAxis, setView, setRenderStyle, setAnimations,
     get controls() { return controls; }, // rebuilt whenever the up axis changes
     get upAxis() { return upAxis; },
   };

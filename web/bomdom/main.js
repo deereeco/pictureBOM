@@ -21,6 +21,7 @@ import { initInstructions } from './instructions.js';
 import { initViewState } from './viewstate.js';
 import { initLook } from './look.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
+import { initSettings } from './settings.js';
 import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
 import { initFilters } from './filter.js';
@@ -42,6 +43,7 @@ const app = {
   moveMode: false,
   dragging: false,
   renderStyle: 'shaded', // reader preference; initInteractions reads the stored one
+  animations: true, // reader preference; initSettings reads the stored one
 };
 window.__bomdom = app; // console access for the manual browser checklist
 
@@ -100,6 +102,7 @@ async function boot() {
   initFilters(app);
   initExports(app);
   initInteractions(app);
+  initSettings(app); // after initInteractions: it relies on app.ui.closeMenus / clampMenu
   if (!app.config.allow_exports) {
     // The file owner disabled in-viewer exports (hand-editable via the
     // bomdom-config block near the top of this file).
@@ -133,6 +136,7 @@ async function boot() {
     return;
   }
   app.viewer.setRenderStyle(app.renderStyle);
+  app.viewer.setAnimations(app.animations);
   initPicking(app);
   M.initEdgeColor(app.viewer.invalidate);
   initSection(app);
@@ -399,12 +403,15 @@ function buildChrome() {
     });
   }
 
-  $('btnDiag').addEventListener('click', () => {
-    const line = $('diagLine');
-    line.classList.toggle('hidden');
-    $('btnDiag').classList.toggle('is-on', !line.classList.contains('hidden'));
+  // The footer ⓘ and the settings gear's "Diagnostics line" drive one state.
+  const setDiag = (on) => {
+    $('diagLine').classList.toggle('hidden', !on);
+    $('btnDiag').classList.toggle('is-on', !!on);
     updateDiagLine();
-  });
+  };
+  app.ui.diagOn = () => !$('diagLine').classList.contains('hidden');
+  app.ui.setDiag = setDiag;
+  $('btnDiag').addEventListener('click', () => setDiag(!app.ui.diagOn()));
 }
 
 function updateFooter() {

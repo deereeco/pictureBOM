@@ -150,8 +150,55 @@ html.theme-transition .fill { transition: none !important; }
     cursor: pointer;
 }
 .icon-btn:hover { background: var(--btn-neutral-bg); color: var(--text); }
-:root[data-theme="light"] .icon-sun { display: none; }
-:root[data-theme="dark"] .icon-moon { display: none; }
+.icon-btn.is-on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
+
+/* ---------- settings popover (mirrors the BomDom viewer's) ---------- */
+.menu-anchor { position: relative; }
+.dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 50;
+    min-width: 212px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    padding: 6px;
+    text-align: left;
+}
+.dropdown.hidden { display: none; }
+.menu-head {
+    font-size: 11px;
+    font-weight: 650;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 5px 10px 3px;
+}
+.menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
+.pop-seg-row { padding: 2px 10px 5px; }
+.dropdown .seg { width: 100%; margin: 0; padding: 2px; }
+.dropdown .seg-btn { flex: 1; padding: 2px 10px; font-size: 12px; }
+.pop-about {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px 4px;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 10.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.pop-about .gh-link {
+    margin-left: auto;
+    display: inline-flex;
+    padding: 3px;
+    border-radius: 4px;
+    color: var(--text-faint);
+    flex: none;
+}
+.pop-about .gh-link:hover { color: var(--text); background: var(--btn-neutral-bg); }
 .btn-quit {
     border: none;
     background: transparent;

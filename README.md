@@ -62,8 +62,12 @@ parts list. Send that one file to a teammate — they double-click it and can:
 - **Part colors** (View menu): paint the whole model **one color per part** or
   **per subassembly**, or right-click a part to **paint** it from a swatch row.
   Remembered per assembly in the browser — the file itself never changes. The
-  viewer opens dark with a spotlight backdrop; the theme toggle switches to a
-  light studio, backdrop included
+  viewer opens dark with a spotlight backdrop; the theme (settings gear, top
+  right) switches to a light studio, backdrop included
+- **Settings gear** (top right): light, dark or follow-the-system theme (chrome and backdrop
+  together), measurement units, animations on or off, the diagnostics line, the mouse & keyboard sheet, and
+  one click to forget everything the viewer remembered in this browser. The about
+  line at its foot links back to this project
 - **Assembly mode** (press `A`): hovering highlights the subassembly under the
   cursor and a click selects it whole — then hide (`H`), isolate (`I`) or **open**
   (`O`) it, or double-click it to open. Opening scopes the view to just that
