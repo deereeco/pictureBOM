@@ -19,6 +19,7 @@ import { initTriad } from './triad.js';
 import { initTrails } from './trails.js';
 import { initInstructions } from './instructions.js';
 import { initViewState } from './viewstate.js';
+import { initLook } from './look.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
 import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
@@ -140,6 +141,7 @@ async function boot() {
   initTrails(app);
   initInstructions(app);
   initViewState(app);
+  initLook(app); // after the viewer exists: it paints the backdrop before any model
 
   // Which way is up: this reader's remembered choice for this assembly wins,
   // then the exported default (hand-editable "up_axis" in bomdom-config),

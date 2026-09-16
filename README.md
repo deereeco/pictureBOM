@@ -59,6 +59,11 @@ parts list. Send that one file to a teammate — they double-click it and can:
   HTML. Only the camera turns — X/Y/Z always mean the model's own axes
 - Hide, isolate, or make transparent any part or subassembly — for one instance or
   **all instances at once**
+- **Colors & lighting** (View menu): swap the backdrop for white, grey, black, any
+  color or a two-color gradient; slide brightness and contrast; paint the whole
+  model **one color per part** or **per subassembly**, or right-click a part to
+  **paint** it from a swatch row. Remembered per assembly in the browser — the
+  file itself never changes
 - **Assembly mode** (press `A`): hovering highlights the subassembly under the
   cursor and a click selects it whole — then hide (`H`), isolate (`I`) or **open**
   (`O`) it, or double-click it to open. Opening scopes the view to just that
