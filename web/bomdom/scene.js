@@ -104,37 +104,15 @@ export function createViewer(canvas) {
     realistic: { tone: THREE.ACESFilmicToneMapping, exposure: 1.05, env: 0.65, hemi: 0.3,  key: 1.2, fill: 0.3 },
   };
 
-  // The reader's Brightness / Contrast sliders (look.js, issue #25) ride on
-  // top of whichever style is active: 50/50 is the tuned style exactly.
-  // Brightness is exposure, half to double across the slider. Contrast is
-  // the lamp balance — a strong key lamp over weak fill and sky makes faces
-  // step apart; the other way flattens everything toward even sky light.
-  let styleName = 'shaded';
-  const lighting = { brightness: 50, contrast: 50 };
-
-  function applyLights() {
-    const s = RENDER_STYLES[styleName];
-    const b = (lighting.brightness - 50) / 50; // -1..1
-    const c = (lighting.contrast - 50) / 50;
-    renderer.toneMapping = s.tone;
-    renderer.toneMappingExposure = s.exposure * Math.pow(2, b);
-    scene.environmentIntensity = s.env;
-    hemi.intensity = s.hemi * (c >= 0 ? 1 - 0.55 * c : 1 - 0.5 * c);
-    key.intensity = s.key * (c >= 0 ? 1 + 0.7 * c : 1 + 0.5 * c);
-    fill.intensity = s.fill * (c >= 0 ? 1 - 0.6 * c : 1);
-    invalidate();
-  }
-
   function setRenderStyle(style) {
-    styleName = RENDER_STYLES[style] ? style : 'shaded';
-    applyLights();
-  }
-
-  const clamp100 = (v) => Math.max(0, Math.min(100, Number.isFinite(v) ? v : 50));
-  function setLighting({ brightness, contrast } = {}) {
-    if (brightness !== undefined) lighting.brightness = clamp100(brightness);
-    if (contrast !== undefined) lighting.contrast = clamp100(contrast);
-    applyLights();
+    const s = RENDER_STYLES[style] || RENDER_STYLES.shaded;
+    renderer.toneMapping = s.tone;
+    renderer.toneMappingExposure = s.exposure;
+    scene.environmentIntensity = s.env;
+    hemi.intensity = s.hemi;
+    key.intensity = s.key;
+    fill.intensity = s.fill;
+    invalidate();
   }
 
   // ---- on-demand render loop + tweens --------------------------------
@@ -239,70 +217,49 @@ export function createViewer(canvas) {
   // (setRenderStyle invalidates, which touches `pending`).
   setRenderStyle('shaded');
 
-  // ---- background ------------------------------------------------------
-  // spec: { kind: 'theme' }                      — follows the UI theme (default)
-  //       { kind: 'color', color: '#rrggbb' }    — fixed solid color
-  //       { kind: 'gradient', a, b, shape }      — two colors; shape 'linear'
-  //         paints a top→bottom, 'radial' paints b at the centre out to a.
-  // A gradient is a small canvas texture stretched over the viewport, so it
-  // costs nothing per frame; the radial one is redrawn on resize so its disc
-  // stays round on screen whatever the viewport aspect.
-  let bgSpec = { kind: 'theme' };
+  // ---- backdrop: one spotlight per theme ---------------------------------
+  // The theme toggle is the only room control: dark chrome comes with a black
+  // spotlight fading to grey at the centre, light chrome with a white one
+  // fading to soft grey at the edges. Both are a 256px canvas texture
+  // stretched over the viewport (free per frame), redrawn on resize so the
+  // disc stays round whatever the aspect. Not user-adjustable on purpose —
+  // see look.js for why.
+  const THEME_BACKDROPS = {
+    dark:  { edge: '#000000', centre: '#6b7380' },
+    light: { edge: '#c3ccd6', centre: '#ffffff' },
+  };
   let bgTexture = null;
 
-  function themeBackground() {
-    return getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#eef1f5';
-  }
-
-  function gradientTexture(a, b, shape, aspect) {
+  function backdropTexture(spec, aspect) {
     const S = 256;
     const cv = document.createElement('canvas');
     cv.width = S;
     cv.height = S;
     const g = cv.getContext('2d');
-    let grad;
-    if (shape === 'radial') {
-      // Texture space is square but lands on a w×h viewport: squash the disc
-      // horizontally by the aspect so it is round once stretched back out.
-      g.translate(S / 2, S / 2);
-      g.scale(1 / aspect, 1);
-      const r = Math.hypot((S / 2) * aspect, S / 2);
-      grad = g.createRadialGradient(0, 0, 0, 0, 0, r);
-      grad.addColorStop(0, b);
-      grad.addColorStop(1, a);
-      g.fillStyle = grad;
-      g.fillRect((-S / 2) * aspect, -S / 2, S * aspect, S);
-    } else {
-      grad = g.createLinearGradient(0, 0, 0, S);
-      grad.addColorStop(0, a);
-      grad.addColorStop(1, b);
-      g.fillStyle = grad;
-      g.fillRect(0, 0, S, S);
-    }
+    // Texture space is square but lands on a w×h viewport: squash the disc
+    // horizontally by the aspect so it is round once stretched back out.
+    g.translate(S / 2, S / 2);
+    g.scale(1 / aspect, 1);
+    const grad = g.createRadialGradient(0, 0, 0, 0, 0, Math.hypot((S / 2) * aspect, S / 2));
+    grad.addColorStop(0, spec.centre);
+    grad.addColorStop(1, spec.edge);
+    g.fillStyle = grad;
+    g.fillRect((-S / 2) * aspect, -S / 2, S * aspect, S);
     const tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
   }
 
   function applyBackground() {
-    if (bgTexture) { bgTexture.dispose(); bgTexture = null; }
-    if (bgSpec.kind === 'gradient') {
-      bgTexture = gradientTexture(bgSpec.a, bgSpec.b, bgSpec.shape, camera.aspect || 1);
-      scene.background = bgTexture;
-    } else {
-      scene.background = new THREE.Color(bgSpec.kind === 'color' && bgSpec.color
-        ? bgSpec.color : themeBackground());
-    }
+    const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    if (bgTexture) bgTexture.dispose();
+    bgTexture = backdropTexture(THEME_BACKDROPS[theme], camera.aspect || 1);
+    scene.background = bgTexture;
     invalidate();
   }
 
-  function setBackground(spec) {
-    bgSpec = spec && spec.kind ? { ...spec } : { kind: 'theme' };
-    applyBackground();
-  }
-
   applyBackground();
-  new MutationObserver(() => { if (bgSpec.kind === 'theme') applyBackground(); })
+  new MutationObserver(applyBackground)
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   // ---- resize ----------------------------------------------------------
@@ -313,8 +270,7 @@ export function createViewer(canvas) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    if (bgSpec.kind === 'gradient' && bgSpec.shape === 'radial') applyBackground();
-    invalidate();
+    applyBackground(); // the spotlight disc follows the new aspect
   }
   new ResizeObserver(resize).observe(holder);
   resize();
@@ -378,7 +334,7 @@ export function createViewer(canvas) {
 
   return {
     renderer, scene, camera, invalidate, addTween, frameBox, framePoints,
-    onCameraChange, setUpAxis, setView, setRenderStyle, setLighting, setBackground,
+    onCameraChange, setUpAxis, setView, setRenderStyle,
     get controls() { return controls; }, // rebuilt whenever the up axis changes
     get upAxis() { return upAxis; },
   };

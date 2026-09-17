@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import * as M from './model.js';
 import { copyText, joinPartNumbers, copiedToast } from './clipboard.js';
 import { normalizeUp, DEFAULT_UP } from './scene.js';
+import { SCHEMES } from './look.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -857,15 +858,19 @@ export function initInteractions(app) {
     realistic.appendChild(document.createTextNode(' Realistic shading (reflections)'));
     viewMenu.appendChild(realistic);
 
-    // Colors & lighting (issue #25) live in their own popover so this menu
-    // stays short; it opens in place and offers a way back.
-    const lookItem = document.createElement('button');
-    lookItem.type = 'button';
-    lookItem.className = 'menu-item';
-    lookItem.textContent = 'Colors & lighting…';
-    lookItem.title = 'Background, brightness, contrast and part colors — remembered for this assembly';
-    lookItem.addEventListener('click', () => { if (app.ui.openLookMenu) app.ui.openLookMenu(); });
-    viewMenu.appendChild(lookItem);
+    // Part colors (issue #25): one radio row, remembered per assembly.
+    // Painting a single part lives in the right-click menu.
+    if (app.look) {
+      popHead(viewMenu, 'Part colors');
+      const sRow = document.createElement('div');
+      sRow.className = 'pop-inline';
+      for (const [scheme, label] of SCHEMES) {
+        sRow.appendChild(popRadio('bdPartColors', scheme, app.look.state.scheme === scheme, label,
+          () => app.look.setScheme(scheme)));
+      }
+      viewMenu.appendChild(sRow);
+      popNote(viewMenu, 'Right-click a part to paint it');
+    }
 
     popHead(viewMenu, 'Standard views');
     const grid = document.createElement('div');
@@ -1096,7 +1101,6 @@ export function initInteractions(app) {
     $('explodeMenu').classList.add('hidden');
     $('sectionMenu').classList.add('hidden');
     viewMenu.classList.add('hidden');
-    $('lookMenu').classList.add('hidden');
   }
   app.ui.closeMenus = closeMenus;
   // Toolbar popovers anchor right:0 to their button. On the wrapped narrow
@@ -1223,6 +1227,9 @@ export function initInteractions(app) {
         { label: 'Show all', onClick: () => { if (app.model) { M.resetAppearance(app.model); refresh(); afterVisibilityChange(); } } },
         { label: 'Reset positions', onClick: () => actions.resetPositions() },
         { label: 'Reset all', onClick: () => actions.resetAll() },
+        // Colors are remembered per assembly and survive Reset (R) on purpose;
+        // this is the one place that puts every part back to its exported color.
+        app.look ? { label: 'Original colors', onClick: () => app.look.resetColors(), disabled: app.look.isDefault() } : null,
       );
     }
     app.ui.showMenu(x, y, items);
@@ -1279,7 +1286,7 @@ export function initInteractions(app) {
       // An open dropdown is its own layer: Esc closes it and STOPS — falling
       // through would also drop a pending measurement point or exit measure
       // mode with the same keypress.
-      const menuOpen = ['ctxMenu', 'exportMenu', 'explodeMenu', 'sectionMenu', 'viewMenu', 'lookMenu']
+      const menuOpen = ['ctxMenu', 'exportMenu', 'explodeMenu', 'sectionMenu', 'viewMenu']
         .some((id) => !$(id).classList.contains('hidden'));
       closeMenus();
       if (menuOpen) return;
@@ -1427,10 +1434,11 @@ export function initInteractions(app) {
     setTheme(next);
     try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
   });
-  // Follow OS theme changes only until the user makes an explicit choice.
+  // The viewer opens dark (see the head script in shell.html); only a stored
+  // "system" choice follows OS theme changes mid-session.
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
     let stored = null;
     try { stored = localStorage.getItem(THEME_KEY); } catch (err) { /* ignore */ }
-    if (stored !== 'light' && stored !== 'dark') setTheme(e.matches ? 'dark' : 'light');
+    if (stored === 'system') setTheme(e.matches ? 'dark' : 'light');
   });
 }
