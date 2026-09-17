@@ -9,9 +9,10 @@
 (function () {
     var t = null;
     try { t = localStorage.getItem("picturebom-theme"); } catch (e) {}
-    if (t !== "light" && t !== "dark") {
-        t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    }
+    // Dark on first open (it frames the spotlight backdrop). A stored
+    // "system" follows the OS; the launcher keeps its own OS-following default.
+    if (t === "system") t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    else if (t !== "light" && t !== "dark") t = "dark";
     document.documentElement.setAttribute("data-theme", t);
 })();
 </script>
@@ -52,8 +53,6 @@
                 <div class="menu-anchor">
                     <button type="button" id="btnView" class="tb-btn" title="Which way is up, and standard views">View &#9662;</button>
                     <div id="viewMenu" class="dropdown view-pop hidden"></div>
-                    <!-- Colors & lighting: opened from View › Display, shares the anchor. -->
-                    <div id="lookMenu" class="dropdown look-pop hidden"></div>
                 </div>
                 <div class="menu-anchor">
                     <button type="button" id="btnExplode" class="tb-btn" title="Explode view setup and amount">Explode &#9662;</button>
@@ -194,7 +193,7 @@
             <span class="help-k">Axis gizmo (bottom left)</span><span>Click an axis to look down it; caption shows which way is up</span>
             <span class="help-k">1 &hellip; 6 / 0</span><span>Front, Back, Left, Right, Top, Bottom / Isometric</span>
             <span class="help-k">Right-click</span><span>Context menu (acts on selection) &mdash; hide, isolate, paint a color&hellip;</span>
-            <span class="help-k">View &#9656; Colors &amp; lighting</span><span>Background, brightness, contrast, one color per part or per subassembly &mdash; remembered for this assembly</span>
+            <span class="help-k">View &#9656; Part colors</span><span>One color per part or per subassembly &mdash; remembered for this assembly; the theme toggle switches the backdrop</span>
             <span class="help-k">Ctrl + C</span><span>Copy the selected part number(s) &mdash; the clipboard button on a list row copies that one</span>
             <span class="help-k">Shift + drag part</span><span>Move part / selection (the whole subassembly in Assembly mode)</span>
             <span class="help-k">D</span><span>Move mode — hover previews the drag target; selecting shows a move/rotate triad</span>
