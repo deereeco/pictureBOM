@@ -413,14 +413,23 @@ def repack_glb(glb, scene_info, app_version=""):
     bin_parts = []          # unique blobs, in first-seen order
     bin_len = 0
     bvs = _Remapper()
+    bv_seen = {}            # old bufferView index -> new index
 
     def add_buffer_view(old_bv_idx):
         nonlocal bin_len
+        # Hashing is per buffer view, not per reference. Exporters that pack the
+        # whole model into a handful of shared views (FreeCAD writes three) would
+        # otherwise re-slice and re-hash tens of MB for every accessor that points
+        # into one — millions of times over a large assembly.
+        seen = bv_seen.get(old_bv_idx)
+        if seen is not None:
+            return seen
         old_bv = g["bufferViews"][old_bv_idx]
         blob = _bv_bytes(glb, old_bv_idx)
         key = (hashlib.sha256(blob).digest(), old_bv.get("byteStride"), old_bv.get("target"))
         existing = bvs.by_key.get(key)
         if existing is not None:
+            bv_seen[old_bv_idx] = existing
             return existing
         pad = (-bin_len) % 4
         if pad:
@@ -434,6 +443,7 @@ def repack_glb(glb, scene_info, app_version=""):
         idx = bvs.add(key, new_bv)
         bin_parts.append(blob)
         bin_len += len(blob)
+        bv_seen[old_bv_idx] = idx
         return idx
 
     accessors = _Remapper()
