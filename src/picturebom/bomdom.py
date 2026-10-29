@@ -24,6 +24,7 @@ Design notes grounded in real SOLIDWORKSGLTF exports:
   kept (the viewer uses them for hierarchy and "not in 3D view" badges).
 """
 
+import array
 import base64
 import gzip
 import hashlib
@@ -356,6 +357,174 @@ def clean_node_name(name):
 
 
 # ---------------------------------------------------------------------------
+# Primitive merge: FreeCAD's glTF writer emits one primitive per B-rep face,
+# and the viewer turns every primitive of every instance into its own Mesh
+# and draw call — tens of thousands on a large assembly, ~1 fps. Same-material
+# primitives of a mesh are concatenated into one, which is what SolidWorks
+# exports anyway (one primitive per body and appearance).
+# ---------------------------------------------------------------------------
+
+_COMPONENTS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4,
+               "MAT2": 4, "MAT3": 9, "MAT4": 16}
+_TYPECODES = {5120: "b", 5121: "B", 5122: "h", 5123: "H", 5125: "I", 5126: "f"}
+_MERGEABLE_MODES = (0, 1, 4)  # points, lines, triangles — strips and fans can't be concatenated
+# The viewer skips feature edges on any geometry over 250k triangles (one
+# EdgesGeometry build would hitch the page); merged pieces stay under it.
+_MERGE_MAX_TRIS = 200000
+
+
+def _accessor_bytes(glb, acc_index):
+    """Tightly packed element bytes of a plain (non-sparse) accessor."""
+    g = glb.gltf
+    acc = g["accessors"][acc_index]
+    bv = g["bufferViews"][acc["bufferView"]]
+    elem = _COMPONENTS[acc["type"]] * array.array(_TYPECODES[acc["componentType"]]).itemsize
+    start = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    stride = bv.get("byteStride") or elem
+    if stride == elem:
+        return glb.bin[start:start + acc["count"] * elem]
+    return b"".join(glb.bin[start + i * stride:start + i * stride + elem]
+                    for i in range(acc["count"]))
+
+
+def _mergeable(g, prim):
+    if prim.get("extensions") or prim.get("targets") or prim.get("mode", 4) not in _MERGEABLE_MODES:
+        return False
+    accs = g.get("accessors", [])
+    refs = list(prim.get("attributes", {}).values())
+    if "indices" in prim:
+        refs.append(prim["indices"])
+    return bool(refs) and "POSITION" in prim["attributes"] and all(
+        0 <= r < len(accs) and "bufferView" in accs[r] and "sparse" not in accs[r]
+        and accs[r]["componentType"] in _TYPECODES and accs[r]["type"] in _COMPONENTS
+        for r in refs)
+
+
+def merge_primitives(glb, mesh_indices):
+    """Merge each listed mesh's same-material primitives into one.
+
+    Returns (glb, (primitives_before, primitives_after)). The input is returned
+    unchanged when no mesh has two primitives to merge; otherwise a new Glb
+    whose merged data is appended to the binary chunk, one tightly packed
+    buffer view per accessor so the repack's content-hash dedup still pairs
+    up identical parts.
+    """
+    g = glb.gltf
+    meshes = g.get("meshes", [])
+    accs = g.get("accessors", [])
+
+    def group_key(prim):
+        attrs = prim["attributes"]
+        return (prim.get("material"), prim.get("mode", 4),
+                tuple((name, accs[attrs[name]]["type"], accs[attrs[name]]["componentType"],
+                       bool(accs[attrs[name]].get("normalized")))
+                      for name in sorted(attrs)))
+
+    def tris(prim):
+        acc = accs[prim["indices"] if "indices" in prim else prim["attributes"]["POSITION"]]
+        return acc["count"] // 3
+
+    plans = {}
+    before = after = 0
+    any_merge = False
+    for mi in sorted(set(mesh_indices)):
+        prims = meshes[mi].get("primitives", [])
+        before += len(prims)
+        chunks, open_chunk = [], {}  # chunk = [keep, members, triangles]
+        for pi, prim in enumerate(prims):
+            if not _mergeable(g, prim):
+                chunks.append([True, [pi], 0])
+                continue
+            key, t = group_key(prim), tris(prim)
+            chunk = open_chunk.get(key)
+            if chunk is None or chunk[2] + t > _MERGE_MAX_TRIS:
+                chunk = open_chunk[key] = [False, [], 0]
+                chunks.append(chunk)
+            chunk[1].append(pi)
+            chunk[2] += t
+        after += len(chunks)
+        any_merge = any_merge or len(chunks) < len(prims)
+        if not all(keep for keep, _, _ in chunks):
+            plans[mi] = [(keep, members) for keep, members, _ in chunks]
+    if not any_merge:
+        return glb, (before, after)
+
+    new_g = json.loads(json.dumps(g))
+    new_accs = new_g.setdefault("accessors", [])
+    new_bvs = new_g.setdefault("bufferViews", [])
+    out = bytearray(glb.bin)
+    cache = {}  # identical source primitive lists (instances sharing accessors) merge once
+
+    def emit(data, template, count, target):
+        while len(out) % 4:
+            out.append(0)
+        new_bvs.append({"buffer": 0, "byteOffset": len(out), "byteLength": len(data),
+                        "target": target})
+        out.extend(data)
+        acc = {"bufferView": len(new_bvs) - 1, "byteOffset": 0, "count": count,
+               "componentType": template["componentType"], "type": template["type"]}
+        if template.get("normalized"):
+            acc["normalized"] = True
+        new_accs.append(acc)
+        return len(new_accs) - 1
+
+    for mi, plan in plans.items():
+        src_prims = meshes[mi]["primitives"]
+        merged = []
+        for keep, members in plan:
+            first = src_prims[members[0]]
+            if keep:
+                merged.append(json.loads(json.dumps(first)))
+                continue
+            # Lone primitives are re-packed too: left pointing into the exporter's
+            # shared views, two copies of a part would differ by byteOffset alone
+            # and never dedupe.
+            sig = json.dumps([src_prims[i] for i in members], sort_keys=True)
+            if sig in cache:
+                merged.append(json.loads(json.dumps(cache[sig])))
+                continue
+            names = sorted(first["attributes"])
+            blobs = {n: bytearray() for n in names}
+            indices = array.array("I")
+            base = 0
+            for i in members:
+                prim = src_prims[i]
+                count = accs[prim["attributes"]["POSITION"]]["count"]
+                for n in names:
+                    blobs[n] += _accessor_bytes(glb, prim["attributes"][n])
+                if "indices" in prim:
+                    local = array.array(_TYPECODES[accs[prim["indices"]]["componentType"]])
+                    local.frombytes(_accessor_bytes(glb, prim["indices"]))
+                    indices.extend(v + base for v in local)
+                else:
+                    indices.extend(range(base, base + count))
+                base += count
+            prim = {k: v for k, v in first.items() if k not in ("attributes", "indices")}
+            prim["attributes"] = {}
+            for n in names:
+                template = accs[first["attributes"][n]]
+                idx = emit(bytes(blobs[n]), template, base, 34962)
+                if n == "POSITION" and template["componentType"] == 5126:
+                    pos = array.array("f")
+                    pos.frombytes(blobs[n])
+                    new_accs[idx]["min"] = [min(pos[c::3]) for c in range(3)]
+                    new_accs[idx]["max"] = [max(pos[c::3]) for c in range(3)]
+                prim["attributes"][n] = idx
+            if base <= 0xFFFF:
+                index_bytes, ctype = array.array("H", indices).tobytes(), 5123
+            else:
+                index_bytes, ctype = indices.tobytes(), 5125
+            prim["indices"] = emit(index_bytes, {"componentType": ctype, "type": "SCALAR"},
+                                   len(indices), 34963)
+            cache[sig] = prim
+            merged.append(prim)
+        new_g["meshes"][mi]["primitives"] = merged
+
+    new_g["buffers"] = [{"byteLength": len(out)}]
+    return Glb(new_g, bytes(out), glb.source), (before, after)
+
+
+# ---------------------------------------------------------------------------
 # Repack: single scene, content-hash dedup
 # ---------------------------------------------------------------------------
 
@@ -404,9 +573,12 @@ def repack_glb(glb, scene_info, app_version=""):
     Returns (glb_bytes, result) where result carries the node/part maps and
     stats the payload builder needs.
     """
-    g = glb.gltf
-    old_nodes = g.get("nodes", [])
+    bytes_in = len(glb.bin) + len(json.dumps(glb.gltf))
+    old_nodes = glb.gltf.get("nodes", [])
     kept = scene_info["kept"]
+    glb, (prims_in, prims_out) = merge_primitives(
+        glb, [old_nodes[i]["mesh"] for i in kept if "mesh" in old_nodes[i]])
+    g = glb.gltf
 
     new_index = {old: new for new, old in enumerate(kept)}
 
@@ -627,7 +799,9 @@ def repack_glb(glb, scene_info, app_version=""):
             "mesh_instances": len(node_map),
             "unique_parts": len(parts),
             "meshes_in_file": len(g.get("meshes", [])),
-            "bytes_in": len(glb.bin) + len(json.dumps(g)),
+            "primitives_in": prims_in,
+            "primitives_out": prims_out,
+            "bytes_in": bytes_in,
             "bytes_out": len(glb_bytes),
         },
     }
@@ -985,6 +1159,16 @@ def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=(),
     for name in bom_names:
         by_fold.setdefault(name.casefold(), name)
         by_sanitized.setdefault(sanitize_filename(name).casefold(), name)
+    # SolidWorks' STEP export names a component shown in a non-default
+    # configuration '<file>_<configuration>'; longest file name wins.
+    by_length = sorted(by_fold, key=len, reverse=True)
+
+    def _config_suffixed(name):
+        fold = name.casefold()
+        for bom_fold in by_length:
+            if fold.startswith(bom_fold + "_"):
+                return by_fold[bom_fold]
+        return None
 
     warnings = []
     matched_bom = set()
@@ -1005,6 +1189,8 @@ def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=(),
             chosen = t_stripped or t_unstripped
         if chosen is None:
             chosen = by_sanitized.get(sanitize_filename(stripped).casefold())
+        if chosen is None:
+            chosen = _config_suffixed(stripped)
         part["bom_name"] = chosen
         part["matched"] = chosen is not None
         if chosen:
@@ -1280,6 +1466,9 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
                f" ({len(scene_info['mesh_nodes'])} instances)...")
         glb_bytes, repack = repack_glb(glb, scene_info, app_version)
         stats = repack["stats"]
+        if stats["primitives_out"] < stats["primitives_in"]:
+            status(f"3D geometry: merged {stats['primitives_in']} face pieces into "
+                   f"{stats['primitives_out']} for smooth viewing")
         status(f"3D geometry: {stats['mesh_instances']} instances -> "
                f"{stats['unique_parts']} unique parts, "
                f"{stats['bytes_out'] / 1e6:.1f} MB")

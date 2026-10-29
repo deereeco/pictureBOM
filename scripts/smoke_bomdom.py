@@ -154,9 +154,13 @@ def test_matching():
          "instances": 1, "mirrored": False},
         {"id": 2, "name": "GHOST-PART", "raw_names": {"GHOST-PART-1"},
          "instances": 3, "mirrored": False},
+        # STEP export of a non-default configuration: '<file>_<configuration>'.
+        {"id": 3, "name": "SCREW M3_Long", "raw_names": {"SCREW M3_Long"},
+         "instances": 4, "mirrored": False},
     ]
     bom_names = ["CP33_M-Solidworks", "400-0110-6", "400-0110",
-                 "HIDDEN-PART", "SUPPRESSED-PART", "cag subassm 1"]
+                 "HIDDEN-PART", "SUPPRESSED-PART", "cag subassm 1",
+                 "SCREW", "SCREW M3"]
     recon, warnings = match_parts_to_bom(parts, ["HIDDEN-PART-1"], bom_names,
                                          group_node_names=["cag subassm 1-1"])
     check("plain match", parts[0]["bom_name"] == "CP33_M-Solidworks")
@@ -167,7 +171,9 @@ def test_matching():
           parts[1]["bom_name"] == "400-0110-6", f"got {parts[1]['bom_name']!r}")
     check("conflict produces a warning", any("400-0110-6" in w for w in warnings))
     check("unmatched part bucketed",
-          recon["unmatched_nodes"] and recon["unmatched_nodes"][0]["raw_name"] == "GHOST-PART")
+          [u["raw_name"] for u in recon["unmatched_nodes"]] == ["GHOST-PART"])
+    check("configuration-suffixed STEP name matches the longest file name",
+          parts[3]["bom_name"] == "SCREW M3", f"got {parts[3]['bom_name']!r}")
     check("hidden row detected via empty node", recon["hidden_rows"] == ["HIDDEN-PART"])
     check("row with no node at all",
           "SUPPRESSED-PART" in recon["unmatched_rows"]
@@ -214,6 +220,103 @@ def _make_uncompressed_glb():
         "extensionsUsed": ["KHR_lights_punctual"],
     }
     return bomdom._emit_glb(gltf, bin_chunk)
+
+
+def _make_face_split_glb():
+    """FreeCAD-style GLB: two instances of one part, each mesh with its own copies
+    of three face primitives (two share a material) packed into shared views."""
+    faces = [(0, 0, 0, 1, 0, 0, 0, 1, 0), (1, 0, 0, 1, 1, 0, 0, 1, 0), (0, 0, 1, 1, 0, 1, 0, 1, 1)]
+    pos = b"".join(struct.pack("<9f", *f) for f in faces) * 2
+    idx = struct.pack("<3H", 0, 1, 2) * 6
+    bin_chunk = pos + idx
+    accessors, meshes = [], []
+    for inst in range(2):
+        prims = []
+        for face in range(3):
+            k = inst * 3 + face
+            xs, ys, zs = faces[face][0::3], faces[face][1::3], faces[face][2::3]
+            accessors.append({"bufferView": 0, "byteOffset": k * 36, "componentType": 5126,
+                              "count": 3, "type": "VEC3", "min": [min(xs), min(ys), min(zs)],
+                              "max": [max(xs), max(ys), max(zs)]})
+            accessors.append({"bufferView": 1, "byteOffset": k * 6, "componentType": 5123,
+                              "count": 3, "type": "SCALAR"})
+            prims.append({"attributes": {"POSITION": 2 * k}, "indices": 2 * k + 1,
+                          "material": 0 if face < 2 else 1})
+        meshes.append({"primitives": prims})
+    # A triangle strip can't be concatenated: its two primitives must stay apart.
+    meshes.append({"primitives": [{"attributes": {"POSITION": 0}, "mode": 5},
+                                  {"attributes": {"POSITION": 2}, "mode": 5}]})
+    gltf = {
+        "asset": {"version": "2.0", "generator": "fixture"},
+        "scene": 0,
+        "scenes": [{"nodes": [0, 1, 2]}],
+        "nodes": [{"name": "PLATE", "mesh": 0}, {"name": "PLATE", "mesh": 1,
+                                                  "translation": [5, 0, 0]},
+                  {"name": "STRIP", "mesh": 2}],
+        "meshes": meshes,
+        "accessors": accessors,
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": len(pos), "byteStride": 12,
+             "target": 34962},
+            {"buffer": 0, "byteOffset": len(pos), "byteLength": len(idx), "target": 34963},
+        ],
+        "buffers": [{"byteLength": len(bin_chunk)}],
+        "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [1, 0, 0, 1]}},
+                      {"pbrMetallicRoughness": {"baseColorFactor": [0, 0, 1, 1]}}],
+    }
+    return bomdom._emit_glb(gltf, bin_chunk)
+
+
+def _read_floats(glb, acc_index):
+    acc = glb.gltf["accessors"][acc_index]
+    bv = glb.gltf["bufferViews"][acc["bufferView"]]
+    start = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    n = acc["count"] * 3
+    return struct.unpack(f"<{n}f", glb.bin[start:start + 4 * n])
+
+
+def test_merge_primitives():
+    print("\nprimitive merge (FreeCAD one-primitive-per-face):")
+    glb = parse_glb(_make_face_split_glb())
+    validate_glb(glb)
+    scene_info = index_scene(glb, select_scene(glb.gltf))
+    out_bytes, result = repack_glb(glb, scene_info, "0.0-test")
+    out = parse_glb(out_bytes)
+    validate_glb(out)
+    stats = result["stats"]
+    check("primitive counts reported", (stats["primitives_in"], stats["primitives_out"]) == (8, 6),
+          f"got {stats['primitives_in']} -> {stats['primitives_out']}")
+    plate = out.gltf["meshes"][out.gltf["nodes"][0]["mesh"]]["primitives"]
+    check("same-material faces merged, other material kept", len(plate) == 2,
+          f"got {len(plate)}")
+    merged = next(p for p in plate if out.gltf["materials"][p["material"]]
+                  ["pbrMetallicRoughness"]["baseColorFactor"] == [1, 0, 0, 1])
+    pos = _read_floats(out, merged["attributes"]["POSITION"])
+    acc = out.gltf["accessors"][merged["indices"]]
+    bv = out.gltf["bufferViews"][acc["bufferView"]]
+    start = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    idx = struct.unpack(f"<{acc['count']}H", out.bin[start:start + 2 * acc["count"]])
+    second = [pos[3 * i + c] for i in idx[3:6] for c in range(3)]
+    check("second face's triangle survives the index offset",
+          second == [1, 0, 0, 1, 1, 0, 0, 1, 0], f"got {second}")
+    pacc = out.gltf["accessors"][merged["attributes"]["POSITION"]]
+    check("merged POSITION min/max recomputed",
+          pacc["min"] == [0, 0, 0] and pacc["max"] == [1, 1, 0])
+    check("both instances still dedupe to one part",
+          out.gltf["nodes"][0]["mesh"] == out.gltf["nodes"][1]["mesh"])
+    strip = out.gltf["meshes"][out.gltf["nodes"][2]["mesh"]]["primitives"]
+    check("triangle strips left alone", len(strip) == 2)
+    plain = parse_glb(_make_uncompressed_glb())
+    same, counts = bomdom.merge_primitives(plain, [0, 1])
+    check("single-primitive meshes: no-op", same is plain and counts == (2, 2))
+    cap = bomdom._MERGE_MAX_TRIS
+    bomdom._MERGE_MAX_TRIS = 1  # one triangle per merged piece
+    try:
+        _, counts = bomdom.merge_primitives(glb, [0, 1])
+    finally:
+        bomdom._MERGE_MAX_TRIS = cap
+    check("triangle cap keeps faces apart instead of one oversized piece",
+          counts == (6, 6), f"got {counts}")
 
 
 def test_non_draco_and_mirrored():
@@ -514,6 +617,7 @@ def main():
     test_clean_node_name()
     test_matching()
     test_non_draco_and_mirrored()
+    test_merge_primitives()
     test_color_injection()
     test_bad_inputs()
 

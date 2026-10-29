@@ -23,7 +23,8 @@ import sys
 import tomllib
 from pathlib import Path
 
-from picturebom.bomdom import build_html, load_viewer_template
+from picturebom.bomdom import (build_html, index_scene, load_viewer_template,
+                               merge_primitives, parse_glb, repack_glb, select_scene)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEMO = REPO_ROOT / "docs" / "index.html"
@@ -41,6 +42,24 @@ def package_version():
         return tomllib.load(f)["project"]["version"]
 
 
+def merge_faces(glb_bytes, version):
+    """Give an export made before 0.19.2 the per-part primitive merge.
+
+    Returns (glb_bytes, note). The payload refers to parts by mesh index, so the
+    compacted file must keep every node on the same mesh; anything else aborts.
+    """
+    glb = parse_glb(glb_bytes)
+    merged, (before, after) = merge_primitives(glb, range(len(glb.gltf.get("meshes", []))))
+    if merged is glb:
+        return glb_bytes, ""
+    out, _ = repack_glb(merged, index_scene(merged, select_scene(merged.gltf)), version)
+    old_meshes = [n.get("mesh") for n in glb.gltf.get("nodes", [])]
+    new_meshes = [n.get("mesh") for n in parse_glb(out).gltf.get("nodes", [])]
+    if old_meshes != new_meshes:
+        raise SystemExit("primitive merge would renumber parts; re-export this BomDom instead")
+    return out, f", merged {before} face pieces into {after}"
+
+
 def repack(html, version):
     """Return (new_html, summary) for an existing BomDom export."""
     mode = _slot(html, "mode").strip()
@@ -48,6 +67,9 @@ def repack(html, version):
     payload = json.loads(gzip.decompress(base64.b64decode(_slot(html, "meta"))))
     glb_b64 = "".join(_slot(html, "glb").split())
     glb = gzip.decompress(base64.b64decode(glb_b64)) if glb_b64 else b""
+    note = ""
+    if glb:
+        glb, note = merge_faces(glb, version)
     old_version = payload.get("app_version")
     payload["app_version"] = version
     out = build_html(load_viewer_template(), payload, glb, mode,
@@ -55,7 +77,7 @@ def repack(html, version):
                      up_axis=config.get("up_axis", "+y"))
     summary = (f"{payload.get('assembly', {}).get('name', '?')}: {len(payload.get('parts', []))} parts, "
                f"GLB {len(glb) / 1e6:.2f} MB, mode={mode}, up_axis={config.get('up_axis')}, "
-               f"app_version {old_version} -> {version}")
+               f"app_version {old_version} -> {version}{note}")
     return out, summary
 
 
