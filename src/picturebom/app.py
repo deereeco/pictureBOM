@@ -131,7 +131,8 @@ def browse():
     elif mode == "glb":
         path = filedialog.askopenfilename(
             title="Select 3D Model File",
-            filetypes=[("3D model (glTF binary)", "*.glb"), ("All files", "*.*")],
+            filetypes=[("3D model (.glb or STEP)", "*.glb *.step *.stp"),
+                       ("All files", "*.*")],
         )
     elif mode == "freecad":
         path = filedialog.askopenfilename(

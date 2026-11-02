@@ -1203,7 +1203,11 @@ def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=(),
     group_folds = {clean_node_name(n).casefold() for n in group_node_names}
     hidden_rows, unmatched_rows = [], []
     for name in bom_names:
-        if name in matched_bom or name.casefold() in group_folds:
+        fold = name.casefold()
+        # A subassembly shown in a non-default configuration arrives from a
+        # STEP export as '<file>_<configuration>', like parts do.
+        if (name in matched_bom or fold in group_folds
+                or any(g.startswith(fold + "_") for g in group_folds)):
             continue
         if name.casefold() in empty_folds:
             hidden_rows.append(name)

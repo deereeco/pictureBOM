@@ -36,7 +36,9 @@ def main():
         default="auto",
         help="CAD engine for a STEP input: auto (FreeCAD when installed) or "
              "freecad. Reading STEP files through SolidWorks arrives in a "
-             "later version. Ignored for .sldasm input.",
+             "later version. For a .sldasm --html run: auto builds the 3D "
+             "model from a STEP export through FreeCAD when it is installed; "
+             "solidworks forces SolidWorks' own (slower) 3D export.",
     )
     parser.add_argument(
         "--step-as",
@@ -99,14 +101,16 @@ def main():
     parser.add_argument(
         "--glb",
         default=None,
-        help="Path to a .glb exported from the same assembly by an earlier "
-             "run. Skips the slow SolidWorks 3D export for --html.",
+        help="3D model for --html: a .glb kept by an earlier run, or a STEP "
+             "file of the same assembly (converted with FreeCAD; AP214 keeps "
+             "colors). Skips the SolidWorks 3D export.",
     )
     parser.add_argument(
         "--html",
         action="store_true",
         help="Also export an interactive 3D BOM as a single .html file "
-             "(needs SolidWorks 2024+).",
+             "(3D model via FreeCAD from a STEP export, or SolidWorks 2024+'s "
+             "own 3D export when FreeCAD is not installed).",
     )
     parser.add_argument(
         "--no-excel",
@@ -158,11 +162,15 @@ def main():
                      "(for --html) --glb are all provided")
     is_step = bool(args.assembly) and stepfile.is_step_file(args.assembly)
     if not is_step:
-        for flag, present in [("--step-as", args.step_as is not None),
-                              ("--freecad", args.freecad is not None),
-                              ("--engine", args.engine != "auto")]:
-            if present:
-                parser.error(f"{flag} only applies to STEP (.step/.stp) input")
+        if args.step_as is not None:
+            parser.error("--step-as only applies to STEP (.step/.stp) input")
+        # FreeCAD also builds the 3D model of a .sldasm --html run.
+        if not args.html:
+            for flag, present in [("--freecad", args.freecad is not None),
+                                  ("--engine", args.engine != "auto")]:
+                if present:
+                    parser.error(f"{flag} only applies to STEP (.step/.stp) input "
+                                 "or an --html run")
 
     # Set up logging for CLI output
     level = logging.DEBUG if args.debug else logging.INFO

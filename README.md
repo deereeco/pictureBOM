@@ -103,8 +103,17 @@ parts list. Send that one file to a teammate — they double-click it and can:
 The file works completely offline (nothing is downloaded or uploaded), in any modern
 browser. Requirements and notes:
 
-- **Exporting** the 3D BOM needs **SolidWorks 2024 or newer** (the Extended Reality
-  .glb exporter). Viewing needs only a browser — any machine, no SolidWorks.
+- **How the 3D model is made:** with **FreeCAD** installed, SolidWorks saves the
+  assembly as an AP214 STEP file (colors included, active configuration only) and
+  FreeCAD turns it into the 3D model — minutes even on large assemblies. Without
+  FreeCAD, SolidWorks 2024 or newer exports it itself (the Extended Reality .glb
+  exporter), which builds every configuration and display state and can take hours
+  on a big assembly; pictureBOM stops waiting after 30 minutes and keeps the Excel.
+  Viewing needs only a browser — any machine, no SolidWorks.
+- Already have a STEP file of the assembly? Put it in *Advanced* → *Existing 3D
+  model* (`--glb` on the CLI): the BOM, properties and pictures still come from
+  SolidWorks, and the 3D model from that file. Save it as **AP214** — AP203 STEP
+  files carry no colors (parts then get their SolidWorks colors).
 - Only components **visible** in the model at export time get 3D geometry; hidden
   parts still appear in the list, badged "not in 3D view".
 - Almost every assembly ships as one self-contained `.html`. Only past ~400 MB —
@@ -119,7 +128,7 @@ browser. Requirements and notes:
 
 - **Windows** (SolidWorks is Windows-only)
 - **SolidWorks** installed and running before you click Run — for `.sldasm` assemblies
-- **FreeCAD 1.0 or newer** (free: `winget install FreeCAD.FreeCAD`) — only for **STEP files**, which pictureBOM reads without SolidWorks (see [STEP files](#step-files))
+- **FreeCAD 1.0 or newer** (free: `winget install FreeCAD.FreeCAD`) — for **STEP files**, which pictureBOM reads without SolidWorks (see [STEP files](#step-files)), and recommended for the 3D BOM of any assembly (fast, smooth 3D models)
 - **Microsoft 365 Excel** (or Excel 2024+) to see the in-cell pictures — older Excel versions show `#VALUE!` in the Picture column
 
 That's it — no Python installation needed; the installer takes care of everything else.
@@ -175,7 +184,7 @@ Every run writes a plain `.csv` of the parts list next to its `.xlsx`. To rebuil
 the outputs later — new image quality, the 3D BOM you skipped the first time, an
 edited parts list — fill in **Advanced**: *Existing BOM* (that `.csv`, **or the
 `.xlsx` itself**), *Existing images folder*, and for a 3D BOM the kept
-`_raw.glb`. With all three filled in the run never touches SolidWorks, so it
+`_raw.glb` (or a STEP file of the assembly). With all three filled in the run never touches SolidWorks, so it
 takes seconds instead of minutes. Edit the CSV first and the rebuilt BOM picks up
 your changes; rerun from the `.xlsx` instead and anything you have marked in its
 **Status** column comes across too.

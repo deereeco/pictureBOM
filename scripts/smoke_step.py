@@ -87,8 +87,56 @@ def check_multibody():
     return failures
 
 
+def check_header_and_time_limit():
+    """read_header on the committed fixtures, and the SolidWorks-export time
+    limit giving up on a stuck export without waiting for it (no CAD needed)."""
+    failures = []
+    fx = os.path.join(ROOT, "scripts", "fixtures")
+    head = stepfile.read_header(os.path.join(fx, "Test Bracket.step"))
+    print(f"Test Bracket.step header: {head}")
+    if head != {"schema": "AP214", "exporter": "FreeCAD"}:
+        failures.append(f"  read_header: unexpected {head!r}")
+    try:
+        stepfile.read_header(os.path.join(fx, "Cage2-sjm_pictureBOM.xlsx"))
+        failures.append("  read_header accepted a non-STEP file")
+    except stepfile.StepError:
+        pass
+
+    import threading
+    from picturebom import core
+    release = threading.Event()
+
+    class FakeApp:
+        def GetOpenDocumentByName(self, path):
+            return object()
+
+    def stuck_export(app, doc, out_path):
+        release.wait(30)  # a SaveAs that runs far past the limit
+        return True, ""
+
+    real_connect = core.connect_to_solidworks
+    core.connect_to_solidworks = FakeApp
+    try:
+        t0 = time.time()
+        ok, err, timed_out = core._export_with_time_limit(stuck_export, "x.sldasm", "x.glb", 1)
+        waited = time.time() - t0
+        ok2, err2, timed_out2 = core._export_with_time_limit(
+            lambda app, doc, out: (True, ""), "x.sldasm", "x.glb", 5)
+    finally:
+        release.set()
+        core.connect_to_solidworks = real_connect
+    print(f"time limit: gave up after {waited:.1f}s ({err!r}); quick export ok={ok2}")
+    if ok or not timed_out or waited > 3:
+        failures.append(f"  stuck export: expected a timeout after ~1s, got "
+                        f"ok={ok} timed_out={timed_out} after {waited:.1f}s")
+    if not ok2 or timed_out2:
+        failures.append(f"  quick export: expected success, got {ok2} {err2!r}")
+    return failures
+
+
 def main():
     total_failures = check_multibody()
+    total_failures += check_header_and_time_limit()
     domitron = os.path.join(ROOT, "Example 3d models", "Domitron 3d Printer .STEP")
     if os.path.isfile(domitron):
         total_failures += check(domitron, EXPECT_DOMITRON)

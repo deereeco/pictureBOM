@@ -161,8 +161,11 @@ def test_matching():
     bom_names = ["CP33_M-Solidworks", "400-0110-6", "400-0110",
                  "HIDDEN-PART", "SUPPRESSED-PART", "cag subassm 1",
                  "SCREW", "SCREW M3"]
+    bom_names.append("SUB")  # STEP group node 'SUB_Config2' (non-default configuration)
     recon, warnings = match_parts_to_bom(parts, ["HIDDEN-PART-1"], bom_names,
-                                         group_node_names=["cag subassm 1-1"])
+                                         group_node_names=["cag subassm 1-1", "SUB_Config2"])
+    check("configuration-suffixed STEP subassembly counts as present",
+          "SUB" not in recon["unmatched_rows"], f"unmatched: {recon['unmatched_rows']}")
     check("plain match", parts[0]["bom_name"] == "CP33_M-Solidworks")
     check("subassembly row matched via grouping node",
           "cag subassm 1" not in recon["unmatched_rows"]

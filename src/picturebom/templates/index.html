@@ -170,12 +170,12 @@
                                         <p class="hint">Skip capturing &mdash; reuse part images from a previous run</p>
                                     </div>
                                     <div class="field">
-                                        <label class="label" for="glb_path">Existing 3D model (.glb)</label>
+                                        <label class="label" for="glb_path">Existing 3D model (.glb or .step)</label>
                                         <div class="row">
-                                            <input class="input" type="text" id="glb_path" name="glb_path" placeholder="C:\path\to\model.glb">
+                                            <input class="input" type="text" id="glb_path" name="glb_path" placeholder="C:\path\to\model.glb or model.step">
                                             <button type="button" class="btn btn-neutral btn-browse" data-target="glb_path" data-mode="glb">Browse&hellip;</button>
                                         </div>
-                                        <p class="hint">Skip the slow 3D export &mdash; reuse the <span class="mono">_raw.glb</span> an earlier run kept (or a .glb saved from SolidWorks via File &gt; Save As). With BOM + images + 3D model all filled in, the run doesn't need SolidWorks at all.</p>
+                                        <p class="hint">Skip the 3D export &mdash; reuse the <span class="mono">_raw.glb</span> an earlier run kept, or a STEP file of this assembly (FreeCAD turns it into the 3D model; save it as AP214 to keep colors). With BOM + images + 3D model all filled in, the run doesn't need SolidWorks at all.</p>
                                     </div>
                                     <div class="field">
                                         <label class="label" for="freecad_path">FreeCAD location (for STEP files)</label>

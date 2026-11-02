@@ -74,6 +74,33 @@ def is_step_file(path):
     return bool(path) and str(path).lower().endswith(STEP_EXTENSIONS)
 
 
+def read_header(path, limit=1 << 20):
+    """Schema label ("AP214"...) and writing system from the HEADER section only.
+
+    Cheap on any file size — the 3D-model route only needs to know whether
+    the file can carry colors (AP203 cannot) and whether SolidWorks wrote it
+    (its Y-up models land on glTF -Z after FreeCAD's conversion). Raises
+    StepError for a file that isn't STEP.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read(limit)
+    except OSError as e:
+        raise StepError(f"STEP file not readable: {e}")
+    if "ISO-10303-21" not in text[:2000]:
+        raise StepError("Not a STEP file (missing the ISO-10303-21 header): "
+                        f"{os.path.basename(path)}")
+    schema = preprocessor = originating = ""
+    for m in _HEADER_RE.finditer(text.partition("DATA;")[0]):
+        if m.group(1) == "FILE_NAME":
+            args = _split_args(m.group(2))
+            if len(args) >= 6:
+                preprocessor, originating = _text(args[4]), _text(args[5])
+        elif m.group(1) == "FILE_SCHEMA":
+            schema = _schema_label(m.group(2))
+    return {"schema": schema, "exporter": (originating or preprocessor or "").strip()}
+
+
 def root_name_for(path):
     """Output base name for a STEP input: the file stem, trimmed.
 

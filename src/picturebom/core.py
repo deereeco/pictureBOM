@@ -8,14 +8,17 @@ Use cli.py for the command-line interface or app.py for the web GUI.
 """
 
 import array
+from contextlib import contextmanager
 import csv
 from datetime import datetime
 import logging
 import math
 import os
 import re
+import threading
 import time
 from urllib.parse import quote
+import winreg
 
 import pythoncom
 import win32com.client
@@ -32,6 +35,7 @@ log = logging.getLogger(__name__)
 SW_DOC_PART = 1
 SW_DOC_ASSEMBLY = 2
 SW_OPEN_DOC_OPTIONS_SILENT = 1
+SW_OPEN_DOC_OPTIONS_READ_ONLY = 2
 SW_VIEW_ISOMETRIC = 7
 
 # --- Excel export styling ---
@@ -138,15 +142,24 @@ def connect_to_solidworks():
     return win32com.client.dynamic.Dispatch(sw_app._oleobj_)
 
 
-def open_document(sw_app, file_path, doc_type):
-    """Open a SolidWorks document silently. Returns the IModelDoc2 or None."""
+def open_document(sw_app, file_path, doc_type, read_only=False):
+    """Open a SolidWorks document silently. Returns the IModelDoc2 or None.
+
+    read_only is for transient opens (per-part image capture): a read-only
+    document can never be dirtied or saved over, so nothing — SolidWorks or an
+    add-in — has grounds to ask about saving it on close. The top assembly is
+    not opened read-only: it stays open for the user to keep working in.
+    """
+    options = SW_OPEN_DOC_OPTIONS_SILENT
+    if read_only:
+        options |= SW_OPEN_DOC_OPTIONS_READ_ONLY
     errors = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
     warnings = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
 
     model_doc = sw_app.OpenDoc6(
         file_path,
         doc_type,
-        SW_OPEN_DOC_OPTIONS_SILENT,
+        options,
         "",       # default configuration
         errors,
         warnings,
@@ -157,6 +170,82 @@ def open_document(sw_app, file_path, doc_type):
 def close_document(sw_app, model_doc):
     """Close a document without saving."""
     sw_app.CloseDoc(model_doc.GetTitle)
+
+
+def _find_cam_addin_dlls():
+    """DLL paths of registered SOLIDWORKS CAM / CAMWorks add-ins.
+
+    Add-ins are keyed by CLSID under HKLM\\SOFTWARE\\SolidWorks\\AddIns —
+    except SOLIDWORKS CAM itself, which lives under the version-specific
+    key (e.g. "SolidWorks 2024\\AddIns"), so both get scanned. The DLL path
+    is the CLSID's InprocServer32 default value.
+    """
+    addins_paths = [r"SOFTWARE\SolidWorks\AddIns"]
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\SolidWorks") as key:
+            for i in range(winreg.QueryInfoKey(key)[0]):
+                sub = winreg.EnumKey(key, i)
+                if re.fullmatch(r"SolidWorks \d{4}", sub, re.IGNORECASE):
+                    addins_paths.append(rf"SOFTWARE\SolidWorks\{sub}\AddIns")
+    except OSError:
+        pass
+
+    dlls = []
+    for addins_path in addins_paths:
+        try:
+            addins_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, addins_path)
+        except OSError:
+            continue
+        with addins_key:
+            for i in range(winreg.QueryInfoKey(addins_key)[0]):
+                clsid = winreg.EnumKey(addins_key, i)
+                try:
+                    names = []
+                    with winreg.OpenKey(addins_key, clsid) as key:
+                        for value_name in ("Title", "Description"):
+                            try:
+                                names.append(str(winreg.QueryValueEx(key, value_name)[0]))
+                            except OSError:
+                                pass
+                    if not any(re.search(r"\bCAM", n, re.IGNORECASE) for n in names):
+                        continue
+                    with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
+                                        rf"CLSID\{clsid}\InprocServer32") as key:
+                        dll = str(winreg.QueryValueEx(key, "")[0])
+                    if dll and dll not in dlls:
+                        dlls.append(dll)
+                except OSError:
+                    continue
+    return dlls
+
+
+@contextmanager
+def cam_addin_suspended(sw_app):
+    """Unload SOLIDWORKS CAM / CAMWorks for the capture loop, then restore.
+
+    The CAM add-in processes every part the capture loop opens, marks it
+    modified, and interrupts CloseDoc with its own "save changes?" dialog —
+    one modal per part, which stalls the run until someone answers it. UnloadAddIn returns 0
+    only when the add-in was actually loaded, so only those get reloaded on
+    the way out and an add-in the user had off stays off.
+
+    Yields the list of suspended DLLs (empty when no CAM add-in was loaded).
+    """
+    unloaded = []
+    for dll in _find_cam_addin_dlls():
+        try:
+            if sw_app.UnloadAddIn(dll) == 0:
+                unloaded.append(dll)
+        except Exception:
+            log.debug("UnloadAddIn failed for %s", dll, exc_info=True)
+    try:
+        yield unloaded
+    finally:
+        for dll in unloaded:
+            try:
+                sw_app.LoadAddIn(dll)
+            except Exception:
+                log.warning("Could not reload SolidWorks add-in: %s", dll)
 
 
 def activate_document(sw_app, model_doc):
@@ -579,7 +668,7 @@ def _build_flat_from_hierarchical(rows, root_assembly_name="Assembly"):
 
 def capture_component(sw_app, file_path, doc_type, output_path, width, height):
     """Open a component, set isometric view, and export a JPG image."""
-    model_doc = open_document(sw_app, file_path, doc_type)
+    model_doc = open_document(sw_app, file_path, doc_type, read_only=True)
     if model_doc is None:
         return False
 
@@ -690,6 +779,90 @@ def export_assembly_glb(sw_app, assy_doc, glb_path):
         return True, ""
     except Exception as e:
         return False, f"3D export failed: {e}"
+
+
+# swUserPreferenceIntegerValue_e.swStepAP / swUserPreferenceToggle_e.
+# swStepExportAppearances (SolidWorks.Interop.swconst). AP203 carries no
+# colors, so pictureBOM's own STEP export always asks for AP214 + appearances
+# and puts the user's settings back afterwards.
+SW_PREF_STEP_AP = 75
+SW_PREF_STEP_EXPORT_APPEARANCES = 787
+STEP_AP214 = 214
+
+# How long a run waits on one SolidWorks SaveAs export before giving up on the
+# 3D model. The glTF exporter builds every configuration x display state and
+# can run for hours on a large assembly; STEP writes only the active one.
+GLTF_EXPORT_LIMIT_S = 30 * 60
+STEP_EXPORT_LIMIT_S = 60 * 60
+
+
+def export_assembly_step(sw_app, assy_doc, step_path):
+    """SaveAs the open assembly to an AP214 STEP file with appearances.
+
+    Writes only the active configuration. Returns (ok, error_message).
+    """
+    try:
+        title = assy_doc.GetTitle
+        active = sw_app.ActiveDoc
+        if active is None or active.GetTitle != title:
+            activate_document(sw_app, assy_doc)
+            active = sw_app.ActiveDoc
+            if active is None or active.GetTitle != title:
+                return False, "could not bring the assembly to the front for the STEP export"
+
+        old_ap = sw_app.GetUserPreferenceIntegerValue(SW_PREF_STEP_AP)
+        old_appearances = sw_app.GetUserPreferenceToggle(SW_PREF_STEP_EXPORT_APPEARANCES)
+        sw_app.SetUserPreferenceIntegerValue(SW_PREF_STEP_AP, STEP_AP214)
+        sw_app.SetUserPreferenceToggle(SW_PREF_STEP_EXPORT_APPEARANCES, True)
+        try:
+            export_data = win32com.client.VARIANT(pythoncom.VT_DISPATCH, None)
+            save_errors = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+            save_warnings = win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+            success = assy_doc.Extension.SaveAs(
+                step_path, 0, 1, export_data, save_errors, save_warnings)
+        finally:
+            sw_app.SetUserPreferenceIntegerValue(SW_PREF_STEP_AP, old_ap)
+            sw_app.SetUserPreferenceToggle(SW_PREF_STEP_EXPORT_APPEARANCES, old_appearances)
+        if not success:
+            return False, f"SolidWorks refused the STEP export (error code {save_errors.value})"
+        if not os.path.isfile(step_path) or os.path.getsize(step_path) < 100:
+            return False, "SolidWorks wrote no STEP data"
+        return True, ""
+    except Exception as e:
+        return False, f"STEP export failed: {e}"
+
+
+def _export_with_time_limit(export_fn, assembly_path, out_path, limit_s):
+    """Run export_fn(sw_app, assy_doc, out_path) on a worker thread, waiting at most limit_s.
+
+    SaveAs cannot be cancelled, and the SolidWorks session belongs to the
+    user (other unsaved documents may be open), so a slow export is never
+    killed: the run stops waiting and moves on while SolidWorks finishes in
+    the background. Returns (ok, error_message, timed_out).
+    """
+    result = {}
+
+    def work():
+        pythoncom.CoInitialize()
+        try:
+            app = connect_to_solidworks()
+            doc = app.GetOpenDocumentByName(assembly_path)
+            if doc is None:
+                result["r"] = (False, "the assembly is no longer open in SolidWorks")
+            else:
+                result["r"] = export_fn(app, doc, out_path)
+        except Exception as e:
+            result["r"] = (False, f"export failed: {e}")
+        finally:
+            pythoncom.CoUninitialize()
+
+    worker = threading.Thread(target=work, name="solidworks-export", daemon=True)
+    worker.start()
+    worker.join(limit_s)
+    if worker.is_alive():
+        return False, f"SolidWorks was still exporting after {limit_s // 60} minutes", True
+    ok, err = result.get("r", (False, "the export ended without a result"))
+    return ok, err, False
 
 
 def _flat_normals(tris):
@@ -895,6 +1068,74 @@ def _freecad_job(step_path, components, images_dir, width, height, glb_path,
         "body_names": body_names,
         "line_width": 2.0,
     }
+
+
+def _step_route_glb(provided_step, assembly_path, output_dir, root_name, timestamp,
+                    freecad, status, warnings, color_fallback="SolidWorks"):
+    """Build a run's 3D model from a STEP file through FreeCAD.
+
+    The STEP is the user's (provided_step) or a temporary AP214 export of the
+    open assembly, deleted afterwards — only the converted .glb is kept.
+    color_fallback names where part colors come from when the STEP has none
+    (for the notice). Returns (glb_path, ok, error, up_axis, timed_out);
+    up_axis is "-z" for a SolidWorks-written STEP (its Y-up model lands on
+    glTF -Z after FreeCAD's Z-up conversion), else None.
+    """
+    from . import freecad_engine  # lazy: keeps module import light
+
+    glb_path = os.path.join(output_dir, f"{root_name}_{timestamp}_raw.glb")
+    step_path = provided_step
+    if step_path is None:
+        step_path = os.path.join(output_dir, f"{root_name}_{timestamp}_3d.step")
+        status("Saving the assembly as STEP for the 3D model (stops waiting after "
+               f"{STEP_EXPORT_LIMIT_S // 60} minutes)...")
+        t0 = time.time()
+        ok, err, timed_out = _export_with_time_limit(
+            export_assembly_step, assembly_path, step_path, STEP_EXPORT_LIMIT_S)
+        if not ok:
+            if not timed_out:
+                _remove_quietly(step_path)
+            return glb_path, False, err, None, timed_out
+        status(f"STEP saved in {time.time() - t0:.0f} s "
+               f"({os.path.getsize(step_path) / 1e6:.0f} MB)")
+    try:
+        header = stepfile.read_header(step_path)
+        if header["schema"] == "AP203":
+            source = ("each part's SolidWorks color" if color_fallback == "SolidWorks"
+                      else "a color sampled from each part's picture")
+            msg = (f"{os.path.basename(step_path)} is an AP203 STEP file, which "
+                   f"stores no colors — the 3D model uses {source} instead. "
+                   "Export as AP214 to keep face colors.")
+            warnings.append(msg)
+            status(msg)
+        up_axis = "-z" if "solidworks" in header["exporter"].lower() else None
+
+        status("Converting the STEP file to a 3D model with FreeCAD"
+               + (f" {freecad['version']}" if freecad.get("version") else "") + "...")
+        job = {"step_path": step_path, "parts": [], "images": [], "glb_path": glb_path,
+               "root_product": "", "body_names": [], "line_width": 2.0}
+        try:
+            res = freecad_engine.run_job(freecad, job, on_status=status)
+        except freecad_engine.FreeCADError as e:
+            return glb_path, False, f"FreeCAD could not convert the STEP file ({e})", None, False
+        for msg in res.get("warnings", []):
+            warnings.append(msg)
+            status(msg)
+        if not res.get("glb") or not os.path.isfile(glb_path):
+            return glb_path, False, "FreeCAD wrote no 3D model", None, False
+        return glb_path, True, "", up_axis, False
+    except stepfile.StepError as e:
+        return glb_path, False, str(e), None, False
+    finally:
+        if provided_step is None:
+            _remove_quietly(step_path)
+
+
+def _remove_quietly(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def get_solidworks_year(sw_app):
@@ -1925,10 +2166,37 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         status(msg)
         part_properties = []
 
+    # The 3D-model input may also be a STEP file: FreeCAD converts it, and
+    # the BOM data still comes from the assembly (or the CSV).
+    provided_step = None
+    if has_glb and stepfile.is_step_file(glb_path):
+        glb_path = os.path.abspath(glb_path)
+        problem = None
+        if assembly_path and stepfile.is_step_file(assembly_path):
+            problem = ("the input is already a STEP file, which supplies the "
+                       "3D model itself")
+        elif not os.path.isfile(glb_path):
+            problem = f"file not found: {glb_path}"
+        else:
+            try:
+                stepfile.read_header(glb_path)
+                provided_step = glb_path
+            except stepfile.StepError as e:
+                problem = str(e)
+        if problem:
+            has_glb = False
+            msg = f"STEP file for the 3D model ignored: {problem}."
+            if has_csv and has_images and output_html:
+                # Would-be offline run: drop the 3D output, keep the Excel.
+                output_html = False
+                msg += " The Excel BOM is still generated from the CSV and images."
+            warnings.append(msg)
+            status(msg)
+
     # A reused GLB only matters for the 3D output, and a bad one must never
     # cost the user their Excel (the same rule the in-SolidWorks 3D export
     # follows): degrade to a warning instead of dying.
-    if has_glb:
+    if has_glb and not provided_step:
         glb_path = os.path.abspath(glb_path)
         if output_html:
             try:
@@ -1996,6 +2264,41 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     f"Output folder already contains {len(existing)} image(s): {output_dir}"
                 )
 
+    # Where a SolidWorks (or offline) run gets its 3D model: a STEP file that
+    # FreeCAD converts — pictureBOM's own AP214 export, or one the user
+    # supplied — whenever FreeCAD is installed. SolidWorks' glTF export is the
+    # fallback (or engine="solidworks"): it builds every configuration x
+    # display state and can run for hours on a large assembly.
+    step_freecad = None
+    if output_html and not is_step and (
+            provided_step or (use_solidworks and not has_glb and engine != "solidworks")):
+        from . import freecad_engine  # lazy: keeps module import light
+        step_freecad = freecad_engine.find_freecad(freecad_path)
+        if step_freecad is None:
+            if provided_step:
+                # A STEP the user picked is never swapped for a surprise
+                # (possibly hours-long) SolidWorks export: skip the 3D model.
+                has_glb = False
+                provided_step = None
+                output_html = False
+                msg = ("3D export skipped: reading a STEP file for the 3D model "
+                       "needs FreeCAD. " + freecad_engine.describe_missing(freecad_path))
+                if output_excel:
+                    msg += " The Excel BOM is still generated."
+                warnings.append(msg)
+                status(msg)
+        else:
+            if step_freecad.get("ignored"):
+                msg = (f"No FreeCAD at the configured location "
+                       f"{step_freecad['ignored']!r} — using {step_freecad['exe']} instead.")
+                warnings.append(msg)
+                status(msg)
+            vmsg = freecad_engine.check_version(step_freecad)
+            if vmsg:
+                warnings.append(vmsg)
+                status(vmsg)
+    step_route = step_freecad is not None
+
     assy_name = os.path.basename(name_source)
     sw_app = None
     assy_doc = None
@@ -2004,7 +2307,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         status("Connecting to SolidWorks...")
         sw_app = connect_to_solidworks()
 
-        if output_html and not has_glb:
+        if output_html and not has_glb and not step_route:
             sw_year = get_solidworks_year(sw_app)
             if sw_year is not None and sw_year < 2024:
                 status(f"Note: the 3D interactive BOM needs SolidWorks 2024 or newer "
@@ -2129,9 +2432,13 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             status(f"Using existing images from: {img_dir}")
     elif not has_images and total > 0:
         status(f"Capturing images ({total} components)...")
-        captured_count, _ = capture_all_components(
-            sw_app, components, output_dir, width, height, on_progress=on_progress,
-        )
+        with cam_addin_suspended(sw_app) as suspended:
+            if suspended:
+                status("SOLIDWORKS CAM add-in suspended during capture "
+                       "(restored afterward).")
+            captured_count, _ = capture_all_components(
+                sw_app, components, output_dir, width, height, on_progress=on_progress,
+            )
         status(f"{captured_count}/{total} images captured.")
     elif has_images:
         status(f"Using existing images from: {img_dir}")
@@ -2221,7 +2528,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
     glb_elapsed = html_elapsed = 0.0
     if output_html and (hierarchical_rows or bom_rows):
         glb_start = time.time()
-        if has_glb:
+        timed_out = False  # a SolidWorks export still running: make no more SolidWorks calls
+        if has_glb and not provided_step:
             raw_glb = glb_path
             glb_ok, glb_err = True, ""
             status(f"Using the provided 3D model: {os.path.basename(raw_glb)}")
@@ -2229,14 +2537,30 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             raw_glb = step_glb
             glb_ok = bool(step_glb) and os.path.isfile(step_glb)
             glb_err = "" if glb_ok else "FreeCAD wrote no 3D model"
+        elif step_route:
+            raw_glb, glb_ok, glb_err, step_up_axis, timed_out = _step_route_glb(
+                provided_step, assembly_path, output_dir, root_name, timestamp,
+                step_freecad, status, warnings,
+                color_fallback="SolidWorks" if use_solidworks else "picture")
+            # Only replace the default — an up axis the user chose stands.
+            if step_up_axis and (viewer_up_axis or "+y").strip().lower() in ("+y", "y"):
+                viewer_up_axis = step_up_axis
         else:
-            status("Exporting 3D model (single step — may take a few minutes)...")
+            status("Exporting 3D model with SolidWorks (stops waiting after "
+                   f"{GLTF_EXPORT_LIMIT_S // 60} minutes)...")
             # SolidWorks' glTF exporter rewrites its target filename
             # (lowercased, spaces -> underscores) — hand it a name that
             # survives the rewrite unchanged.
             safe_root = re.sub(r"[^a-z0-9._-]+", "_", root_name.lower())
             raw_glb = os.path.join(output_dir, f"{safe_root}_{timestamp}_raw.glb")
-            glb_ok, glb_err = export_assembly_glb(sw_app, assy_doc, raw_glb)
+            glb_ok, glb_err, timed_out = _export_with_time_limit(
+                export_assembly_glb, assembly_path, raw_glb, GLTF_EXPORT_LIMIT_S)
+            if timed_out:
+                glb_err += (" — it builds every configuration and display state, "
+                            "which can take hours on a large assembly. SolidWorks "
+                            "may stay busy until it finishes. Install FreeCAD so "
+                            "pictureBOM can build the 3D model from a STEP export "
+                            "instead (minutes, not hours)")
             if glb_ok:
                 # The export target used a sanitized name (see above); give
                 # the kept file the same naming as the other outputs.
@@ -2250,7 +2574,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
         glb_elapsed = time.time() - glb_start
 
         if not glb_ok:
-            sw_year = get_solidworks_year(sw_app) if sw_app is not None else None
+            sw_year = (get_solidworks_year(sw_app)
+                       if sw_app is not None and not timed_out and not step_route else None)
             hint = (f" 3D export needs SolidWorks 2024 or newer (detected {sw_year})."
                     if sw_year is not None and sw_year < 2024 else "")
             msg = f"3D export skipped: {glb_err}.{hint}"
@@ -2259,7 +2584,8 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
             warnings.append(msg)
             status(msg)
         else:
-            if not has_glb:
+            own_glb = not has_glb or bool(provided_step)  # ours to delete; a user's .glb never is
+            if own_glb and not step_route:  # FreeCAD reports its own size
                 status(f"3D model exported ({os.path.getsize(raw_glb) / 1e6:.1f} MB)")
             try:
                 active_config = ""
@@ -2287,7 +2613,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     # as empty nodes — name them so the warning says why.
                     # A part whose census failed (None) has UNKNOWN bodies:
                     # it must not be called "hidden" with confidence.
-                    if use_freecad:
+                    if use_freecad or step_route:
                         # FreeCAD exports surface bodies too — only parts
                         # with no bodies at all come out empty.
                         no_geometry = [c["name"] for c in components.values()
@@ -2308,7 +2634,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     recoverable = [c["name"] for c in components.values()
                                    if c["name"] in set(no_geometry)
                                    and (c.get("surface_bodies") or 0) > 0]
-                    if recoverable and not has_glb and assy_doc is not None:
+                    if recoverable and not has_glb and not step_route and assy_doc is not None:
                         status(f"Recovering {len(recoverable)} surface-only "
                                "part(s) from SolidWorks' display tessellation...")
                         try:
@@ -2374,16 +2700,49 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                     no_geometry_names=no_geometry,
                     census_complete=census_complete,
                     property_names=html_property_names,
-                    engine_label="FreeCAD" if use_freecad else "SolidWorks",
+                    engine_label="FreeCAD" if use_freecad or step_route else "SolidWorks",
                 )
                 html_elapsed = time.time() - html_start
-                warnings.extend(res.pop("warnings", []))
-                res.pop("reconciliation", None)
+                html_warnings = res.pop("warnings", [])
+                missing = (res.pop("reconciliation", None) or {}).get("unmatched_rows") or []
+                if step_route:
+                    # Say it once, in STEP terms: the generic "no matching 3D
+                    # node" line, and the "exported no appearances" line after
+                    # an AP203 notice, would repeat what is said here.
+                    ap203 = any("is an AP203 STEP file" in w for w in warnings)
+                    html_warnings = [
+                        w for w in html_warnings
+                        if not (missing and "have no matching 3D node" in w)
+                        and not (ap203 and "exported no appearances" in w)]
+                    def _names(names):
+                        return ", ".join(names[:5]) + ("…" if len(names) > 5 else "")
+                    # A part with no bodies at all (e.g. a placeholder from an
+                    # imported mesh or ECAD file) has nothing to show in any
+                    # route — say that, rather than blaming hidden parts.
+                    empty = [m for m in missing if m in set(no_geometry)]
+                    absent = [m for m in missing if m not in set(no_geometry)]
+                    if empty:
+                        msg = (f"{len(empty)} BOM row(s) have no solid or surface bodies "
+                               f"in SolidWorks, so there is nothing to show in 3D: "
+                               f"{_names(empty)}.")
+                        html_warnings.append(msg)
+                        status(msg)
+                    if absent:
+                        msg = (f"{len(absent)} BOM row(s) are not in the STEP file: "
+                               f"{_names(absent)}. SolidWorks leaves hidden components "
+                               "out of STEP exports"
+                               + ("" if not provided_step else
+                                  ", and a STEP saved before the assembly changed misses "
+                                  "newer parts")
+                               + " — show them (or re-export) to get them into the 3D view.")
+                        html_warnings.append(msg)
+                        status(msg)
+                warnings.extend(html_warnings)
                 res.pop("stats", None)
                 html_result.update(res)
                 status(f"Interactive 3D BOM saved to: {html_result['html_path']}")
                 # Never delete a user-supplied GLB — only our own raw export.
-                if not keep_raw_glb and not has_glb:
+                if not keep_raw_glb and own_glb:
                     try:
                         os.remove(raw_glb)
                     except OSError:
@@ -2393,7 +2752,7 @@ def run_pipeline(assembly_path, output_dir, width=1920, height=1080,
                 msg = f"3D interactive BOM failed: {e}."
                 if output_excel:
                     msg += " The Excel BOM was still generated."
-                if not has_glb:
+                if own_glb:
                     msg += f" The raw 3D export was kept for diagnosis: {raw_glb}"
                 warnings.append(msg)
                 status(msg)

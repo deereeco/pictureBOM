@@ -967,6 +967,8 @@
                 const STAGE_LABELS = [
                     ["Generating Excel", "Generating Excel..."],
                     ["Exporting 3D model", "Exporting 3D model (may take a few minutes)..."],
+                    ["Saving the assembly as STEP", "Saving a STEP file for the 3D model..."],
+                    ["Converting the STEP file", "Converting the STEP file with FreeCAD..."],
                     ["Optimizing 3D model", "Optimizing 3D model..."],
                     ["Preparing thumbnails", "Preparing thumbnails..."],
                     ["Writing interactive 3D BOM", "Writing 3D BOM file..."],
