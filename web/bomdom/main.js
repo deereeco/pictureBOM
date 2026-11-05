@@ -24,6 +24,7 @@ import { initReview } from './review.js';
 import { initLook } from './look.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
 import { initSettings } from './settings.js';
+import { initHelp } from './help.js';
 import { initAxisGizmo } from './axes.js';
 import { initPanel } from './panel.js';
 import { initFilters } from './filter.js';
@@ -107,6 +108,7 @@ async function boot() {
   initExports(app);
   initInteractions(app);
   initSettings(app); // after initInteractions: it relies on app.ui.closeMenus / clampMenu
+  initHelp();
   if (!app.config.allow_exports) {
     // The file owner disabled in-viewer exports (hand-editable via the
     // bomdom-config block near the top of this file).

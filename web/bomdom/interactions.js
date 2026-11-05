@@ -1367,7 +1367,8 @@ export function initInteractions(app) {
   });
 
   // ---- help ------------------------------------------------------------
-  // The sheet opens from the settings gear (settings.js) or the ? key.
+  // The sheet opens from the settings gear (settings.js) or the ? key;
+  // help.js builds its contents.
   $('helpClose').addEventListener('click', () => $('helpOverlay').classList.add('hidden'));
   $('helpOverlay').addEventListener('click', (ev) => {
     if (ev.target === $('helpOverlay')) $('helpOverlay').classList.add('hidden');
