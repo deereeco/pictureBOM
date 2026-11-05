@@ -37,7 +37,7 @@ const KEYS = {
   F: ['view', 'Frame', 'Frame selection', 'Frames everything when nothing is selected'],
   H: ['show', 'Hide', 'Hide selection', 'Shift + H unhides the last hidden part(s)'],
   X: ['show', 'Section', 'Section view on / off'],
-  N: ['tools', 'Notes', 'Notes tab', 'Right-click a part → Add note here or Note on whole part; Sketch draws on the view; … on a note edits, moves or deletes it (Change its view… re-saves the view it opens in); Share notes sends a notes file or a BomDom copy, and dropping either on the viewer merges it'],
+  N: ['tools', 'Note', 'Add a note', 'Pins it where the pointer rests on a part (otherwise click a spot); right-click a part → Note on whole part; Sketch draws on the view; … on a note edits, moves or deletes it (Change its view… re-saves the view it opens in); Share notes sends a notes file or a BomDom copy, and dropping either on the viewer merges it'],
   M: ['tools', 'Measure', 'Measure mode', 'Click two points; corners, edges, holes and faces snap; hole readouts offer center / min / max'],
   ',': ['app', 'Settings', 'Settings', 'Theme, units, animations, diagnostics line'],
   '?': ['app', 'Help', 'This help'],

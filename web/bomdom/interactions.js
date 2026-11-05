@@ -1348,7 +1348,7 @@ export function initInteractions(app) {
       return;
     }
     if (key === 'm') { if (app.measure) app.measure.toggle(); }
-    else if (key === 'n') { if (app.review) app.review.toggleTab(); }
+    else if (key === 'n') { if (app.review) app.review.addNote(); }
     else if (key === 'd') actions.setMoveMode(!app.moveMode);
     else if (key === 'a') actions.setAssemblyMode(!app.assemblyMode);
     else if (key === 'o') { const t = selectedRecs(); if (t.length) actions.open(t, openLabelFor(t)); }

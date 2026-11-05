@@ -311,11 +311,6 @@ export function initReview(app) {
     if (app.ui.setPanelHidden) app.ui.setPanelHidden(false);
     if (!tab.classList.contains('is-active')) tab.click();
   }
-  function toggleNotesTab() {
-    if (!app.model) { app.ui.toast('No 3D model loaded'); return; }
-    if (tab.classList.contains('is-active') && !$('panel').classList.contains('hidden')) $('tabParts').click();
-    else showNotesTab();
-  }
   // Instruction mode owns the view with its balloons: pins and the card
   // step aside until it ends.
   const pinsShown = () => !!app.model && !(app.instructions && app.instructions.on);
@@ -382,6 +377,22 @@ export function initReview(app) {
     canvas.classList.remove('is-placing');
     pinsEl.classList.remove('is-placing');
     placeChip.classList.add('hidden');
+  }
+
+  // N: a note right where the pointer rests on a part; with the pointer off
+  // the model, the same click-to-place as "+ Pin note". N again cancels it.
+  let lastPointer = null;
+  canvas.addEventListener('pointermove', (ev) => { lastPointer = { clientX: ev.clientX, clientY: ev.clientY }; });
+  canvas.addEventListener('pointerleave', () => { lastPointer = null; });
+  function addNoteKey() {
+    if (!app.model) { app.ui.toast('No 3D model loaded'); return; }
+    if (st.placing && st.placing.mode === 'new') { stopPlacing(); renderPane(); return; }
+    if (guardUnsent()) return;
+    const hit = lastPointer && app.pick ? app.pick(lastPointer) : null;
+    if (hit) { startDraft({ kind: 'point', rec: hit.rec, world: hit.point }); return; }
+    closeNote();
+    startPlacing('new');
+    renderPane();
   }
 
   // picking.js hands canvas clicks over while placing.
@@ -585,7 +596,7 @@ export function initReview(app) {
     const open = live().filter((n) => n.status !== 'resolved').length;
     tab.replaceChildren(document.createTextNode('Notes'));
     if (open) tab.appendChild(el('span', 'tb-count', String(open)));
-    tab.title = open ? `Review notes — ${open} open (N)` : 'Review notes — right-click a part to add one (N)';
+    tab.title = open ? `Review notes — ${open} open` : 'Review notes — press N over a part, or right-click it, to add one';
   }
 
   // ---- pins --------------------------------------------------------------------
@@ -927,7 +938,7 @@ export function initReview(app) {
     head.appendChild(seg);
     const pin = el('button', 'np-add' + (st.placing && st.placing.mode === 'new' ? ' is-on' : ''), '+ Pin note');
     pin.type = 'button';
-    pin.title = 'Then click a spot on a part (or right-click a part → Add note here)';
+    pin.title = 'Then click a spot on a part (N over a part pins one right there)';
     pin.addEventListener('click', () => {
       if (st.placing && st.placing.mode === 'new') { stopPlacing(); renderPane(); return; }
       if (guardUnsent()) return;
@@ -1587,7 +1598,7 @@ export function initReview(app) {
     refresh,
     escape,
     handleClick,
-    toggleTab: toggleNotesTab,
+    addNote: addNoteKey,
     startPartNote: (rec) => startDraft({ kind: 'part', rec }),
     startSpotNote: (rec, world) => startDraft({ kind: 'point', rec, world }),
     startPlacing: () => startPlacing('new'),
