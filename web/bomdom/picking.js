@@ -137,7 +137,7 @@ export function initPicking(app) {
         if (app.dragging) return; // a move/triad gesture claimed the finger
         pressFired = true;
         const hit = pick(ev);
-        app.ui.showContextMenu(ev.clientX, ev.clientY, hit ? hit.rec : null);
+        app.ui.showContextMenu(ev.clientX, ev.clientY, hit ? hit.rec : null, hit ? hit.point : null);
       }, 500);
     }
   });
@@ -165,7 +165,7 @@ export function initPicking(app) {
         app.measure.handleClick(ev, hit);
         return;
       }
-      if (app.reviewMode && app.review) { // review mode: a click pins a note
+      if (app.notePlacing && app.review) { // "+ Pin note" / "Move pin": a click places it
         app.review.handleClick(ev, hit);
         return;
       }
@@ -179,7 +179,7 @@ export function initPicking(app) {
       // In measure mode, right-click first cancels a pending point.
       if (app.measureMode && app.measure && app.measure.handleRightClick()) return;
       const hit = pick(ev);
-      app.ui.showContextMenu(ev.clientX, ev.clientY, hit ? hit.rec : null);
+      app.ui.showContextMenu(ev.clientX, ev.clientY, hit ? hit.rec : null, hit ? hit.point : null);
     }
   });
   canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());

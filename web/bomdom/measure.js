@@ -1443,7 +1443,7 @@ export function initMeasure(app) {
       if (app.assemblyMode && app.actions) app.actions.setAssemblyMode(false);
       if (app.moveMode && app.actions) app.actions.setMoveMode(false);
       if (app.instructions && app.instructions.on) app.instructions.set(false);
-      if (app.review && app.review.on) app.review.set(false);
+      if (app.review) app.review.cancel();
       canvas.addEventListener('pointermove', onPointerMove);
       canvas.addEventListener('pointerleave', onPointerLeave);
       // Feature edges are the snap targets: make sure they get built even if

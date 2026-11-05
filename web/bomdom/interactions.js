@@ -327,7 +327,7 @@ export function initInteractions(app) {
       // preview and the gesture can never disagree.
       if (on && app.measureMode && app.measure) app.measure.toggle();
       if (on && app.instructions && app.instructions.on) app.instructions.set(false);
-      if (on && app.review && app.review.on) app.review.set(false);
+      if (on && app.review) app.review.cancel();
       // What CANVAS hover resolves to just changed either way — clear a stale
       // preview so it can't promise the old target until the pointer next
       // moves. A panel-row hover stays: no mode changes what a row means.
@@ -412,7 +412,7 @@ export function initInteractions(app) {
         // mode. Assembly mode composes instead (see setAssemblyMode).
         if (app.measureMode && app.measure) app.measure.toggle();
         if (app.instructions && app.instructions.on) app.instructions.set(false);
-        if (app.review && app.review.on) app.review.set(false);
+        if (app.review) app.review.cancel();
       }
       // Canvas hover resolution changed either way (drag target vs assembly
       // unit vs nothing) — drop a stale canvas preview; the next pointermove
@@ -1180,8 +1180,9 @@ export function initInteractions(app) {
     ctxMenu.style.top = Math.min(y, window.innerHeight - ctxMenu.offsetHeight - 8) + 'px';
   };
 
-  app.ui.showContextMenu = (x, y, rec) => {
+  app.ui.showContextMenu = (x, y, rec, point = null) => {
     const items = [];
+    const hitRec = rec; // the leaf under the cursor: "Add note here" pins to it
     // Assembly mode: the menu acts on the subassembly unit the hover
     // highlights, not the leaf part under the cursor. Then a click on one
     // part of a selected subassembly means the subassembly.
@@ -1210,6 +1211,9 @@ export function initInteractions(app) {
         { head: label },
         { label: copyNames.length > 1 ? `Copy ${copyNames.length} part numbers` : 'Copy part number',
           onClick: () => copyPartNumbers(selectionRoots(targets)), disabled: !copyNames.length },
+        // Review notes sit up top: anyone opening the file can leave one.
+        !multi && app.review && point ? { label: 'Add note here', onClick: () => app.review.startSpotNote(hitRec, point) } : null,
+        !multi && app.review ? { label: 'Note on whole part', onClick: () => app.review.startPartNote(rec) } : null,
         { sep: true },
         { label: multi ? `Hide ${n} selected` : 'Hide', onClick: () => actions.hide(targets) },
         !multi && insts.length > 1
@@ -1229,8 +1233,6 @@ export function initInteractions(app) {
         { sep: true },
         { label: multi ? `Open ${n} selected` : 'Open', onClick: () => actions.open(targets, label) },
         !multi && row && row.vendor_url ? { label: 'Vendor page', href: row.vendor_url } : null,
-        !multi && app.review ? { sep: true } : null,
-        !multi && app.review ? { label: 'Note on whole part', onClick: () => app.review.startPartNote(rec) } : null,
       );
     } else {
       items.push(
@@ -1346,7 +1348,7 @@ export function initInteractions(app) {
       return;
     }
     if (key === 'm') { if (app.measure) app.measure.toggle(); }
-    else if (key === 'n') { if (app.review) app.review.set(!app.review.on); }
+    else if (key === 'n') { if (app.review) app.review.toggleTab(); }
     else if (key === 'd') actions.setMoveMode(!app.moveMode);
     else if (key === 'a') actions.setAssemblyMode(!app.assemblyMode);
     else if (key === 'o') { const t = selectedRecs(); if (t.length) actions.open(t, openLabelFor(t)); }

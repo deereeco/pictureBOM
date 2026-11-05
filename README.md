@@ -91,10 +91,12 @@ parts list. Send that one file to a teammate — they double-click it and can:
 - **Section view** (press `X`): cut the model open along any model axis with a
   position slider and flip control — cut cross-sections are outlined so the
   open interiors read clearly
-- **Review notes** (press `N`) for design reviews: click a spot on a part to pin a
-  note, right-click a part for a note on the whole part, or add an overall note about
-  the whole design. Reply, resolve, and sketch on the view with a pen, arrows, circles
-  and boxes. Each note remembers the exact view it was written in (angle, explode,
+- **Review notes** in the always-there **Notes** tab (`N`) for design reviews: anyone
+  you send the BomDom to can add them. Right-click a part → *Add note here* to pin a
+  note to that spot (or *Note on whole part*), use *+ Pin note* and click a spot, or
+  add an overall note about the whole design. Reply, resolve, edit what you wrote,
+  move a pin, drag a note out of the way, and sketch on the view with a pen, eraser,
+  arrows, circles, boxes and any color. Each note remembers the exact view it was written in (angle, explode,
   section cut, hidden parts), and clicking it takes you there. **Share notes** saves
   either a small notes file or a copy of the BomDom with every note inside; dropping
   either one on the BomDom merges the notes. Export them as an Excel Review sheet, a

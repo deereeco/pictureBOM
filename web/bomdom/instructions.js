@@ -952,7 +952,7 @@ export function initInstructions(app) {
       // One canvas owner at a time, like measure/move/assembly.
       if (app.measureMode && app.measure) app.measure.toggle();
       if (app.actions) { app.actions.setMoveMode(false); app.actions.setAssemblyMode(false); }
-      if (app.review && app.review.on) app.review.set(false);
+      if (app.review) app.review.refresh(); // pins and the note card step aside
       // The checklist rides the Parts tab — make that the active tab, or it
       // would stack under an open Structure tree.
       const tabParts = $('tabParts');

@@ -66,7 +66,6 @@
                 <button type="button" id="btnMove" class="tb-btn" title="Move mode — drag parts freely, select one for the move/rotate triad (D)">Move</button>
                 <button type="button" id="btnAssembly" class="tb-btn" title="Assembly mode — hover a part to highlight its subassembly, click to select it; with Move also on, drags move the whole subassembly (A)">Assembly</button>
                 <button type="button" id="btnInstructions" class="tb-btn" title="Instruction mode — numbered balloons, a checklist, and a printable sheet">Instructions</button>
-                <button type="button" id="btnReview" class="tb-btn" title="Review notes — click a part to pin a note (N)">Review<span id="reviewCount" class="tb-count hidden"></span></button>
                 <button type="button" id="btnReset" class="tb-btn" title="Reset appearance, positions and explode (R)">Reset</button>
                 <div class="menu-anchor">
                     <button type="button" id="btnExport" class="tb-btn tb-primary" title="Export BOM">Export &#9662;</button>
@@ -123,11 +122,11 @@
                 <button type="button" id="measureExit" title="Exit measure mode (Esc)">&#10005;</button>
             </div>
             <!-- Review notes (review.js): sketch layer, pins, the open note,
-                 the mode chip, the pen strip and the "sketch hidden" chip. -->
+                 the "click a spot" chip, the pen strip and the "sketch hidden" chip. -->
             <canvas id="doodleLayer" class="doodle-layer"></canvas>
             <div id="notePins" class="note-pins hidden"></div>
             <div id="noteCard" class="note-card hidden"></div>
-            <div id="reviewChip" class="measure-chip review-chip hidden"></div>
+            <div id="notePlaceChip" class="measure-chip hidden"></div>
             <div id="penStrip" class="pen-strip hidden"></div>
             <div id="doodleChip" class="doodle-chip hidden"></div>
             <div id="colorLegend" class="color-legend hidden"></div>
@@ -213,7 +212,7 @@
             <span class="help-k">A</span><span>Assembly mode — hover highlights a subassembly, click selects it; combine with D to drag whole subassemblies</span>
             <span class="help-k">E</span><span>Part edges on/off</span>
             <span class="help-k">X</span><span>Section view on/off</span>
-            <span class="help-k">N</span><span>Review notes &mdash; click a part to pin a note, right-click for the whole part, + Overall note in the Notes tab; the pencil sketches on the view; Share notes sends a notes file or a BomDom copy, and dropping either on the viewer merges it</span>
+            <span class="help-k">N</span><span>Notes tab &mdash; right-click a part &rarr; Add note here (or Note on whole part), or + Pin note / + Overall in the Notes tab; Sketch draws on the view; drag a note by its title bar; &hellip; edits, moves or deletes it; Share notes sends a notes file or a BomDom copy, and dropping either on the viewer merges it</span>
             <span class="help-k">M</span><span>Measure mode — click two points; corners, edges, holes and faces snap; hole readouts offer center/min/max</span>
             <span class="help-k">H</span><span>Hide selection</span>
             <span class="help-k">Shift + H</span><span>Unhide the last hidden part(s)</span>
