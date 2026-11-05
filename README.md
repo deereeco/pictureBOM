@@ -94,7 +94,7 @@ parts list. Send that one file to a teammate — they double-click it and can:
 - **Review notes** in the always-there **Notes** tab (`N`) for design reviews: anyone
   you send the BomDom to can add them. Right-click a part → *Add note here* to pin a
   note to that spot (or *Note on whole part*), use *+ Pin note* and click a spot, or
-  add an overall note about the whole design. Reply, resolve, edit what you wrote,
+  add an overall note about the whole design. Reply, resolve, edit what you wrote (or the view a note opens in),
   move a pin, drag a note out of the way, and sketch on the view with a pen, eraser,
   arrows, circles, boxes and any color. Each note remembers the exact view it was written in (angle, explode,
   section cut, hidden parts), and clicking it takes you there. **Share notes** saves

@@ -1754,7 +1754,7 @@ html.theme-transition *::after {
 }
 .nc-input { resize: vertical; min-height: 34px; }
 .nc-name:focus, .nc-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
-.nc-actions { display: flex; align-items: center; gap: 5px; }
+.nc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .nc-spacer { flex: 1; }
 .nc-hint { font-size: 11px; color: var(--text-muted); }
 .nc-btn {
@@ -1766,6 +1766,7 @@ html.theme-transition *::after {
     font-weight: 600;
     padding: 3px 9px;
     cursor: pointer;
+    white-space: nowrap;
 }
 .nc-btn:hover { background: var(--btn-neutral-hover); color: var(--text); }
 .nc-btn.is-on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }

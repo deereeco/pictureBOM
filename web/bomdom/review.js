@@ -115,11 +115,14 @@ export function initReview(app) {
 
   let myName = '';
   try { myName = localStorage.getItem(NAME_KEY) || ''; } catch { /* private mode */ }
-  const setMyName = (n) => {
+  // keepCard: the name was typed into the note card itself — rebuilding the
+  // card there would pull the note box out from under the cursor (Tab from
+  // the name box straight into the note, then type).
+  const setMyName = (n, { keepCard = false } = {}) => {
     myName = String(n || '').trim().slice(0, 60);
     try { localStorage.setItem(NAME_KEY, myName); } catch { /* ignore */ }
     renderPane();
-    renderCard();
+    if (keepCard) renderPins(); else renderCard();
   };
   let customColor = '';
   try { customColor = localStorage.getItem(CUSTOM_KEY) || ''; } catch { /* ignore */ }
@@ -323,7 +326,7 @@ export function initReview(app) {
     if (d.editId) {
       const note = byId(d.noteId);
       const e = note && note.entries.find((x) => x.id === d.editId);
-      return !!e && (d.text !== (e.text || '') || strokesDiffer(d.strokes, e.doodle || []));
+      return !!e && (d.text !== (e.text || '') || strokesDiffer(d.strokes, e.doodle || []) || !!d.viewSet);
     }
     return !!(d.text.trim() || d.strokes.length);
   };
@@ -489,7 +492,10 @@ export function initReview(app) {
         e.view = d.view || e.view || snapView();
       } else {
         delete e.doodle;
-        if (e !== note.entries[0]) delete e.view; // the first entry's view is the note's own
+        // The first entry's view is the note's own ("Use this view" may have
+        // replaced it); a reply only keeps a view for its sketch.
+        if (e !== note.entries[0]) delete e.view;
+        else if (d.view) e.view = d.view;
       }
       e.editedAt = now;
       st.draft = null;
@@ -687,6 +693,10 @@ export function initReview(app) {
     const items = [{ head: `Note #${numberOf(note)}` }];
     if (mine) {
       items.push({ label: 'Edit note', onClick: () => startEdit(note, note.entries[0]) });
+      items.push({ label: 'Change its view…', onClick: () => {
+        startEdit(note, note.entries[0]);
+        app.ui.toast('Turn the model to the view you want, then click Use this view and Save');
+      } });
       if (note.kind === 'point') {
         items.push({ label: 'Move pin…', onClick: () => startPlacing('move', note.id) });
         items.push({ label: 'Change to whole part', onClick: () => { const r = recOf(note); if (r) setAnchor(note, { kind: 'part', rec: r, p: centreOf(r) }); openNote(note.id, { restore: false }); } });
@@ -794,7 +804,7 @@ export function initReview(app) {
           meta.appendChild(ed);
         }
         m.appendChild(meta);
-        if (e.id === editing) m.appendChild(el('div', 'nc-hint', 'Editing below…'));
+        if (e.id === editing) m.appendChild(el('div', 'nc-hint', i === 0 ? 'Editing below — turn the model and click Use this view to change the view this note opens in' : 'Editing below…'));
         else if (e.text) m.appendChild(el('div', 'nc-text', e.text));
         thread.appendChild(m);
       });
@@ -812,7 +822,10 @@ export function initReview(app) {
       const name = el('input', 'nc-name');
       name.placeholder = 'Your name (signs your notes)';
       name.maxLength = 60;
-      name.addEventListener('change', () => setMyName(name.value));
+      name.addEventListener('change', () => {
+        setMyName(name.value, { keepCard: true });
+        if (myName) name.remove();
+      });
       comp.appendChild(name);
     }
     const ta = el('textarea', 'nc-input');
@@ -834,12 +847,30 @@ export function initReview(app) {
     sk.title = st.drawing ? 'Finish sketching (Esc)' : 'Draw on the 3D view — arrows, circles, freehand';
     sk.addEventListener('click', () => (st.drawing ? stopDrawing() : startDrawing()));
     row.appendChild(sk);
-    row.appendChild(el('span', 'nc-spacer'));
+    // Editing the note's first entry (or a sketched reply): what you see now
+    // can replace the saved view (angle, explode, section, hidden parts).
+    const editEntry = editing && note.entries.find((x) => x.id === editing);
+    if (editEntry && (editEntry === note.entries[0] || dd.strokes.length) && !st.drawing) {
+      const vb = el('button', 'nc-btn nc-viewbtn');
+      vb.type = 'button';
+      vb.id = 'noteViewBtn';
+      vb.addEventListener('click', () => {
+        dd.view = snapView();
+        dd.viewSet = true;
+        drawDoodles();
+        syncViewBtn();
+        app.ui.toast(dd.strokes.length ? 'View updated — the sketch now sits on this view; Save to keep it' : 'View updated — Save to keep it');
+      });
+      row.appendChild(vb);
+    }
+    // Editing: the sketch/view tools get their own row, Cancel + Save the next.
+    const endRow = editing ? el('div', 'nc-actions') : row;
+    endRow.appendChild(el('span', 'nc-spacer'));
     if (editing) {
       const cancelB = el('button', 'nc-btn', 'Cancel');
       cancelB.type = 'button';
       cancelB.addEventListener('click', () => { stopDrawing(); st.draft = null; renderCard(); drawDoodles(); });
-      row.appendChild(cancelB);
+      endRow.appendChild(cancelB);
     } else if (note) {
       const res = el('button', 'nc-btn', note.status === 'resolved' ? 'Reopen' : 'Resolve');
       res.type = 'button';
@@ -850,11 +881,25 @@ export function initReview(app) {
     go.type = 'button';
     go.title = 'Ctrl+Enter';
     go.addEventListener('click', post);
-    row.appendChild(go);
+    endRow.appendChild(go);
     comp.appendChild(row);
+    if (endRow !== row) comp.appendChild(endRow);
     card.appendChild(comp);
+    syncViewBtn();
     placeCard(); // now, so the card never flashes in the corner first
     if (had) { ta.focus(); try { ta.setSelectionRange(had.s, had.e); } catch { /* ignore */ } }
+  }
+
+  // "Use this view" says whether the camera already shows the saved view.
+  function syncViewBtn() {
+    const vb = $('noteViewBtn');
+    if (!vb || !st.draft) return;
+    const same = !!st.draft.view && viewMatches(st.draft.view);
+    vb.textContent = same ? (st.draft.viewSet ? '✓ View updated' : '✓ Saved view') : 'Use this view';
+    vb.classList.toggle('is-on', !same);
+    vb.title = same
+      ? 'This is the view the note opens in — turn the model to change it'
+      : 'Make what you see now (angle, explode, section, hidden parts) the view this note opens in';
   }
 
   function focusComposer(toEnd) {
@@ -1495,10 +1540,10 @@ export function initReview(app) {
   });
 
   // ---- follow the app -----------------------------------------------------------
-  viewer.onCameraChange(() => { layoutPins(); drawDoodles(); });
+  viewer.onCameraChange(() => { layoutPins(); drawDoodles(); syncViewBtn(); });
   new ResizeObserver(() => { layoutPins(); drawDoodles(); }).observe(viewport);
   for (const evName of ['positions', 'appearance', 'scope', 'filter']) {
-    app.events.on(evName, () => layoutPins());
+    app.events.on(evName, () => { layoutPins(); syncViewBtn(); });
   }
   // Instruction mode hides pins and the card; bring them back afterwards.
   app.events.on('instructions', () => refresh());
