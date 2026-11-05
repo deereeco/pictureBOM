@@ -98,12 +98,31 @@ export async function gunzipToArrayBuffer(bytes, onProgress) {
   return out.buffer;
 }
 
-function takeSlotText(id) {
+// Slot text captured at the very start of boot (selfcopy.js reads each slot
+// once, keeps the string for "Save BomDom with notes", and empties the DOM
+// node). Readers below prefer the captured string over the emptied node.
+export const slotText = new Map();
+
+function slotContent(id) {
+  if (slotText.has(id)) return slotText.get(id);
   const el = document.getElementById(id);
-  if (!el) throw new Error(`payload slot #${id} is missing from the document`);
-  const text = el.textContent.trim();
-  el.remove(); // free the DOM copy; the JS string is nulled by the caller
-  return text;
+  return el ? el.textContent : null;
+}
+
+function takeSlotText(id) {
+  const raw = slotContent(id);
+  if (raw == null) throw new Error(`payload slot #${id} is missing from the document`);
+  const el = document.getElementById(id);
+  if (el) el.remove(); // free the DOM copy; the JS string is nulled by the caller
+  return raw.trim();
+}
+
+// Review notes baked into this file by "Share notes → BomDom with notes".
+// Plain JSON; an empty or broken slot simply means "no notes".
+export function readNotesSlot() {
+  const raw = slotContent('bomdom-notes');
+  if (!raw || !raw.trim()) return null;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
 export function readMode() {
@@ -121,10 +140,10 @@ export function readConfig() {
   // loaded page. Anything unparseable falls back to defaults (fail open: a
   // typo while hand-editing must not silently brick the menu).
   const defaults = { allow_exports: true, up_axis: 'y' };
-  const el = document.getElementById('bomdom-config');
-  if (!el) return defaults;
+  const raw = slotContent('bomdom-config');
+  if (raw == null) return defaults;
   try {
-    return { ...defaults, ...JSON.parse(el.textContent.trim()) };
+    return { ...defaults, ...JSON.parse(raw.trim()) };
   } catch {
     console.warn('[BomDom] bomdom-config is not valid JSON; using defaults');
     return defaults;

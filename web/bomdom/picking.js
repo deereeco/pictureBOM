@@ -165,6 +165,10 @@ export function initPicking(app) {
         app.measure.handleClick(ev, hit);
         return;
       }
+      if (app.reviewMode && app.review) { // review mode: a click pins a note
+        app.review.handleClick(ev, hit);
+        return;
+      }
       if (!hit) { app.sel.clearSelection(); return; }
       // Assembly mode selects the resolved subassembly's grouping record —
       // one id; highlight, hide, isolate and open all inherit down from it.

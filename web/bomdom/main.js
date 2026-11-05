@@ -7,6 +7,7 @@
 
 import { diag, diagText, stage, timed } from './diag.js';
 import { readMode, readConfig, decodeMeta, decodeGlb, dropRemainingSlots } from './payload.js';
+import { captureShell, canCopy, buildCopy } from './selfcopy.js';
 import { RATES, beginLoading, stageProgress, stageStart, stageDone, finishLoading, hideLoading } from './loading.js';
 import { createEmitter, SelectionModel } from './state.js';
 import { createViewer, normalizeUp, DEFAULT_UP } from './scene.js';
@@ -19,6 +20,7 @@ import { initTriad } from './triad.js';
 import { initTrails } from './trails.js';
 import { initInstructions } from './instructions.js';
 import { initViewState } from './viewstate.js';
+import { initReview } from './review.js';
 import { initLook } from './look.js';
 import { initInteractions, readStoredUpAxis } from './interactions.js';
 import { initSettings } from './settings.js';
@@ -46,6 +48,7 @@ const app = {
   animations: true, // reader preference; initSettings reads the stored one
 };
 window.__bomdom = app; // console access for the manual browser checklist
+app.selfcopy = { canCopy, buildCopy };
 
 boot().catch((e) => { stage('boot failed'); reportUncaught(e); });
 
@@ -74,6 +77,7 @@ window.addEventListener('error', (ev) => { if (ev.error) reportUncaught(ev.error
 window.addEventListener('unhandledrejection', (ev) => reportUncaught(ev.reason));
 
 async function boot() {
+  captureShell(); // first: before any slot is consumed or the DOM changes
   stage('boot (BomDom viewer)');
   app.events = createEmitter();
   app.sel = new SelectionModel(app.events);
@@ -145,6 +149,7 @@ async function boot() {
   initTrails(app);
   initInstructions(app);
   initViewState(app);
+  initReview(app);
   initLook(app); // after the viewer exists: it paints the backdrop before any model
 
   // Which way is up: this reader's remembered choice for this assembly wins,
@@ -296,7 +301,7 @@ function setupDropZone() {
   let activeReader = null; // a newer drop supersedes an in-flight read
   const takeFile = (file) => {
     if (!file) return;
-    if (/\.json$/i.test(file.name)) return; // saved-view drops belong to viewstate.js
+    if (/\.(json|html?)$/i.test(file.name)) return; // saved views + review notes belong to viewstate.js
     if (!/\.glb$/i.test(file.name)) {
       app.ui.toast(`"${file.name}" is not a .glb file`);
       return;

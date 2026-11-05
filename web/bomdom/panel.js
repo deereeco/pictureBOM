@@ -53,6 +53,19 @@ export function initPanel(app) {
     if (app.model && recs.length) fn(recs);
   }
 
+  // Right-click on a list row opens the same menu as right-clicking the part
+  // in 3D (hide, isolate, paint, "Note on whole part"…) for its first visible
+  // instance.
+  function rowContextMenu(el, getRecs) {
+    el.addEventListener('contextmenu', (ev) => {
+      const recs = getRecs();
+      if (!app.model || !recs.length || !app.ui.showContextMenu) return;
+      ev.preventDefault();
+      const rec = recs.find((r) => !M.isEffectivelyHidden(r, app.sel.scope, app.sel.filter)) || recs[0];
+      app.ui.showContextMenu(ev.clientX, ev.clientY, rec);
+    });
+  }
+
   // The part number is what people take away from this list (issue #32):
   // one click puts it on the clipboard for an ERP search or a purchase
   // request. Works from META alone — no 3D model needed.
@@ -198,6 +211,7 @@ export function initPanel(app) {
           app.sel.select(recs.map((r) => r.id), { additive: ev.ctrlKey || ev.metaKey });
         });
         el.addEventListener('dblclick', () => withRecs(getRecs(), (r) => app.actions.frame(r)));
+        rowContextMenu(el, getRecs);
       } else {
         el.appendChild(copyOnlyActions(name));
       }
@@ -318,6 +332,7 @@ export function initPanel(app) {
       app.sel.select(node.recs.map((r) => r.id), { additive: ev.ctrlKey || ev.metaKey });
     });
     el.addEventListener('dblclick', () => app.actions.frame(node.recs));
+    rowContextMenu(el, getRecs);
 
     holder.appendChild(el);
     node.el = el;
@@ -416,6 +431,7 @@ export function initPanel(app) {
       if (recs.length) app.sel.select(recs.map((r) => r.id), { additive: ev.ctrlKey || ev.metaKey });
     });
     el.addEventListener('dblclick', () => withRecs(getRecs(), (r) => app.actions.frame(r)));
+    rowContextMenu(el, getRecs);
 
     holder.appendChild(el);
     node.el = el;

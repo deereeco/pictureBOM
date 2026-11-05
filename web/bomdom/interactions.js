@@ -327,6 +327,7 @@ export function initInteractions(app) {
       // preview and the gesture can never disagree.
       if (on && app.measureMode && app.measure) app.measure.toggle();
       if (on && app.instructions && app.instructions.on) app.instructions.set(false);
+      if (on && app.review && app.review.on) app.review.set(false);
       // What CANVAS hover resolves to just changed either way — clear a stale
       // preview so it can't promise the old target until the pointer next
       // moves. A panel-row hover stays: no mode changes what a row means.
@@ -411,6 +412,7 @@ export function initInteractions(app) {
         // mode. Assembly mode composes instead (see setAssemblyMode).
         if (app.measureMode && app.measure) app.measure.toggle();
         if (app.instructions && app.instructions.on) app.instructions.set(false);
+        if (app.review && app.review.on) app.review.set(false);
       }
       // Canvas hover resolution changed either way (drag target vs assembly
       // unit vs nothing) — drop a stale canvas preview; the next pointermove
@@ -1227,6 +1229,8 @@ export function initInteractions(app) {
         { sep: true },
         { label: multi ? `Open ${n} selected` : 'Open', onClick: () => actions.open(targets, label) },
         !multi && row && row.vendor_url ? { label: 'Vendor page', href: row.vendor_url } : null,
+        !multi && app.review ? { sep: true } : null,
+        !multi && app.review ? { label: 'Note on whole part', onClick: () => app.review.startPartNote(rec) } : null,
       );
     } else {
       items.push(
@@ -1302,6 +1306,7 @@ export function initInteractions(app) {
       closeMenus();
       if (menuOpen) return;
       if (!$('helpOverlay').classList.contains('hidden')) { $('helpOverlay').classList.add('hidden'); return; }
+      if (app.review && app.review.escape()) return;
       if (app.measureMode && app.measure && app.measure.escape()) return;
       // Clearing a selection outranks exiting instruction mode — clicking a
       // balloon to identify a part then pressing Esc must not eject the user
@@ -1341,6 +1346,7 @@ export function initInteractions(app) {
       return;
     }
     if (key === 'm') { if (app.measure) app.measure.toggle(); }
+    else if (key === 'n') { if (app.review) app.review.set(!app.review.on); }
     else if (key === 'd') actions.setMoveMode(!app.moveMode);
     else if (key === 'a') actions.setAssemblyMode(!app.assemblyMode);
     else if (key === 'o') { const t = selectedRecs(); if (t.length) actions.open(t, openLabelFor(t)); }

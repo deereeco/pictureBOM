@@ -1570,3 +1570,245 @@ html.theme-transition *::after {
     #printSheet.instr-print .ip-num { font-weight: 700; text-align: center; }
     #printSheet.instr-print td img { width: 26pt; height: 26pt; object-fit: contain; }
 }
+
+/* ---------- review notes (review.js) ---------- */
+.tb-count {
+    display: inline-block;
+    min-width: 16px;
+    margin-left: 5px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 10.5px;
+    line-height: 16px;
+    text-align: center;
+}
+#gl.is-review { cursor: crosshair; }
+.doodle-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 4; }
+.doodle-layer.is-drawing { pointer-events: auto; cursor: crosshair; touch-action: none; z-index: 7; }
+.note-pins { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+.note-pin {
+    --pin: var(--accent);
+    position: absolute;
+    transform: translate(-50%, calc(-100% - 10px));
+    min-width: 22px;
+    height: 22px;
+    padding: 0 5px;
+    border-radius: 999px;
+    border: 2px solid var(--surface);
+    background: var(--pin);
+    color: #fff;
+    font: 700 11.5px/18px "Segoe UI", system-ui, sans-serif;
+    text-align: center;
+    cursor: pointer;
+    pointer-events: auto;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.note-pin::after { /* stem down to the pinned point */
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    width: 2px;
+    height: 12px;
+    margin-left: -1px;
+    background: var(--pin);
+}
+.note-pin::before { /* the point itself */
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 9px);
+    width: 6px;
+    height: 6px;
+    margin-left: -3px;
+    border-radius: 50%;
+    background: var(--pin);
+}
+.note-pin.is-open { outline: 2px solid var(--pin); outline-offset: 2px; }
+.note-pin:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.note-dot {
+    --pin: var(--accent);
+    flex: none;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: var(--pin);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+}
+.note-card {
+    position: absolute;
+    z-index: 8;
+    width: min(300px, calc(100% - 16px));
+    max-height: calc(100% - 16px);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+    font-size: 12.5px;
+    color: var(--text);
+}
+.nc-head { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 10px; border-bottom: 1px solid var(--card-line); }
+.nc-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-kind { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; }
+.nc-x { border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 4px; }
+.nc-x:hover { background: var(--btn-neutral-bg); color: var(--text); }
+.nc-thread { overflow-y: auto; min-height: 0; }
+.nc-entry { padding: 7px 10px; border-bottom: 1px solid var(--card-line); }
+.nc-meta { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; }
+.nc-author { font-weight: 700; }
+.nc-date { color: var(--text-faint); }
+.nc-sketch { margin-left: auto; border: none; background: transparent; color: var(--accent); cursor: pointer; font-size: 11.5px; padding: 0; }
+.nc-sketch:hover { text-decoration: underline; }
+.nc-text { margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nc-resolved { padding: 5px 10px; font-size: 11.5px; color: var(--success); border-bottom: 1px solid var(--card-line); }
+.nc-compose { padding: 8px 10px; display: grid; gap: 6px; }
+.nc-name, .nc-input {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 5px 7px;
+}
+.nc-input { resize: vertical; min-height: 34px; }
+.nc-name:focus, .nc-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.nc-actions { display: flex; align-items: center; gap: 5px; }
+.nc-spacer { flex: 1; }
+.nc-hint { font-size: 11px; color: var(--text-muted); }
+.nc-btn {
+    border: 1px solid var(--border);
+    background: var(--btn-neutral-bg);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 9px;
+    cursor: pointer;
+}
+.nc-btn:hover { background: var(--btn-neutral-hover); color: var(--text); }
+.nc-btn.is-on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
+.nc-icon { display: inline-flex; align-items: center; padding: 3px 6px; }
+.nc-icon svg, .ps-btn svg { width: 15px; height: 15px; display: block; }
+.nc-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.nc-primary:hover { background: var(--accent-hover); color: var(--on-accent); }
+.nc-danger:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-bg); }
+.review-chip .rc-name { background: transparent; color: var(--accent); }
+.review-chip .rc-name:hover { text-decoration: underline; background: transparent; color: var(--accent); }
+.rc-name-input {
+    font: inherit;
+    font-size: 11.5px;
+    width: 130px;
+    padding: 1px 6px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--input-bg);
+    color: var(--text);
+}
+.pen-strip, .doodle-chip {
+    position: absolute;
+    left: 50%;
+    bottom: 52px; /* above the review chip */
+    transform: translateX(-50%);
+    z-index: 9;
+}
+.pen-strip { display: grid; justify-items: center; gap: 5px; }
+.ps-row, .ps-more {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}
+.ps-btn {
+    min-width: 30px;
+    height: 30px;
+    padding: 0 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: 600 12.5px "Segoe UI", system-ui, sans-serif;
+    cursor: pointer;
+}
+.ps-btn:hover { background: var(--btn-neutral-bg); color: var(--text); }
+.ps-btn.is-on { background: var(--accent-tint); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.ps-done { background: var(--accent); color: var(--on-accent); }
+.ps-done:hover { background: var(--accent-hover); color: var(--on-accent); }
+.ps-sep { width: 1px; height: 20px; background: var(--border); margin: 0 3px; }
+.ps-sw { width: 18px; height: 18px; border-radius: 50%; border: none; margin: 0 4px; cursor: pointer; padding: 0; }
+.ps-sw.is-on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text); }
+.doodle-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    background: var(--log-bg);
+    color: var(--log-text);
+    border-radius: 999px;
+    padding: 5px 6px 5px 12px;
+    font-size: 12px;
+    box-shadow: var(--shadow);
+}
+.doodle-chip button {
+    border: none;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 10px;
+    cursor: pointer;
+}
+.notes-pane { display: flex; flex-direction: column; padding: 0; }
+.notes-pane.hidden { display: none; }
+.np-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--card-line); }
+.np-add { margin-left: auto; border: none; background: transparent; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.np-add:hover { background: var(--accent-tint); }
+.np-group { display: flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 11.5px; color: var(--text-muted); background: var(--surface-sunken); border-bottom: 1px solid var(--card-line); }
+.np-sw { width: 9px; height: 9px; border-radius: 50%; }
+.np-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid var(--card-line);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+}
+.np-item:hover { background: var(--surface-sunken); }
+.np-item.is-open { background: var(--accent-tint); }
+.np-body { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.np-part { font-family: "Cascadia Code", Consolas, monospace; font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-meta { font-size: 11px; color: var(--text-faint); }
+.np-sketch { color: var(--accent); }
+.np-foot { margin-top: auto; display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; position: sticky; bottom: 0; background: var(--surface); border-top: 1px solid var(--card-line); }
+.np-foot .btn { padding: 5px 10px; font-size: 12px; }
+.np-foot .btn:disabled { opacity: 0.45; cursor: default; }
+.btn-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-hover); }

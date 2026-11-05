@@ -60,10 +60,13 @@ export function initViewState(app) {
       records: recs,
       scope,
       instructions: instr,
+      section: app.sectionApi ? app.sectionApi.getState() : undefined,
     };
   }
 
-  function apply(v) {
+  // opts.quiet: no "View restored" toast (review notes restore views as a
+  // side effect of opening a note).
+  function apply(v, opts = {}) {
     const model = app.model;
     if (!model) { app.ui.toast('Load the 3D model first, then drop the view file'); return false; }
     if (!v || v.format !== FORMAT) { app.ui.toast('Not a BomDom view file'); return false; }
@@ -155,6 +158,8 @@ export function initViewState(app) {
     }
     if (anyMoved) M.applyPositions(model, model.explodeF);
     if (app.trails) app.trails.set(!!ex.trails);
+    // Views saved before the section joined them leave the cut as it is.
+    if (v.section && app.sectionApi) app.sectionApi.setState(v.section);
 
     // Camera last among the 3D bits — scope/explode paths reframe on their
     // own, and the saved eye must win.
@@ -171,7 +176,7 @@ export function initViewState(app) {
       app.instructions.restoreState(v.instructions);
     }
     app.events.emit('positions');
-    app.ui.toast('View restored' + (v.saved ? ` (saved ${String(v.saved).slice(0, 10)})` : ''));
+    if (!opts.quiet) app.ui.toast('View restored' + (v.saved ? ` (saved ${String(v.saved).slice(0, 10)})` : ''));
     return true;
   }
 
@@ -206,13 +211,17 @@ export function initViewState(app) {
   // Drop a saved view anywhere on the 3D area. The sidecar drop zone routes
   // its .json drops here too; embedded mode needs its own guards so a stray
   // drop never navigates the page away.
+  // Review notes (.json notes files, .html BomDom copies) share this drop:
+  // the review module sorts notes from views by the file's format.
   const viewport = document.getElementById('viewport');
   viewport.addEventListener('dragover', (ev) => ev.preventDefault());
   viewport.addEventListener('drop', (ev) => {
-    const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
-    if (!file || !/\.json$/i.test(file.name)) return; // .glb belongs to the sidecar flow
+    const files = [...((ev.dataTransfer && ev.dataTransfer.files) || [])];
+    const ours = files.filter((f) => /\.(json|html?)$/i.test(f.name)); // .glb belongs to the sidecar flow
+    if (!ours.length) return;
     ev.preventDefault();
-    restoreFile(file);
+    if (app.review) app.review.mergeFiles(ours);
+    else if (/\.json$/i.test(ours[0].name)) restoreFile(ours[0]);
   });
   window.addEventListener('dragover', (ev) => ev.preventDefault());
   window.addEventListener('drop', (ev) => ev.preventDefault());

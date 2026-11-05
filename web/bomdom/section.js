@@ -367,6 +367,27 @@ export function initSection(app) {
   app.sectionApi = {
     toggle: () => setEnabled(!state.enabled),
     isOn: () => state.enabled,
+    // Saved views and review notes carry the cut along with the camera.
+    getState: () => ({ enabled: state.enabled, axis: state.axis, frac: state.frac, flipped: state.flipped }),
+    setState(s) {
+      if (!s || !app.model) return;
+      if (['x', 'y', 'z'].includes(s.axis)) state.axis = s.axis;
+      if (Number.isFinite(s.frac)) state.frac = Math.max(0, Math.min(1, s.frac));
+      state.flipped = !!s.flipped;
+      if (s.enabled) {
+        state.enabled = true;
+        computeRange();
+        if (!state.axis) state.axis = defaultAxis();
+        updatePlane();
+        apply();
+      } else if (state.enabled) {
+        state.enabled = false;
+        apply();
+      } else {
+        updatePlane();
+      }
+      if (!menu.classList.contains('hidden')) buildPopover();
+    },
   };
 
   $('btnSection').addEventListener('click', (ev) => {
