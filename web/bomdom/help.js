@@ -71,6 +71,7 @@ const LISTS = [
   ]],
   ['With Shift', [
     [['Shift', 'H'], 'show', 'Unhide last'],
+    [['Shift', 'N'], 'tools', 'Note bubbles on / off', 'Hides every note bubble to look at the model alone; same as Bubbles in the Notes tab'],
     [['Shift', 'm:drag'], 'tools', 'Move part', 'Moves the selection; the whole subassembly in Assembly mode'],
     [['Shift', '↑'], 'levels', 'Top assembly'],
     [['Shift', '↓'], 'levels', 'Dive to selection', 'Into the selection’s own subassembly'],

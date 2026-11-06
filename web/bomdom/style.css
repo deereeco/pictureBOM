@@ -1856,6 +1856,18 @@ html.theme-transition *::after {
 .np-add { margin-left: auto; border: none; background: transparent; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
 .np-add:hover, .np-add.is-on { background: var(--accent-tint); }
 .np-head .np-add + .np-add { margin-left: 0; }
+.np-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--card-line); }
+.np-gap { flex: 1; }
+.np-tool { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--card-line); background: var(--surface); color: var(--text-muted); font: inherit; font-size: 11.5px; padding: 2px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.np-tool:hover { color: var(--text); border-color: var(--text-faint); }
+.np-tool.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-tint); }
+.np-tool svg { width: 14px; height: 14px; display: block; }
+.np-tool.is-danger { color: var(--danger); border-color: var(--danger); }
+.np-tool.is-danger.is-armed { background: var(--danger); color: #fff; }
+.np-tool:disabled { opacity: 0.45; cursor: default; }
+.np-check { flex: none; width: 15px; height: 15px; margin-top: 1px; border: 1.5px solid var(--text-faint); border-radius: 4px; display: grid; place-items: center; font-size: 10px; line-height: 1; color: var(--on-accent); }
+.np-check.is-on { background: var(--accent); border-color: var(--accent); }
+.np-item.is-ticked { background: var(--accent-tint); }
 .np-group { display: flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 11.5px; color: var(--text-muted); background: var(--surface-sunken); border-bottom: 1px solid var(--card-line); }
 .np-sw { width: 9px; height: 9px; border-radius: 50%; }
 .np-item {

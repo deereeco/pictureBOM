@@ -26,7 +26,7 @@ import { readNotesSlot } from './payload.js';
 import { canCopy, buildCopy, copySize } from './selfcopy.js';
 import { download, sanitizeFile } from './exports.js';
 import { copyText } from './clipboard.js';
-import { exportNotesExcel, exportNotesPdf, notesAsText } from './notesexport.js';
+import { notesAsText } from './notesexport.js';
 
 const $ = (id) => document.getElementById(id);
 const FORMAT = 'bomdom-notes';
@@ -97,7 +97,16 @@ export function initReview(app) {
     placing: null,       // { mode: 'new' | 'move' | 'spot', noteId } — next part click
     cardPos: null,       // where the user dragged the card ({ x, y } in the viewport)
     filter: 'open',
+    who: null,           // show only notes this reviewer started (null = everyone)
+    selecting: null,     // Set of note ids ticked for a bulk delete (null = off)
+    confirmDelete: false,
+    bubbles: true,       // note pins over the model
     fromFile: 0,         // notes that arrived baked into this file
+    // Notes files loaded here, so they can be unloaded again (this browser
+    // only — nothing is deleted for anyone else). baked: ids that came in
+    // with this file itself; unloaded: ids not to bring back at boot.
+    loaded: { sources: [], unloaded: [] },
+    baked: [],
   };
 
   // ---- identity ---------------------------------------------------------
@@ -112,6 +121,8 @@ export function initReview(app) {
       && (!b.records || !mine.records || b.records === mine.records);
   };
   const storeKey = () => `bomdom-notes|${buildInfo().assembly}|${buildInfo().generated}`;
+  const readJson = (key) => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } };
+  const writeJson = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private mode */ } };
 
   let myName = '';
   try { myName = localStorage.getItem(NAME_KEY) || ''; } catch { /* private mode */ }
@@ -133,6 +144,8 @@ export function initReview(app) {
   const byId = (id) => (st.doc ? st.doc.notes.find((n) => n.id === id) : null);
   const starter = (note) => (note && note.entries[0] ? note.entries[0].author : '');
   const isMine = (author) => !!myName && author === myName;
+  // Passes the Open/All and reviewer filters (the list and the pins agree).
+  const listed = (n) => (st.filter === 'all' || n.status !== 'resolved') && (!st.who || starter(n) === st.who);
   // Pin numbers follow creation order across everyone's notes, so a merged
   // file numbers the same way in every copy.
   const numberOf = (note) => {
@@ -174,8 +187,10 @@ export function initReview(app) {
     }
     let added = 0, updated = 0;
     const authors = new Set();
+    const ids = []; // every live note this file carries
     for (const inc of doc.notes) {
       if (!inc || typeof inc.id !== 'string') continue;
+      if (!inc.deleted) ids.push(inc.id);
       const cur = byId(inc.id);
       if (!cur) {
         st.doc.notes.push(sanitizeNote(inc));
@@ -218,7 +233,7 @@ export function initReview(app) {
       if (touched) updated += 1;
     }
     if (from !== 'boot') changed();
-    return { added, updated, authors: [...authors].filter(Boolean) };
+    return { added, updated, ids, authors: [...authors].filter(Boolean) };
   }
 
   function sanitizeEntry(e) {
@@ -591,6 +606,85 @@ export function initReview(app) {
     changed();
   }
 
+  // ---- bulk delete -----------------------------------------------------------
+  function removeNotes(ids) {
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const id of ids) {
+      const note = byId(id);
+      if (!note || note.deleted) continue;
+      Object.assign(note, { deleted: true, deletedAt: now, deletedBy: myName, entries: [] });
+      n += 1;
+    }
+    if (st.openId && !live().some((x) => x.id === st.openId)) {
+      st.openId = null;
+      st.draft = null;
+      stopDrawing();
+      clearNoteHover();
+    }
+    st.selecting = null;
+    st.confirmDelete = false;
+    changed();
+    app.ui.toast(`Deleted ${n} note${n === 1 ? '' : 's'}`);
+  }
+
+  // ---- bubbles ----------------------------------------------------------------
+  const bubblesKey = () => storeKey() + '|bubbles';
+  function setBubbles(on) {
+    st.bubbles = !!on;
+    writeJson(bubblesKey(), st.bubbles);
+    renderPane();
+    renderPins();
+  }
+
+  // ---- loaded files (unload = this browser only) ------------------------------
+  const loadedKey = () => storeKey() + '|loaded';
+  const saveLoaded = () => writeJson(loadedKey(), st.loaded);
+  function sources() {
+    const list = st.loaded.sources.map((s) => ({ ...s }));
+    if (st.baked.length) list.unshift({ id: 'file', name: 'Notes saved in this file', ids: st.baked });
+    return list.filter((s) => s.ids.some((id) => live().some((n) => n.id === id)));
+  }
+  function addSource(name, ids) {
+    if (!ids.length) return;
+    st.loaded.unloaded = st.loaded.unloaded.filter((id) => !ids.includes(id));
+    // Loading the same file again replaces its earlier entry.
+    st.loaded.sources = st.loaded.sources.filter((s) => s.name !== name);
+    st.loaded.sources.push({ id: uid(), name, ids });
+    saveLoaded();
+  }
+  function unloadSource(src) {
+    const others = new Set();
+    for (const s of sources()) if (s.id !== src.id) s.ids.forEach((id) => others.add(id));
+    let removed = 0, kept = 0;
+    for (const id of src.ids) {
+      const note = byId(id);
+      if (!note || note.deleted || others.has(id)) continue;
+      // Anything you wrote in stays: unloading never throws away your work.
+      if (myName && note.entries.some((e) => e.author === myName)) { kept += 1; continue; }
+      st.doc.notes = st.doc.notes.filter((n) => n !== note);
+      if (!st.loaded.unloaded.includes(id)) st.loaded.unloaded.push(id);
+      if (st.openId === id) { st.openId = null; st.draft = null; stopDrawing(); clearNoteHover(); }
+      removed += 1;
+    }
+    if (src.id === 'file') st.baked = [];
+    else st.loaded.sources = st.loaded.sources.filter((s) => s.id !== src.id);
+    saveLoaded();
+    if (st.who && !live().some((n) => starter(n) === st.who)) st.who = null;
+    changed();
+    app.ui.toast(`Unloaded ${removed} note${removed === 1 ? '' : 's'}${kept ? ` · kept ${kept} you wrote in` : ''} — load the file again to bring them back`);
+  }
+  function showLoadMenu(x, y) {
+    const list = sources();
+    if (!list.length) { pickFiles(); return; }
+    const items = [{ label: 'Load a notes file…', onClick: pickFiles }, { sep: true }, { head: 'Loaded — unload from this browser' }];
+    for (const s of list) {
+      const n = s.ids.filter((id) => live().some((x) => x.id === id)).length;
+      items.push({ label: `Unload ${s.name} · ${n} note${n === 1 ? '' : 's'}`, onClick: () => unloadSource(s) });
+    }
+    app.ui.showMenu(x, y, items);
+  }
+
   // ---- count on the tab -----------------------------------------------------
   function renderCount() {
     const open = live().filter((n) => n.status !== 'resolved').length;
@@ -606,7 +700,9 @@ export function initReview(app) {
     if (pinsShown()) {
       for (const n of live()) {
         if (n.kind === 'overall' || !n.p) continue;
-        if (st.filter === 'open' && n.status === 'resolved' && st.openId !== n.id) continue;
+        // The open note keeps its pin whatever the filters say: the card
+        // hangs off it.
+        if (st.openId !== n.id && (!st.bubbles || !listed(n))) continue;
         want.set(n.id, n);
       }
       if (st.draft && !st.draft.noteId && st.draft.p) want.set('draft', null);
@@ -717,7 +813,7 @@ export function initReview(app) {
     }
     items.push({ label: 'Show its view', onClick: () => { if (note.entries[0]) showView(note.entries[0].view); drawDoodles(); } });
     items.push({ label: 'Copy as text', onClick: async () => {
-      const ok = await copyText(notesAsText({ ...exportCtx(), notes: [note] }));
+      const ok = await copyText(notesAsText({ asm: buildInfo().assembly, numberOf, notes: [note] }));
       app.ui.toast(ok ? 'Note copied' : 'Could not reach the clipboard');
     } });
     if (mine) {
@@ -954,11 +1050,14 @@ export function initReview(app) {
     head.appendChild(add);
     pane.appendChild(head);
 
-    const shown = notes.filter((n) => st.filter === 'all' || n.status !== 'resolved');
+    const shown = notes.filter(listed);
+    if (notes.length) pane.appendChild(st.selecting ? selectBar(notes, shown) : toolsBar(notes));
     if (!shown.length) {
-      pane.appendChild(el('div', 'parts-empty', notes.length
-        ? 'Every note is resolved.'
-        : 'No notes yet. Right-click a part to add one, or use + Pin note. Anyone you send this BomDom to can add notes too.'));
+      pane.appendChild(el('div', 'parts-empty', !notes.length && st.loaded.unloaded.length
+        ? 'The notes you unloaded are hidden in this browser. Load the file again to bring them back.'
+        : !notes.length
+        ? 'No notes yet. Press N over a part, right-click it, or use + Pin note. Anyone you send this BomDom to can add notes too.'
+        : st.who ? `No ${st.filter === 'open' ? 'open ' : ''}notes from ${st.who}.` : 'Every note is resolved.'));
     }
     // Overall notes first, then one group per reviewer (who started the note).
     const groups = new Map();
@@ -1012,19 +1111,90 @@ export function initReview(app) {
     foot.appendChild(share);
     const load = el('button', 'btn btn-secondary', 'Load…');
     load.type = 'button';
-    load.title = 'Merge notes from a notes file or a BomDom copy (you can also drop them on the 3D view)';
-    load.addEventListener('click', pickFiles);
-    foot.appendChild(load);
-    const exp = el('button', 'btn btn-secondary', 'Export…');
-    exp.type = 'button';
-    exp.disabled = !notes.length;
-    exp.addEventListener('click', (ev) => {
+    load.title = 'Merge notes from a notes file or a BomDom copy (you can also drop them on the 3D view); unload a file you loaded';
+    load.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      const r = exp.getBoundingClientRect();
-      showExportMenu(r.left, r.top);
+      const r = load.getBoundingClientRect();
+      showLoadMenu(r.left, r.top);
     });
-    foot.appendChild(exp);
+    foot.appendChild(load);
     pane.appendChild(foot);
+  }
+
+  const smallBtn = (cls, label, title, onClick) => {
+    const b = el('button', 'np-tool' + (cls ? ' ' + cls : ''));
+    b.type = 'button';
+    if (label.startsWith('<')) b.innerHTML = label; else b.textContent = label;
+    if (title) b.title = title;
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); onClick(ev, b); });
+    return b;
+  };
+
+  // Bubbles · reviewer filter · Select
+  function toolsBar(notes) {
+    const bar = el('div', 'np-tools');
+    bar.appendChild(smallBtn(st.bubbles ? 'is-on' : '', `${st.bubbles ? ICON.eye : ICON.eyeOff}<span>Bubbles</span>`,
+      st.bubbles ? 'Hide the note bubbles on the model (Shift+N)' : 'Show the note bubbles on the model (Shift+N)',
+      () => setBubbles(!st.bubbles)));
+    const people = [...new Set(notes.map(starter).filter(Boolean))];
+    if (people.length > 1 || st.who) {
+      const lab = st.who ? (st.who === myName ? `${st.who} (you)` : st.who) : 'Everyone';
+      const who = smallBtn(st.who ? 'is-on' : '', `<span>${lab.replace(/[<&]/g, (c) => (c === '<' ? '&lt;' : '&amp;'))}</span> ▾`,
+        'Show only the notes one person started', (ev, b) => {
+          const r = b.getBoundingClientRect();
+          const pick = (v) => () => { st.who = v; st.selecting = null; renderPane(); renderPins(); };
+          app.ui.showMenu(r.left, r.bottom + 4, [
+            { head: 'Show notes from' },
+            { label: (st.who ? '' : '✓ ') + 'Everyone', onClick: pick(null) },
+            ...people.map((p) => ({
+              label: `${st.who === p ? '✓ ' : ''}${p}${p === myName ? ' (you)' : ''} · ${notes.filter((n) => starter(n) === p).length}`,
+              onClick: pick(p),
+            })),
+          ]);
+        });
+      bar.appendChild(who);
+    }
+    bar.appendChild(el('span', 'np-gap'));
+    bar.appendChild(smallBtn('', 'Select', 'Tick notes to delete several at once', () => {
+      closeNote();
+      st.selecting = new Set();
+      st.confirmDelete = false;
+      renderPane();
+    }));
+    return bar;
+  }
+
+  // Select all · Resolved · Mine · Delete n · Done
+  function selectBar(notes, shown) {
+    const bar = el('div', 'np-tools is-selecting');
+    const sel = st.selecting;
+    const tick = (ids) => { st.confirmDelete = false; ids.forEach((id) => sel.add(id)); renderPane(); };
+    const allOn = shown.length && shown.every((n) => sel.has(n.id));
+    bar.appendChild(smallBtn('', allOn ? 'Select none' : 'Select all', null, () => {
+      if (allOn) { sel.clear(); st.confirmDelete = false; renderPane(); } else tick(shown.map((n) => n.id));
+    }));
+    const resolved = notes.filter((n) => n.status === 'resolved' && (!st.who || starter(n) === st.who));
+    if (resolved.length) {
+      bar.appendChild(smallBtn('', 'Resolved', 'Tick every resolved note', () => {
+        st.filter = 'all';
+        tick(resolved.map((n) => n.id));
+        renderPins();
+      }));
+    }
+    const mine = shown.filter((n) => myName && starter(n) === myName);
+    if (mine.length) bar.appendChild(smallBtn('', 'Mine', 'Tick the notes you started', () => tick(mine.map((n) => n.id))));
+    bar.appendChild(el('span', 'np-gap'));
+    const n = sel.size;
+    const del = smallBtn('is-danger' + (st.confirmDelete ? ' is-armed' : ''),
+      st.confirmDelete ? `Delete ${n} for everyone?` : `Delete ${n}`,
+      'Deleted notes are also removed for anyone who loads your notes', () => {
+        if (!st.confirmDelete) { st.confirmDelete = true; renderPane(); return; }
+        removeNotes([...sel]);
+      });
+    del.disabled = !n;
+    bar.appendChild(del);
+    bar.appendChild(smallBtn('', 'Done', null, () => { st.selecting = null; st.confirmDelete = false; renderPane(); }));
+    return bar;
   }
 
   function editName(holder) {
@@ -1049,8 +1219,14 @@ export function initReview(app) {
   }
 
   function itemFor(n) {
-    const it = el('button', 'np-item' + (st.openId === n.id ? ' is-open' : ''));
+    const picking = !!st.selecting;
+    const ticked = picking && st.selecting.has(n.id);
+    const it = el('button', 'np-item' + (st.openId === n.id && !picking ? ' is-open' : '') + (ticked ? ' is-ticked' : ''));
     it.type = 'button';
+    if (picking) {
+      it.setAttribute('aria-pressed', String(ticked));
+      it.appendChild(el('span', 'np-check' + (ticked ? ' is-on' : ''), ticked ? '✓' : ''));
+    }
     const dot = el('span', 'note-dot');
     dot.textContent = n.status === 'resolved' ? '✓' : String(numberOf(n));
     dot.style.setProperty('--pin', n.status === 'resolved' ? 'var(--success)' : authorColor(starter(n)));
@@ -1071,7 +1247,15 @@ export function initReview(app) {
       s.title = 'Has a sketch';
       it.appendChild(s);
     }
-    it.addEventListener('click', () => (st.openId === n.id ? closeNote() : openNote(n.id)));
+    it.addEventListener('click', () => {
+      if (st.selecting) {
+        if (st.selecting.has(n.id)) st.selecting.delete(n.id); else st.selecting.add(n.id);
+        st.confirmDelete = false;
+        renderPane();
+        return;
+      }
+      if (st.openId === n.id) closeNote(); else openNote(n.id);
+    });
     return it;
   }
 
@@ -1106,7 +1290,8 @@ export function initReview(app) {
   }
   function saveCopy() {
     let html;
-    try { html = buildCopy({ ...st.doc, build: buildInfo() }); } catch (e) { app.ui.toast(e.message); return; }
+    // The copy opens with the bubbles the way you have them now.
+    try { html = buildCopy({ ...st.doc, build: buildInfo(), bubbles: st.bubbles }); } catch (e) { app.ui.toast(e.message); return; }
     let base = decodeURIComponent((location.pathname.split('/').pop() || '').replace(/\.html?$/i, ''));
     if (!base) base = sanitizeFile(buildInfo().assembly) + '_BomDom';
     base = base.replace(/_notes$/i, '');
@@ -1147,6 +1332,7 @@ export function initReview(app) {
       if (doc && doc.format === 'bomdom-view' && app.viewstate) { app.viewstate.apply(doc); continue; }
       const res = doc && !doc.error ? merge(doc) : { error: (doc && doc.error) || 'not a notes file' };
       if (res.error) { errors.push(`"${name}" is ${res.error}`); continue; }
+      addSource(name, res.ids);
       added += res.added; updated += res.updated;
       res.authors.forEach((a) => authors.add(a));
     }
@@ -1166,34 +1352,6 @@ export function initReview(app) {
     input.accept = '.json,.html,.htm,application/json,text/html';
     input.addEventListener('change', () => { if (input.files) mergeFiles(input.files); });
     input.click();
-  }
-
-  // ---- exports ---------------------------------------------------------------
-  function exportCtx() {
-    const notes = live().slice().sort((a, b) => numberOf(a) - numberOf(b));
-    return {
-      app, notes, numberOf, authorColor, anchorWorld, toScreen, recOf,
-      asm: buildInfo().assembly, version: app.meta.app_version || '',
-      showView, snapView, drawStrokes, viewMatches,
-    };
-  }
-  function showExportMenu(x, y) {
-    const run = (fn) => () => {
-      closeNote();
-      Promise.resolve(fn(exportCtx())).catch((e) => {
-        console.error('[BomDom] notes export failed', e);
-        app.ui.toast('Export failed: ' + e.message);
-      });
-    };
-    app.ui.showMenu(x, y, [
-      { head: 'Export notes' },
-      { label: 'Excel (.xlsx) — Review sheet', onClick: run(exportNotesExcel) },
-      { label: 'PDF — notes pages', onClick: run(exportNotesPdf) },
-      { label: 'Copy as text', onClick: async () => {
-        const ok = await copyText(notesAsText(exportCtx()));
-        app.ui.toast(ok ? 'Notes copied — paste into Jira, Teams or a change order' : 'Could not reach the clipboard');
-      } },
-    ]);
   }
 
   // ---- sketches ----------------------------------------------------------------
@@ -1374,6 +1532,8 @@ export function initReview(app) {
   }
 
   const ICON = {
+    eye: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.2 8S3.7 3.2 8 3.2 14.8 8 14.8 8 12.3 12.8 8 12.8 1.2 8 1.2 8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.1" fill="currentColor"/></svg>',
+    eyeOff: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.2 8S3.7 3.2 8 3.2 14.8 8 14.8 8 12.3 12.8 8 12.8 1.2 8 1.2 8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M2.5 13.5l11-11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     sketch: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 11.5c1.6-3 3-4.4 4-3.4s-1 3.3.3 3.9c1.4.6 2.5-3.3 4.2-3.6 1.2-.2 1.1 1.8 2 2.2.7.3 1.6-.6 2.5-1.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     pen: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14l1-4 8-8 3 3-8 8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
     eraser: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 14h8M2.6 9.6l6-6a1.5 1.5 0 012.1 0l2.7 2.7a1.5 1.5 0 010 2.1L8 13.8H5.2L2.6 11.7a1.5 1.5 0 010-2.1zM5.5 6.7l4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -1572,21 +1732,36 @@ export function initReview(app) {
     let local = null;
     try { local = JSON.parse(localStorage.getItem(storeKey()) || 'null'); } catch { local = null; }
     if (local) merge(local, { from: 'boot' });
+    const ld = readJson(loadedKey());
+    if (ld && Array.isArray(ld.sources) && Array.isArray(ld.unloaded)) {
+      st.loaded = {
+        sources: ld.sources.filter((s) => s && typeof s.name === 'string' && Array.isArray(s.ids)),
+        unloaded: ld.unloaded.filter((id) => typeof id === 'string'),
+      };
+    }
     const baked = readNotesSlot();
     if (baked && baked.notes) {
       const before = live().length;
-      const res = merge(baked, { from: 'boot' });
-      if (!res.error) st.fromFile = baked.notes.filter((n) => !n.deleted).length;
+      // Notes from this file you unloaded stay out.
+      const gone = new Set(st.loaded.unloaded);
+      const res = merge({ ...baked, notes: baked.notes.filter((n) => !(n && gone.has(n.id))) }, { from: 'boot' });
+      if (!res.error) {
+        st.baked = res.ids;
+        st.fromFile = res.ids.length;
+      }
       if (res.error) console.warn('[BomDom] notes in this file are', res.error);
       if (live().length !== before) persist();
     }
+    // Bubbles: your own choice for this build, else the way the sender had them.
+    const mineB = readJson(bubblesKey());
+    st.bubbles = typeof mineB === 'boolean' ? mineB : !(baked && baked.bubbles === false);
     tab.classList.remove('hidden');
     renderCount();
     renderPane();
     renderPins();
     const open = live().filter((n) => n.status !== 'resolved').length;
     if (st.fromFile && live().length) {
-      app.ui.toast(`This file has ${live().length} review note(s)${open ? ` (${open} open)` : ''} — see the Notes tab`);
+      app.ui.toast(`This file has ${live().length} review note(s)${open ? ` (${open} open)` : ''} — see the Notes tab${st.bubbles ? '' : ' (bubbles hidden)'}`);
     }
   }
   if (app.model) load();
@@ -1599,6 +1774,7 @@ export function initReview(app) {
     escape,
     handleClick,
     addNote: addNoteKey,
+    toggleBubbles: () => { if (app.model) { setBubbles(!st.bubbles); app.ui.toast(st.bubbles ? 'Note bubbles shown' : 'Note bubbles hidden — Shift+N brings them back'); } },
     startPartNote: (rec) => startDraft({ kind: 'part', rec }),
     startSpotNote: (rec, world) => startDraft({ kind: 'point', rec, world }),
     startPlacing: () => startPlacing('new'),
@@ -1607,6 +1783,8 @@ export function initReview(app) {
     state: () => ({
       openId: st.openId, drawing: st.drawing && { tool: st.drawing.tool, color: st.drawing.color },
       placing: st.placing && { ...st.placing }, cardPos: st.cardPos,
+      bubbles: st.bubbles, who: st.who, filter: st.filter, selecting: st.selecting && [...st.selecting],
+      pins: [...pinEls.keys()], sources: sources().map((s) => ({ name: s.name, ids: s.ids.length })), unloaded: st.loaded.unloaded.length,
       draft: st.draft && { ...st.draft, strokes: st.draft.strokes.length, undo: st.draft.undo.length },
       notes: live().map((n) => ({ id: n.id, n: numberOf(n), kind: n.kind, part: n.part, rec: n.rec, p: n.p, status: n.status,
         entries: n.entries.map((e) => ({ id: e.id, author: e.author, text: e.text, edited: !!e.editedAt, strokes: (e.doodle || []).length, view: !!e.view })) })),

@@ -100,8 +100,10 @@ parts list. Send that one file to a teammate — they double-click it and can:
   arrows, circles, boxes and any color. Each note remembers the exact view it was written in (angle, explode,
   section cut, hidden parts), and clicking it takes you there. **Share notes** saves
   either a small notes file or a copy of the BomDom with every note inside; dropping
-  either one on the BomDom merges the notes. Export them as an Excel Review sheet, a
-  PDF with a picture per note, or text to paste into Jira or Teams
+  either one on the BomDom merges the notes, and **Load…** can unload a file's notes
+  again. **Bubbles** (`Shift+N`) hides every note bubble to look at the model alone, and
+  a shared copy opens with the bubbles the way you had them. Show only one reviewer's
+  notes, tick several to delete them at once, or copy a note as text for Jira or Teams
 - **Copy a part number** to the clipboard with the button on any list row, from the
   right-click menu on a part in 3D, or with `Ctrl+C` on whatever is selected (several
   parts paste one per line) — ready for an ERP search, an email or a purchase request
