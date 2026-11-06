@@ -816,10 +816,9 @@ export function initReview(app) {
       const ok = await copyText(notesAsText({ asm: buildInfo().assembly, numberOf, notes: [note] }));
       app.ui.toast(ok ? 'Note copied' : 'Could not reach the clipboard');
     } });
-    if (mine) {
-      items.push({ sep: true });
-      items.push({ label: 'Delete note', onClick: () => removeNote(note) });
-    }
+    // Anyone can delete any note, same as bulk delete in Select mode.
+    items.push({ sep: true });
+    items.push({ label: 'Delete note', onClick: () => removeNote(note) });
     app.ui.showMenu(x, y, items);
   }
 
