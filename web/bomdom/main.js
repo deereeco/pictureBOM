@@ -513,13 +513,24 @@ function fatal(stageName, err) {
 // Toast
 // ---------------------------------------------------------------------------
 
+// action: optional { label, onClick } — a button at the end of the message
+// (Undo, Restore). The toast then stays up longer so there is time to reach it.
 function installToast() {
   let timer = null;
-  app.ui.toast = (msg) => {
+  const hide = () => { clearTimeout(timer); $('toast').classList.add('hidden'); };
+  app.ui.toast = (msg, action = null) => {
     const t = $('toast');
-    t.textContent = msg;
+    t.replaceChildren(document.createTextNode(msg));
+    if (action) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'toast-action';
+      b.textContent = action.label;
+      b.addEventListener('click', () => { hide(); action.onClick(); });
+      t.appendChild(b);
+    }
     t.classList.remove('hidden');
     clearTimeout(timer);
-    timer = setTimeout(() => t.classList.add('hidden'), 3200);
+    timer = setTimeout(hide, action ? 8000 : 3200);
   };
 }
