@@ -1143,9 +1143,9 @@ export function initInteractions(app) {
     if (!t || (!t.closest('.dropdown') && !t.closest('.menu-anchor'))) closeMenus();
   });
 
-  function menuItem(label, onClick, { disabled = false, href = null } = {}) {
+  function menuItem(label, onClick, { disabled = false, href = null, sub = false } = {}) {
     const el = document.createElement(href ? 'a' : 'button');
-    el.className = 'menu-item';
+    el.className = sub ? 'menu-item menu-sub' : 'menu-item';
     el.textContent = label;
     if (href) { el.href = href; el.target = '_blank'; el.rel = 'noopener'; }
     if (disabled) el.disabled = true;
@@ -1153,8 +1153,9 @@ export function initInteractions(app) {
     return el;
   }
 
-  // items: {label,onClick,href,disabled} | {head} | {sep} | {node} (a ready
-  // element, e.g. the paint swatch row). null items skipped.
+  // items: {label,onClick,href,disabled,sub} | {head} | {sep} | {node} (a
+  // ready element, e.g. the paint swatch row). sub indents an item as an
+  // alternative to the one above it. null items skipped.
   app.ui.showMenu = (x, y, items) => {
     ctxMenu.innerHTML = '';
     for (const it of items) {

@@ -1008,6 +1008,7 @@ html.theme-transition *::after {
 }
 .menu-item:hover { background: var(--accent-tint); color: var(--text); }
 .menu-item:disabled { opacity: 0.45; cursor: default; background: transparent; }
+.menu-sub { padding-left: 24px; font-size: 12px; color: var(--text-muted); }
 .menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
 .menu-note {
     font-size: 11px;

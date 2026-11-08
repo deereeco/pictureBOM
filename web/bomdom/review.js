@@ -3,10 +3,11 @@
 // always there; pins show on the model whenever notes exist. Notes take
 // replies, can be edited, moved, resolved, and carry sketches drawn on the
 // view they were written in. Everything stays offline. Notes travel two ways
-// from one "Share notes…" button — a small .json of the notes, or a full
-// copy of this BomDom with the notes baked in (selfcopy.js) — and dropping
-// either kind on a BomDom merges its notes. Notes belong to ONE build: a file
-// from another export of the assembly is refused.
+// from one "Share notes…" button — a small .json of the notes (saved as a
+// file or copied to the clipboard), or a full copy of this BomDom with the
+// notes baked in (selfcopy.js) — and dropping either kind on a BomDom, or
+// pasting copied notes into it (Ctrl+V), merges its notes. Notes belong to
+// ONE build: a file from another export of the assembly is refused.
 //
 // Ways in: right-click a part ("Add note here" / "Note on whole part"),
 // right-click a list row, or the Notes tab's "+ Pin note" (the next click on
@@ -1110,7 +1111,7 @@ export function initReview(app) {
     foot.appendChild(share);
     const load = el('button', 'btn btn-secondary', 'Load…');
     load.type = 'button';
-    load.title = 'Merge notes from a notes file or a BomDom copy (you can also drop them on the 3D view); unload a file you loaded';
+    load.title = 'Merge notes from a notes file or a BomDom copy (you can also drop them on the 3D view, or paste copied notes with Ctrl+V); unload a file you loaded';
     load.addEventListener('click', (ev) => {
       ev.stopPropagation();
       const r = load.getBoundingClientRect();
@@ -1274,18 +1275,30 @@ export function initReview(app) {
     const items = [
       { head: 'Share notes' },
       { label: `${myName ? 'My notes only' : 'Notes only'} (.json · ${kb(mine.length)})`, onClick: saveJson },
+      { label: 'Copy to clipboard instead', sub: true, onClick: copyJson },
       canCopy()
         ? { label: `BomDom with all notes (.html · ${kb(copySize() + all.length)})`, onClick: saveCopy }
         : { label: 'BomDom with all notes (not available in this file)', disabled: true },
     ];
     app.ui.showMenu(x, y, items);
   }
+  const noteCount = (doc) => doc.notes.filter((n) => !n.deleted).length;
   function saveJson() {
     const doc = myDoc();
     const asm = sanitizeFile(buildInfo().assembly);
     const who = myName ? '_' + sanitizeFile(myName).replace(/\s+/g, '-').replace(/[.-]+$/, '') : '';
     download(new Blob([JSON.stringify(doc, null, 1)], { type: 'application/json' }), `${asm}_notes${who}.json`);
-    app.ui.toast(`Saved ${doc.notes.filter((n) => !n.deleted).length} note(s) — send the file back; dropping it on the BomDom merges it`);
+    app.ui.toast(`Saved ${noteCount(doc)} note(s) — send the file back; dropping it on the BomDom merges it`);
+  }
+  // Same notes as saveJson, compact, for pasting into chat or email. The
+  // clipboard copes with megabytes; the app it is pasted into may not
+  // (chat messages often cap out around 25–30 KB), so big copies say so.
+  async function copyJson() {
+    const doc = myDoc();
+    const text = JSON.stringify(doc);
+    if (!(await copyText(text))) { app.ui.toast('Could not reach the clipboard — save the .json instead'); return; }
+    const big = text.length > 25 * 1024 ? ` (${kb(text.length)} — if the chat refuses it, send the .json file)` : '';
+    app.ui.toast(`Copied ${noteCount(doc)} note(s)${big} — pasting it on the BomDom (Ctrl+V) merges it`);
   }
   function saveCopy() {
     let html;
@@ -1317,6 +1330,22 @@ export function initReview(app) {
       r.readAsText(f);
     }
   }
+  // Ctrl+V of copied notes anywhere outside a text box merges them, as if
+  // the .json had been dropped. Other pastes are left alone.
+  function onPaste(ev) {
+    const t = ev.target;
+    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return;
+    const text = (ev.clipboardData && ev.clipboardData.getData('text/plain') || '').trim();
+    if (!text.startsWith('{') || !text.includes(FORMAT)) return;
+    let doc = null;
+    try { doc = JSON.parse(text); } catch { doc = null; }
+    if (!doc || doc.format !== FORMAT || !Array.isArray(doc.notes)) return;
+    ev.preventDefault();
+    const authors = doc.notes.flatMap((n) => (n && Array.isArray(n.entries) ? n.entries.map((e) => e && e.author) : []));
+    const who = [...new Set(authors.filter(Boolean))].join(', ');
+    finishMerge([{ name: `Pasted notes${who ? ' from ' + who : ''}`, doc }]);
+  }
+  document.addEventListener('paste', onPaste);
   function notesFromHtml(html) {
     const m = /id=['"]bomdom-notes['"]>([\s\S]*?)<\/script>/.exec(html);
     if (!m) return { error: 'has no notes slot' };
