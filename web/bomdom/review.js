@@ -176,8 +176,10 @@ export function initReview(app) {
   }
 
   // Merge another notes document into ours. Notes and entries are matched
-  // by id; the newest status change, edit or pin move wins; a deletion wins
-  // outright.
+  // by id; the newest status change, edit or pin move wins. A deletion wins
+  // over everything except a restore made after it (restoredAt), so a note
+  // deleted here stays deleted when an older copy comes back — those copies
+  // are handed back as deletedHere, for the caller to offer a Restore.
   function merge(doc, { from = 'file' } = {}) {
     if (!doc || doc.format !== FORMAT || !Array.isArray(doc.notes)) return { error: 'not a notes file' };
     if (doc.version > VERSION) return { error: 'from a newer pictureBOM — update to open it' };
@@ -186,9 +188,10 @@ export function initReview(app) {
       return { error: `for a different build of ${b.assembly || 'this assembly'}` +
         (b.generated ? ` (generated ${String(b.generated).slice(0, 10)})` : '') };
     }
-    let added = 0, updated = 0;
+    let added = 0, updated = 0, removed = 0;
     const authors = new Set();
     const ids = []; // every live note this file carries
+    const deletedHere = [];
     for (const inc of doc.notes) {
       if (!inc || typeof inc.id !== 'string') continue;
       if (!inc.deleted) ids.push(inc.id);
@@ -200,8 +203,19 @@ export function initReview(app) {
       }
       let touched = false;
       if (inc.deleted && !cur.deleted) {
-        Object.assign(cur, { deleted: true, deletedAt: inc.deletedAt, deletedBy: inc.deletedBy, entries: [] });
-        touched = true;
+        if (!cur.restoredAt || (inc.deletedAt || '') > cur.restoredAt) {
+          Object.assign(cur, { deleted: true, deletedAt: inc.deletedAt, deletedBy: inc.deletedBy, restoredAt: undefined, entries: [] });
+          if (st.openId === cur.id) { st.openId = null; st.draft = null; }
+          removed += 1;
+        }
+      } else if (!inc.deleted && cur.deleted) {
+        if (inc.restoredAt && (!cur.deletedAt || inc.restoredAt > cur.deletedAt)) {
+          Object.assign(cur, sanitizeNote(inc));
+          (inc.entries || []).forEach((e) => e && authors.add(e.author));
+          touched = true;
+        } else {
+          deletedHere.push(inc);
+        }
       }
       if (!cur.deleted) {
         const have = new Map(cur.entries.map((e) => [e.id, e]));
@@ -234,7 +248,7 @@ export function initReview(app) {
       if (touched) updated += 1;
     }
     if (from !== 'boot') changed();
-    return { added, updated, ids, authors: [...authors].filter(Boolean) };
+    return { added, updated, removed, ids, deletedHere, authors: [...authors].filter(Boolean) };
   }
 
   function sanitizeEntry(e) {
@@ -264,6 +278,7 @@ export function initReview(app) {
       deleted: !!n.deleted,
       deletedAt: n.deleted ? esc(n.deletedAt) : undefined,
       deletedBy: n.deleted ? esc(n.deletedBy) : undefined,
+      restoredAt: !n.deleted && n.restoredAt ? esc(n.restoredAt) : undefined,
       entries: n.deleted ? [] : (n.entries || []).filter((e) => e && typeof e.id === 'string').map(sanitizeEntry),
     };
   }
@@ -595,27 +610,21 @@ export function initReview(app) {
     changed();
   }
 
-  function removeNote(note) {
-    Object.assign(note, {
-      deleted: true, deletedAt: new Date().toISOString(), deletedBy: myName, entries: [],
-    });
-    st.openId = null;
-    st.draft = null;
-    stopDrawing();
-    card.classList.add('hidden');
-    clearNoteHover();
-    changed();
-  }
+  // ---- deleting and restoring -------------------------------------------------
+  // A deleted note keeps its id as a tombstone, so the deletion reaches
+  // everyone who merges these notes. Undo (or Restore after a merge brings
+  // an old copy back) revives it with a restoredAt stamp that outranks any
+  // earlier tombstone of it.
+  function removeNote(note) { removeNotes([note.id]); }
 
-  // ---- bulk delete -----------------------------------------------------------
   function removeNotes(ids) {
     const now = new Date().toISOString();
-    let n = 0;
+    const before = []; // copies for Undo
     for (const id of ids) {
       const note = byId(id);
       if (!note || note.deleted) continue;
-      Object.assign(note, { deleted: true, deletedAt: now, deletedBy: myName, entries: [] });
-      n += 1;
+      before.push(JSON.parse(JSON.stringify(note)));
+      Object.assign(note, { deleted: true, deletedAt: now, deletedBy: myName, restoredAt: undefined, entries: [] });
     }
     if (st.openId && !live().some((x) => x.id === st.openId)) {
       st.openId = null;
@@ -626,7 +635,23 @@ export function initReview(app) {
     st.selecting = null;
     st.confirmDelete = false;
     changed();
-    app.ui.toast(`Deleted ${n} note${n === 1 ? '' : 's'}`);
+    const n = before.length;
+    app.ui.toast(`Deleted ${n} note${n === 1 ? '' : 's'}`, n ? { label: 'Undo', onClick: () => restoreNotes(before) } : null);
+  }
+
+  // copies: notes as they were before deletion (from Undo, or a merged file).
+  function restoreNotes(copies) {
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const c of copies) {
+      const cur = c && byId(c.id);
+      if (!cur || !cur.deleted || c.deleted) continue;
+      Object.assign(cur, sanitizeNote(c), { restoredAt: now });
+      n += 1;
+    }
+    changed();
+    app.ui.toast(`Restored ${n} note${n === 1 ? '' : 's'}`);
+    return n;
   }
 
   // ---- bubbles ----------------------------------------------------------------
@@ -1102,7 +1127,8 @@ export function initReview(app) {
     foot.appendChild(sign);
     const share = el('button', 'btn btn-primary np-share', 'Share notes…');
     share.type = 'button';
-    share.disabled = !notes.length;
+    // Deleted notes count: sharing is how a deletion reaches everyone else.
+    share.disabled = !st.doc.notes.length;
     share.addEventListener('click', (ev) => {
       ev.stopPropagation();
       const r = share.getBoundingClientRect();
@@ -1282,13 +1308,18 @@ export function initReview(app) {
     ];
     app.ui.showMenu(x, y, items);
   }
-  const noteCount = (doc) => doc.notes.filter((n) => !n.deleted).length;
+  // "3 notes", or "3 notes and 1 deletion" when tombstones travel too.
+  function noteCount(doc) {
+    const gone = doc.notes.filter((n) => n.deleted).length;
+    const kept = doc.notes.length - gone;
+    return `${kept} note${kept === 1 ? '' : 's'}${gone ? ` and ${gone} deletion${gone === 1 ? '' : 's'}` : ''}`;
+  }
   function saveJson() {
     const doc = myDoc();
     const asm = sanitizeFile(buildInfo().assembly);
     const who = myName ? '_' + sanitizeFile(myName).replace(/\s+/g, '-').replace(/[.-]+$/, '') : '';
     download(new Blob([JSON.stringify(doc, null, 1)], { type: 'application/json' }), `${asm}_notes${who}.json`);
-    app.ui.toast(`Saved ${noteCount(doc)} note(s) — send the file back; dropping it on the BomDom merges it`);
+    app.ui.toast(`Saved ${noteCount(doc)} — send the file back; dropping it on the BomDom merges it`);
   }
   // Same notes as saveJson, compact, for pasting into chat or email. The
   // clipboard copes with megabytes; the app it is pasted into may not
@@ -1298,7 +1329,7 @@ export function initReview(app) {
     const text = JSON.stringify(doc);
     if (!(await copyText(text))) { app.ui.toast('Could not reach the clipboard — save the .json instead'); return; }
     const big = text.length > 25 * 1024 ? ` (${kb(text.length)} — if the chat refuses it, send the .json file)` : '';
-    app.ui.toast(`Copied ${noteCount(doc)} note(s)${big} — pasting it on the BomDom (Ctrl+V) merges it`);
+    app.ui.toast(`Copied ${noteCount(doc)}${big} — pasting it on the BomDom (Ctrl+V) merges it`);
   }
   function saveCopy() {
     let html;
@@ -1333,6 +1364,7 @@ export function initReview(app) {
   // Ctrl+V of copied notes anywhere outside a text box merges them, as if
   // the .json had been dropped. Other pastes are left alone.
   function onPaste(ev) {
+    if (!st.doc) return; // notes not loaded yet
     const t = ev.target;
     if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return;
     const text = (ev.clipboardData && ev.clipboardData.getData('text/plain') || '').trim();
@@ -1353,25 +1385,35 @@ export function initReview(app) {
     try { return JSON.parse(m[1]); } catch { return null; }
   }
   function finishMerge(results) {
-    let added = 0, updated = 0;
+    let added = 0, updated = 0, removed = 0;
     const authors = new Set();
     const errors = [];
+    const deletedHere = new Map(); // id -> the copy that came in
     for (const { name, doc } of results) {
       if (doc && doc.format === 'bomdom-view' && app.viewstate) { app.viewstate.apply(doc); continue; }
       const res = doc && !doc.error ? merge(doc) : { error: (doc && doc.error) || 'not a notes file' };
       if (res.error) { errors.push(`"${name}" is ${res.error}`); continue; }
       addSource(name, res.ids);
-      added += res.added; updated += res.updated;
+      added += res.added; updated += res.updated; removed += res.removed;
       res.authors.forEach((a) => authors.add(a));
+      res.deletedHere.forEach((n) => deletedHere.set(n.id, n));
     }
-    if (errors.length) app.ui.toast(errors.join(' · '));
-    else if (added || updated) {
-      showNotesTab();
+    if (!results.some((r) => !r.doc || r.doc.format !== 'bomdom-view')) return;
+
+    const parts = [];
+    if (added || updated || removed) {
       const who = [...authors].join(', ');
       const bits = [added ? `${added} new note${added > 1 ? 's' : ''}` : '',
-        updated ? `${updated} updated` : ''].filter(Boolean).join(', ');
-      app.ui.toast(`Merged ${bits}${who ? ' from ' + who : ''}`);
-    } else app.ui.toast('Nothing new in those notes');
+        updated ? `${updated} updated` : '', removed ? `${removed} deleted` : ''].filter(Boolean).join(', ');
+      parts.push(`Merged ${bits}${who ? ' from ' + who : ''}`);
+    }
+    const gone = deletedHere.size;
+    if (gone) parts.push(`${gone} note${gone > 1 ? 's were' : ' was'} left out — deleted here`);
+    parts.push(...errors);
+    if (!parts.length) parts.push('Nothing new in those notes');
+    if (added || updated || removed) showNotesTab();
+    const restore = gone ? { label: 'Restore', onClick: () => { restoreNotes([...deletedHere.values()]); showNotesTab(); } } : null;
+    app.ui.toast(parts.join(' · '), restore);
   }
   function pickFiles() {
     const input = document.createElement('input');
