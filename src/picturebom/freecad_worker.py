@@ -297,6 +297,17 @@ def run(job):
             "%d STEP product(s) were not found among FreeCAD's imported objects: %s"
             % (len(unmatched), ", ".join(unmatched[:5]) + ("..." if len(unmatched) > 5 else "")))
 
+    # ---- 3D model (before the pictures) ----
+    # An assembly picture renders the document's own shapes. When one of them
+    # is malformed, FreeCAD drops the display mesh of every part in that
+    # assembly, and a later export writes them all as empty nodes. Exporting
+    # first avoids that. The one exception is a multibody part read as an
+    # assembly: its export rewrites the document, so it stays after the
+    # pictures (which are rendered from copies there, so nothing is lost).
+    export_first = not (job.get("body_names") and job.get("root_product"))
+    if export_first:
+        _export_glb(doc, index, job, result)
+
     # ---- pictures ----
     images = job.get("images", [])
     if images:
@@ -337,48 +348,57 @@ def run(job):
         renderer.close()
         result["timings"]["render_seconds"] = round(time.time() - t_render, 2)
 
-    # ---- 3D model ----
-    glb_path = job.get("glb_path")
-    if glb_path:
-        status("Exporting 3D model...")
-        t2 = time.time()
-        try:
-            root_prod = job.get("root_product")
-            body_names = job.get("body_names") or []
-            if body_names and root_prod:
-                # Multibody part read as an assembly: one node per body so the
-                # 3D viewer can link each body to its own BOM row.
-                obj = _find(index, root_prod, False)
-                if obj is not None:
-                    shp = obj.Shape
-                    bodies = _bodies(shp)
-                    base = _shape_color(obj) or (0.78, 0.82, 0.85)
-                    parent_list = [p for p in obj.InList if p.TypeId == "App::Part"]
-                    for n, body in zip(body_names, bodies):
-                        f = doc.addObject("Part::Feature", "Body")
-                        f.Label = n
-                        f.Shape = body
-                        f.ViewObject.ShapeColor = tuple(base)
-                        for p in parent_list:
-                            p.addObject(f)
-                    doc.removeObject(obj.Name)
-                    doc.recompute()
-            roots = [o for o in doc.Objects if not o.InList
-                     and (o.TypeId == "App::Part" or o.isDerivedFrom("Part::Feature"))]
-            ImportGui.export(roots, glb_path)
-            if os.path.isfile(glb_path) and os.path.getsize(glb_path) > 12:
-                result["glb"] = glb_path
-                status("3D model exported (%.1f MB)" % (os.path.getsize(glb_path) / 1e6))
-            else:
-                result["warnings"].append("FreeCAD wrote no glTF file")
-        except Exception as e:
-            result["warnings"].append("glTF export failed: %s" % e)
-            FreeCAD.Console.PrintError(traceback.format_exc())
-        result["timings"]["glb_seconds"] = round(time.time() - t2, 2)
+    if not export_first:
+        _export_glb(doc, index, job, result)
 
     result["ok"] = True
     result["timings"]["total_seconds"] = round(time.time() - T_START, 2)
     return result
+
+
+def _export_glb(doc, index, job, result):
+    """Write the whole model to job['glb_path'] (no-op when none is asked for)."""
+    import FreeCAD
+    import ImportGui
+
+    glb_path = job.get("glb_path")
+    if not glb_path:
+        return
+    status("Exporting 3D model...")
+    t2 = time.time()
+    try:
+        root_prod = job.get("root_product")
+        body_names = job.get("body_names") or []
+        if body_names and root_prod:
+            # Multibody part read as an assembly: one node per body so the
+            # 3D viewer can link each body to its own BOM row.
+            obj = _find(index, root_prod, False)
+            if obj is not None:
+                shp = obj.Shape
+                bodies = _bodies(shp)
+                base = _shape_color(obj) or (0.78, 0.82, 0.85)
+                parent_list = [p for p in obj.InList if p.TypeId == "App::Part"]
+                for n, body in zip(body_names, bodies):
+                    f = doc.addObject("Part::Feature", "Body")
+                    f.Label = n
+                    f.Shape = body
+                    f.ViewObject.ShapeColor = tuple(base)
+                    for p in parent_list:
+                        p.addObject(f)
+                doc.removeObject(obj.Name)
+                doc.recompute()
+        roots = [o for o in doc.Objects if not o.InList
+                 and (o.TypeId == "App::Part" or o.isDerivedFrom("Part::Feature"))]
+        ImportGui.export(roots, glb_path)
+        if os.path.isfile(glb_path) and os.path.getsize(glb_path) > 12:
+            result["glb"] = glb_path
+            status("3D model exported (%.1f MB)" % (os.path.getsize(glb_path) / 1e6))
+        else:
+            result["warnings"].append("FreeCAD wrote no glTF file")
+    except Exception as e:
+        result["warnings"].append("glTF export failed: %s" % e)
+        FreeCAD.Console.PrintError(traceback.format_exc())
+    result["timings"]["glb_seconds"] = round(time.time() - t2, 2)
 
 
 def main():

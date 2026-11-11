@@ -1135,8 +1135,12 @@ def inject_component_colors(glb_bytes, parts, component_colors, sample_fallback=
 # ---------------------------------------------------------------------------
 
 def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=(),
-                       no_geometry_names=(), census_complete=None):
+                       no_geometry_names=(), census_complete=None,
+                       engine_label="SolidWorks"):
     """Link repacked parts to BOM row names.
+
+    engine_label: program that wrote the GLB ("SolidWorks" or "FreeCAD");
+    it only changes how a geometry-less row is explained.
 
     parts: repack result 'parts' list (mutated: gains bom_name/matched).
     empty_node_names: names of meshless leaf nodes — components SolidWorks
@@ -1199,8 +1203,18 @@ def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=(),
             unmatched_parts.append({"part_id": part["id"], "raw_name": stripped,
                                     "instances": part["instances"]})
 
-    empty_folds = {clean_node_name(n).casefold() for n in empty_node_names}
-    group_folds = {clean_node_name(n).casefold() for n in group_node_names}
+    # Both spellings of every node name: with one trailing '-<n>' instance
+    # suffix stripped (SolidWorks glTF names) and as written, because a file
+    # can really be named 'BRACKET-00' or 'SUB _1_-1' (STEP product names).
+    def _folds(names):
+        out = set()
+        for n in names:
+            out.add(n.casefold())
+            out.add(clean_node_name(n).casefold())
+        return out
+
+    empty_folds = _folds(empty_node_names)
+    group_folds = _folds(group_node_names)
     hidden_rows, unmatched_rows = [], []
     for name in bom_names:
         fold = name.casefold()
@@ -1228,13 +1242,26 @@ def match_parts_to_bom(parts, empty_node_names, bom_names, group_node_names=(),
     no_geo_folds = {str(n).casefold() for n in no_geometry_names}
     surface_only_rows = [n for n in hidden_rows if n.casefold() in no_geo_folds]
     truly_hidden = [n for n in hidden_rows if n.casefold() not in no_geo_folds]
-    if surface_only_rows:
+    from_step = engine_label == "FreeCAD"
+    if surface_only_rows and from_step:
+        warnings.append(
+            f"{len(surface_only_rows)} BOM row(s) have no bodies in the STEP "
+            f"file — they are missing from the 3D view: "
+            + _list(surface_only_rows))
+    elif surface_only_rows:
         warnings.append(
             f"{len(surface_only_rows)} BOM row(s) contain no solid bodies, and "
             f"SolidWorks' 3D exporter only exports solids — they are missing "
             f"from the 3D view: " + _list(surface_only_rows) +
             ". Knitting their surfaces into solids in SolidWorks would fix this.")
-    if truly_hidden:
+    if truly_hidden and from_step:
+        # Nothing is "hidden" in a STEP file: the part has bodies there, and
+        # FreeCAD could not turn them into a 3D mesh (malformed surfaces).
+        warnings.append(
+            f"{len(truly_hidden)} BOM row(s) are missing from the 3D view: "
+            f"FreeCAD could not convert their STEP geometry: "
+            + _list(truly_hidden))
+    elif truly_hidden:
         if census_complete is True:
             msg = (f"{len(truly_hidden)} BOM row(s) were exported without 3D "
                    f"geometry (hidden at export time): ")
@@ -1492,7 +1519,7 @@ def export_bomdom_html(glb_path, output_dir, base_name, timestamp, *,
     reconciliation, match_warnings = match_parts_to_bom(
         repack["parts"], repack["empty_node_names"], list(bom_names),
         repack["group_node_names"], no_geometry_names=no_geometry_names,
-        census_complete=census_complete)
+        census_complete=census_complete, engine_label=engine_label)
     warnings.extend(match_warnings)
 
     # Appearance fallback: recolor per part from COM-read appearances when the

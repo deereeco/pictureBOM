@@ -182,6 +182,23 @@ def test_matching():
           "SUPPRESSED-PART" in recon["unmatched_rows"]
           and "400-0110" in recon["unmatched_rows"])
 
+    # STEP product names are used as written, so a row can really end in
+    # '-<n>': it must match a node of the same name, not only the stripped one.
+    recon, warnings = match_parts_to_bom(
+        [], ["BRACKET-00", "BAD-SURFACES"],
+        ["Copy - SUB _1_-1", "BRACKET-00", "BAD-SURFACES", "NOBODY"],
+        group_node_names=["Copy - SUB _1_-1"],
+        no_geometry_names=["NOBODY"], census_complete=True, engine_label="FreeCAD")
+    check("assembly row ending in -<n> matches its grouping node",
+          "Copy - SUB _1_-1" not in recon["unmatched_rows"],
+          f"unmatched: {recon['unmatched_rows']}")
+    check("part row ending in -<n> matches its empty node",
+          recon["hidden_rows"] == ["BRACKET-00", "BAD-SURFACES"],
+          f"hidden: {recon['hidden_rows']}")
+    check("STEP run never calls an empty part 'hidden'",
+          not any("hidden" in w for w in warnings)
+          and any("FreeCAD could not convert" in w for w in warnings), f"{warnings}")
+
 
 def _make_uncompressed_glb():
     """Minimal valid non-Draco GLB: one triangle mesh, two instances (one mirrored)."""
