@@ -175,29 +175,33 @@ export function initInteractions(app) {
   // Rule: if the current pivot still sits inside (a slightly padded) box of
   // the visible parts, the user's framing is respected and nothing moves;
   // only when what they were orbiting is gone (isolate elsewhere, hide the
-  // thing under the pivot, hide-others filter) does the pivot glide to the
-  // new visible center. Bounds come from selection state, not
+  // thing under the pivot, hide-others filter) does the pivot move — and
+  // then only ALONG THE VIEW LINE, to the depth of the new visible center.
+  // The camera looks at the pivot, so moving it sideways swings the whole
+  // picture (hiding a part made the view jump); sliding it along the line
+  // of sight leaves the camera's position and direction untouched, so the
+  // screen does not change at all, while the next orbit still turns about
+  // the depth of what is left. Bounds come from selection state, not
   // object.visible, so event ordering vs updateVisuals cannot bite.
-  let pivotToken = null;
   function retargetOrbit() {
     if (!app.viewer || !app.model) return;
     app.model.root.updateWorldMatrix(true, true);
     const box = M.visibleBounds(app.model, sel.scope, sel.filter);
     if (box.isEmpty()) return; // everything hidden: keep the old pivot
-    const from = app.viewer.controls.target.clone();
+    const controls = app.viewer.controls;
+    const eye = app.viewer.camera.position;
+    const from = controls.target;
     if (box.clone().expandByScalar(app.model.diagLen * 0.05).containsPoint(from)) return;
-    const center = box.getCenter(new THREE.Vector3());
-    if (center.distanceTo(from) < app.model.diagLen * 1e-3) return;
-    const token = pivotToken = {};
-    app.viewer.addTween({
-      duration: 220,
-      update: (k) => {
-        if (pivotToken !== token) return; // a newer retarget (or a frame) took over
-        // controls is a getter (rebuilt on up-axis changes) — re-read it.
-        app.viewer.controls.target.copy(from).lerp(center, k);
-        app.viewer.controls.update();
-      },
-    });
+    const dir = from.clone().sub(eye);
+    const dist = dir.length();
+    if (dist === 0) return;
+    dir.divideScalar(dist);
+    const depth = box.getCenter(new THREE.Vector3()).sub(eye).dot(dir);
+    // Visible parts level with or behind the camera: no sensible depth.
+    if (depth < app.model.diagLen * 1e-3) return;
+    if (Math.abs(depth - dist) < app.model.diagLen * 1e-3) return;
+    from.copy(eye).addScaledVector(dir, depth);
+    controls.update();
   }
 
   // ---- actions ---------------------------------------------------------
@@ -248,7 +252,6 @@ export function initInteractions(app) {
     },
     frame(recs) {
       if (!app.viewer || !app.model) return;
-      pivotToken = null; // an explicit framing beats any in-flight pivot glide
       const target = recs && recs.length ? recs : app.model.rootRecs;
       app.model.root.updateWorldMatrix(true, true);
       const pts = M.pointsOfRecs(target);
